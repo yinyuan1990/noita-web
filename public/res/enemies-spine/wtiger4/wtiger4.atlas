@@ -1,0 +1,153 @@
+
+wtiger4.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+wt4_acc1
+  rotate: false
+  xy: 166, 107
+  size: 33, 77
+  orig: 35, 79
+  offset: 1, 1
+  index: -1
+wt4_acc2
+  rotate: true
+  xy: 68, 146
+  size: 31, 67
+  orig: 33, 69
+  offset: 1, 1
+  index: -1
+wt4_arm1
+  rotate: true
+  xy: 93, 179
+  size: 36, 71
+  orig: 36, 71
+  offset: 0, 0
+  index: -1
+wt4_arm2
+  rotate: false
+  xy: 187, 186
+  size: 50, 68
+  orig: 50, 68
+  offset: 0, 0
+  index: -1
+wt4_armgggit1
+  rotate: false
+  xy: 231, 81
+  size: 21, 21
+  orig: 21, 21
+  offset: 0, 0
+  index: -1
+wt4_armgggit2
+  rotate: true
+  xy: 231, 104
+  size: 21, 22
+  orig: 21, 22
+  offset: 0, 0
+  index: -1
+wt4_body
+  rotate: false
+  xy: 2, 201
+  size: 89, 53
+  orig: 89, 53
+  offset: 0, 0
+  index: -1
+wt4_ear1
+  rotate: true
+  xy: 166, 188
+  size: 12, 14
+  orig: 14, 14
+  offset: 1, 0
+  index: -1
+wt4_ear2
+  rotate: false
+  xy: 166, 202
+  size: 13, 13
+  orig: 13, 13
+  offset: 0, 0
+  index: -1
+wt4_face1
+  rotate: false
+  xy: 48, 110
+  size: 36, 34
+  orig: 38, 36
+  offset: 1, 1
+  index: -1
+wt4_face2
+  rotate: false
+  xy: 2, 90
+  size: 36, 34
+  orig: 38, 36
+  offset: 1, 1
+  index: -1
+wt4_leg1
+  rotate: false
+  xy: 137, 109
+  size: 26, 68
+  orig: 26, 68
+  offset: 0, 0
+  index: -1
+wt4_leg2
+  rotate: true
+  xy: 2, 165
+  size: 34, 64
+  orig: 34, 64
+  offset: 0, 0
+  index: -1
+wt4_legggit1
+  rotate: false
+  xy: 239, 202
+  size: 15, 25
+  orig: 15, 25
+  offset: 0, 0
+  index: -1
+wt4_legggit2
+  rotate: false
+  xy: 239, 229
+  size: 15, 25
+  orig: 15, 25
+  offset: 0, 0
+  index: -1
+wt4_mou
+  rotate: false
+  xy: 239, 179
+  size: 14, 21
+  orig: 16, 23
+  offset: 1, 1
+  index: -1
+wt4_su
+  rotate: true
+  xy: 2, 126
+  size: 37, 44
+  orig: 37, 44
+  offset: 0, 0
+  index: -1
+wt4_su2
+  rotate: false
+  xy: 93, 217
+  size: 92, 37
+  orig: 92, 37
+  offset: 0, 0
+  index: -1
+wt4_su3
+  rotate: true
+  xy: 201, 103
+  size: 81, 28
+  orig: 81, 28
+  offset: 0, 0
+  index: -1
+wt4_tail1
+  rotate: false
+  xy: 86, 111
+  size: 34, 33
+  orig: 34, 33
+  offset: 0, 0
+  index: -1
+wt4_tail2
+  rotate: false
+  xy: 231, 127
+  size: 20, 50
+  orig: 20, 50
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>第一章 · 通道集合</title>
+    <style>
+      :root {
+        --ink: #e8eef4;
+        --dim: #8a9aab;
+        --panel: rgba(10, 14, 20, 0.82);
+        --line: rgba(120, 140, 160, 0.4);
+        --accent: #9ed48a;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #07090c; color: var(--ink);
+        font-family: "Noto Serif SC", "Songti SC", Georgia, serif; }
+      #app { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+      #host {
+        position: relative;
+        width: min(100vw, calc(100vh * 16 / 9));
+        height: min(100vh, calc(100vw * 9 / 16));
+        background: #0a0c12; overflow: hidden;
+      }
+      /* 抖音竖屏 9:16：铺满视口，隐藏调试 UI */
+      html.portrait #host {
+        width: 100vw;
+        height: 100vh;
+      }
+      html.portrait #fps,
+      html.portrait #hint,
+      html.portrait a.back { display: none !important; }
+      #host canvas { display: block; width: 100% !important; height: 100% !important; }
+      #fps {
+        position: absolute; right: 12px; top: 10px; z-index: 3;
+        font-size: 12px; font-variant-numeric: tabular-nums;
+        color: var(--accent); pointer-events: none; opacity: .8;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+        padding: 0.25rem 0.55rem;
+      }
+      #hint {
+        position: absolute; right: 12px; bottom: 12px; z-index: 3;
+        font-size: 11px; line-height: 1.7; color: rgba(138,154,171,.75); pointer-events: none;
+        max-width: 280px; text-align: right;
+      }
+      a.back {
+        position: absolute; left: 12px; bottom: 12px; z-index: 4;
+        font-size: 12px; color: var(--dim); text-decoration: none;
+        border: 1px solid var(--line); border-radius: 6px; padding: 0.28rem 0.55rem;
+        background: var(--panel);
+      }
+      a.back:hover { color: var(--ink); border-color: var(--accent); }
+
+      /* ── 标题屏 / 章节选择 ── */
+      #menu {
+        position: absolute; inset: 0; z-index: 30;
+        display: flex; align-items: center; justify-content: center;
+        background:
+          radial-gradient(ellipse at 50% 42%, rgba(10, 16, 26, 0.55) 0%, rgba(5, 8, 14, 0.88) 72%, rgba(3, 5, 9, 0.96) 100%);
+        transition: opacity 0.7s;
+      }
+      #menu.hide { opacity: 0; pointer-events: none; }
+      .menu-inner { text-align: center; transform: translateY(-4%); }
+      .menu-kicker {
+        font-size: 13px; letter-spacing: 8px; color: var(--dim); margin-bottom: 14px; text-indent: 8px;
+      }
+      .menu-title {
+        font-size: 58px; font-weight: 700; color: #f2f6fa;
+        letter-spacing: 22px; text-indent: 22px; margin-bottom: 8px;
+        text-shadow: 0 2px 24px rgba(120, 200, 150, 0.3), 0 1px 2px #000;
+      }
+      .menu-sub { font-size: 13px; color: rgba(138,154,171,.7); letter-spacing: 4px; margin-bottom: 52px; }
+      .menu-col { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+      .menu-col.hide { display: none; }
+      .mbtn {
+        min-width: 300px; padding: 13px 34px; cursor: pointer;
+        font-family: inherit; font-size: 17px; letter-spacing: 6px; text-indent: 6px; color: var(--ink);
+        background: linear-gradient(160deg, rgba(20, 28, 40, 0.85), rgba(11, 16, 25, 0.9));
+        border: 1px solid rgba(140, 165, 195, 0.32); border-radius: 10px;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        transition: border-color 0.2s, color 0.2s, transform 0.15s, box-shadow 0.2s;
+      }
+      .mbtn:hover {
+        border-color: var(--accent); color: #d9f2cd; transform: translateY(-2px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 18px rgba(158, 212, 138, 0.18);
+      }
+      .mbtn.primary { border-color: rgba(158, 212, 138, 0.55); color: #cdeabf; }
+      .mbtn small { display: block; font-size: 11px; letter-spacing: 2px; color: var(--dim); margin-top: 4px; }
+      .mbtn.ghost { min-width: auto; padding: 8px 22px; font-size: 13px; letter-spacing: 3px; color: var(--dim); }
+    </style>
+    <script>
+      (function () {
+        var q = new URLSearchParams(location.search)
+        if (q.has('v') || q.has('portrait') || q.has('douyin') || q.has('rec'))
+          document.documentElement.classList.add('portrait')
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <div id="host">
+        <a class="back" href="/">← 回主站</a>
+        <div id="fps">-- FPS</div>
+        <div id="hint"></div>
+        <div id="menu">
+          <div class="menu-inner">
+            <p class="menu-kicker">互 动 小 说 演 出</p>
+            <h1 class="menu-title">小说动画</h1>
+            <p class="menu-sub">DARK ELF · ESCAPE FROM THE UNDERDARK</p>
+            <div class="menu-col" id="menu-main">
+              <button class="mbtn primary" id="btn-enter">进 入 游 戏</button>
+            </div>
+            <div class="menu-col hide" id="menu-chapters">
+              <button class="mbtn" id="btn-ch1">第一章 · 通道集合</button>
+              <button class="mbtn" id="btn-ch2">第二章 · 被背叛</button>
+              <button class="mbtn" id="btn-ch3">第三章 · 法术抗力</button>
+              <button class="mbtn ghost" id="btn-back">← 返 回</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/demo/chapter1Forest.js"></script>
+  </body>
+</html>

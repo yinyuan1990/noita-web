@@ -1,0 +1,90 @@
+
+Snake.png
+size: 512,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+eyes
+  rotate: false
+  xy: 278, 78
+  size: 138, 28
+  orig: 138, 28
+  offset: 0, 0
+  index: -1
+eyes1
+  rotate: true
+  xy: 405, 115
+  size: 138, 28
+  orig: 138, 28
+  offset: 0, 0
+  index: -1
+eyes2
+  rotate: false
+  xy: 284, 37
+  size: 122, 39
+  orig: 122, 39
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 126, 72
+  size: 150, 181
+  orig: 150, 181
+  offset: 0, 0
+  index: -1
+jaw
+  rotate: true
+  xy: 418, 2
+  size: 111, 83
+  orig: 111, 83
+  offset: 0, 0
+  index: -1
+skin
+  rotate: true
+  xy: 278, 108
+  size: 145, 125
+  orig: 145, 125
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 2, 68
+  size: 122, 185
+  orig: 122, 185
+  offset: 0, 0
+  index: -1
+teeth
+  rotate: false
+  xy: 284, 18
+  size: 40, 17
+  orig: 40, 17
+  offset: 0, 0
+  index: -1
+wingR1
+  rotate: false
+  xy: 75, 5
+  size: 75, 61
+  orig: 75, 61
+  offset: 0, 0
+  index: -1
+wingR2
+  rotate: false
+  xy: 208, 14
+  size: 74, 56
+  orig: 74, 56
+  offset: 0, 0
+  index: -1
+wingR3
+  rotate: false
+  xy: 2, 3
+  size: 71, 63
+  orig: 71, 63
+  offset: 0, 0
+  index: -1
+wingR4
+  rotate: true
+  xy: 152, 2
+  size: 68, 54
+  orig: 68, 54
+  offset: 0, 0
+  index: -1

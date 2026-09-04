@@ -1,0 +1,90 @@
+
+Bee.png
+size: 1024,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Antenna
+  rotate: false
+  xy: 744, 13
+  size: 131, 103
+  orig: 131, 103
+  offset: 0, 0
+  index: -1
+Foreleg
+  rotate: true
+  xy: 503, 7
+  size: 77, 107
+  orig: 77, 107
+  offset: 0, 0
+  index: -1
+Head
+  rotate: false
+  xy: 612, 2
+  size: 130, 94
+  orig: 130, 94
+  offset: 0, 0
+  index: -1
+Hindleg
+  rotate: true
+  xy: 723, 118
+  size: 136, 117
+  orig: 136, 117
+  offset: 0, 0
+  index: -1
+Middleleg
+  rotate: false
+  xy: 135, 9
+  size: 141, 62
+  orig: 141, 62
+  offset: 0, 0
+  index: -1
+Thorax
+  rotate: true
+  xy: 135, 73
+  size: 181, 117
+  orig: 181, 117
+  offset: 0, 0
+  index: -1
+Wing
+  rotate: true
+  xy: 2, 63
+  size: 191, 131
+  orig: 191, 131
+  offset: 0, 0
+  index: -1
+abdomen1
+  rotate: true
+  xy: 603, 98
+  size: 156, 118
+  orig: 156, 118
+  offset: 0, 0
+  index: -1
+abdomen2
+  rotate: true
+  xy: 254, 76
+  size: 178, 125
+  orig: 178, 125
+  offset: 0, 0
+  index: -1
+abdomen3
+  rotate: true
+  xy: 381, 76
+  size: 178, 120
+  orig: 178, 120
+  offset: 0, 0
+  index: -1
+abdomen4
+  rotate: true
+  xy: 503, 86
+  size: 168, 98
+  orig: 168, 98
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 2, 7
+  size: 54, 85
+  orig: 54, 85
+  offset: 0, 0
+  index: -1

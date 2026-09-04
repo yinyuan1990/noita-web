@@ -1,0 +1,132 @@
+
+DarkEye.png
+size: 2048,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+antennaL
+  rotate: true
+  xy: 2, 2
+  size: 52, 91
+  orig: 52, 91
+  offset: 0, 0
+  index: -1
+antennaR
+  rotate: true
+  xy: 95, 2
+  size: 52, 91
+  orig: 52, 91
+  offset: 0, 0
+  index: -1
+body2
+  rotate: false
+  xy: 1104, 121
+  size: 279, 130
+  orig: 279, 130
+  offset: 0, 0
+  index: -1
+eyes
+  rotate: false
+  xy: 308, 17
+  size: 250, 56
+  orig: 250, 56
+  offset: 0, 0
+  index: -1
+forelegL
+  rotate: true
+  xy: 1385, 139
+  size: 112, 156
+  orig: 112, 156
+  offset: 0, 0
+  index: -1
+forelegR
+  rotate: true
+  xy: 1543, 139
+  size: 112, 156
+  orig: 112, 156
+  offset: 0, 0
+  index: -1
+head
+  rotate: true
+  xy: 614, 2
+  size: 249, 194
+  orig: 249, 194
+  offset: 0, 0
+  index: -1
+hindlegL
+  rotate: true
+  xy: 1882, 159
+  size: 92, 138
+  orig: 92, 138
+  offset: 0, 0
+  index: -1
+hindlegR
+  rotate: false
+  xy: 1747, 32
+  size: 92, 138
+  orig: 92, 138
+  offset: 0, 0
+  index: -1
+torso1
+  rotate: false
+  xy: 2, 56
+  size: 304, 195
+  orig: 304, 195
+  offset: 0, 0
+  index: -1
+torso2
+  rotate: false
+  xy: 308, 75
+  size: 304, 176
+  orig: 304, 176
+  offset: 0, 0
+  index: -1
+torso3
+  rotate: false
+  xy: 810, 89
+  size: 292, 162
+  orig: 292, 162
+  offset: 0, 0
+  index: -1
+wingL1
+  rotate: true
+  xy: 1190, 22
+  size: 97, 186
+  orig: 97, 186
+  offset: 0, 0
+  index: -1
+wingL2
+  rotate: true
+  xy: 1566, 58
+  size: 79, 179
+  orig: 79, 179
+  offset: 0, 0
+  index: -1
+wingL3
+  rotate: true
+  xy: 810, 10
+  size: 77, 188
+  orig: 77, 188
+  offset: 0, 0
+  index: -1
+wingR1
+  rotate: true
+  xy: 1378, 22
+  size: 97, 186
+  orig: 97, 186
+  offset: 0, 0
+  index: -1
+wingR2
+  rotate: true
+  xy: 1701, 172
+  size: 79, 179
+  orig: 79, 179
+  offset: 0, 0
+  index: -1
+wingR3
+  rotate: true
+  xy: 1000, 10
+  size: 77, 188
+  orig: 77, 188
+  offset: 0, 0
+  index: -1

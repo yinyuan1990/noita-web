@@ -1,0 +1,97 @@
+
+musa.png
+size: 240,240
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc1
+  rotate: true
+  xy: 168, 14
+  size: 30, 42
+  orig: 30, 42
+  offset: 0, 0
+  index: -1
+acc2
+  rotate: false
+  xy: 102, 132
+  size: 46, 30
+  orig: 48, 32
+  offset: 1, 1
+  index: -1
+acc3
+  rotate: false
+  xy: 2, 4
+  size: 50, 32
+  orig: 52, 34
+  offset: 1, 1
+  index: -1
+arm1
+  rotate: false
+  xy: 2, 38
+  size: 62, 82
+  orig: 62, 82
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 118, 14
+  size: 48, 50
+  orig: 48, 50
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 122
+  size: 98, 116
+  orig: 98, 116
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 168, 96
+  size: 58, 56
+  orig: 58, 56
+  offset: 0, 0
+  index: -1
+hand1
+  rotate: false
+  xy: 168, 46
+  size: 64, 48
+  orig: 66, 50
+  offset: 1, 1
+  index: -1
+hand2
+  rotate: true
+  xy: 54, 2
+  size: 30, 36
+  orig: 32, 38
+  offset: 1, 1
+  index: -1
+handL
+  rotate: true
+  xy: 118, 66
+  size: 64, 48
+  orig: 66, 50
+  offset: 1, 1
+  index: -1
+head
+  rotate: false
+  xy: 102, 164
+  size: 68, 74
+  orig: 70, 76
+  offset: 1, 1
+  index: -1
+leg1
+  rotate: false
+  xy: 66, 34
+  size: 50, 86
+  orig: 50, 86
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: false
+  xy: 172, 154
+  size: 54, 84
+  orig: 54, 84
+  offset: 0, 0
+  index: -1

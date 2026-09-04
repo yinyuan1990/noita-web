@@ -1,0 +1,69 @@
+
+smith.png
+size: 274,274
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 218, 188
+  size: 54, 84
+  orig: 54, 84
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 114, 58
+  size: 86, 76
+  orig: 86, 76
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 146
+  size: 130, 126
+  orig: 130, 126
+  offset: 0, 0
+  index: -1
+hair1
+  rotate: false
+  xy: 2, 4
+  size: 28, 30
+  orig: 28, 30
+  offset: 0, 0
+  index: -1
+hand1
+  rotate: false
+  xy: 2, 36
+  size: 110, 108
+  orig: 110, 108
+  offset: 0, 0
+  index: -1
+hand2
+  rotate: true
+  xy: 114, 14
+  size: 42, 48
+  orig: 42, 48
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 192, 6
+  size: 80, 64
+  orig: 82, 66
+  offset: 1, 1
+  index: -1
+leg1
+  rotate: false
+  xy: 134, 160
+  size: 82, 112
+  orig: 82, 112
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: false
+  xy: 192, 72
+  size: 76, 86
+  orig: 76, 86
+  offset: 0, 0
+  index: -1

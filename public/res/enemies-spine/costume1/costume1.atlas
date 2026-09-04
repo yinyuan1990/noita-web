@@ -1,0 +1,146 @@
+
+costume1.png
+size: 512,64
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+ch1_arm_left_1
+  rotate: true
+  xy: 253, 4
+  size: 18, 30
+  orig: 224, 224
+  offset: 118, 76
+  index: -1
+ch1_arm_left_2
+  rotate: true
+  xy: 323, 25
+  size: 37, 29
+  orig: 224, 224
+  offset: 119, 60
+  index: -1
+ch1_arm_left_3
+  rotate: false
+  xy: 346, 4
+  size: 16, 19
+  orig: 224, 224
+  offset: 118, 53
+  index: -1
+ch1_arm_right_1
+  rotate: true
+  xy: 314, 5
+  size: 17, 30
+  orig: 224, 224
+  offset: 87, 74
+  index: -1
+ch1_arm_right_2
+  rotate: true
+  xy: 354, 26
+  size: 36, 28
+  orig: 224, 224
+  offset: 69, 60
+  index: -1
+ch1_arm_right_3
+  rotate: false
+  xy: 364, 6
+  size: 13, 18
+  orig: 224, 224
+  offset: 81, 54
+  index: -1
+ch1_body2
+  rotate: false
+  xy: 112, 6
+  size: 35, 56
+  orig: 224, 224
+  offset: 92, 57
+  index: -1
+ch1_body3
+  rotate: false
+  xy: 59, 10
+  size: 51, 52
+  orig: 224, 224
+  offset: 98, 28
+  index: -1
+ch1_body4
+  rotate: false
+  xy: 149, 13
+  size: 33, 49
+  orig: 224, 224
+  offset: 69, 30
+  index: -1
+ch1_body5
+  rotate: false
+  xy: 292, 24
+  size: 29, 38
+  orig: 224, 224
+  offset: 89, 41
+  index: -1
+ch1_hair
+  rotate: true
+  xy: 2, 6
+  size: 56, 55
+  orig: 224, 224
+  offset: 82, 107
+  index: -1
+ch1_head_1
+  rotate: false
+  xy: 184, 24
+  size: 34, 38
+  orig: 224, 224
+  offset: 93, 110
+  index: -1
+ch1_head_2
+  rotate: false
+  xy: 220, 24
+  size: 34, 38
+  orig: 224, 224
+  offset: 93, 110
+  index: -1
+ch1_head_3
+  rotate: false
+  xy: 256, 24
+  size: 34, 38
+  orig: 224, 224
+  offset: 93, 110
+  index: -1
+ch1_leg_left_1
+  rotate: false
+  xy: 384, 29
+  size: 23, 33
+  orig: 224, 224
+  offset: 101, 45
+  index: -1
+ch1_leg_left_2
+  rotate: true
+  xy: 221, 2
+  size: 20, 30
+  orig: 224, 224
+  offset: 109, 24
+  index: -1
+ch1_leg_left_3
+  rotate: false
+  xy: 168, 2
+  size: 12, 9
+  orig: 224, 224
+  offset: 115, 20
+  index: -1
+ch1_leg_right_1
+  rotate: true
+  xy: 184, 3
+  size: 19, 35
+  orig: 224, 224
+  offset: 88, 43
+  index: -1
+ch1_leg_right_2
+  rotate: true
+  xy: 285, 3
+  size: 19, 27
+  orig: 224, 224
+  offset: 86, 28
+  index: -1
+ch1_leg_right_3
+  rotate: false
+  xy: 149, 3
+  size: 17, 8
+  orig: 224, 224
+  offset: 83, 23
+  index: -1

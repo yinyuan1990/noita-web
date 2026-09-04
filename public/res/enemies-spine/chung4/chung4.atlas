@@ -1,0 +1,160 @@
+
+chung4.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc1
+  rotate: true
+  xy: 142, 144
+  size: 37, 36
+  orig: 39, 38
+  offset: 1, 1
+  index: -1
+acc2
+  rotate: false
+  xy: 58, 175
+  size: 34, 26
+  orig: 36, 28
+  offset: 1, 1
+  index: -1
+acc3
+  rotate: false
+  xy: 94, 133
+  size: 34, 26
+  orig: 36, 28
+  offset: 1, 1
+  index: -1
+acc4
+  rotate: true
+  xy: 56, 136
+  size: 37, 36
+  orig: 39, 38
+  offset: 1, 1
+  index: -1
+chu3_Larm1
+  rotate: false
+  xy: 241, 232
+  size: 13, 22
+  orig: 13, 22
+  offset: 0, 0
+  index: -1
+chu3_Larm2
+  rotate: false
+  xy: 2, 155
+  size: 52, 19
+  orig: 52, 19
+  offset: 0, 0
+  index: -1
+chu3_Rarm1
+  rotate: false
+  xy: 38, 132
+  size: 12, 21
+  orig: 14, 23
+  offset: 1, 1
+  index: -1
+chu3_Rarm2
+  rotate: false
+  xy: 2, 133
+  size: 34, 20
+  orig: 35, 20
+  offset: 0, 0
+  index: -1
+chu3_Rarmhair
+  rotate: true
+  xy: 241, 200
+  size: 30, 12
+  orig: 30, 12
+  offset: 0, 0
+  index: -1
+chu3_body
+  rotate: true
+  xy: 95, 183
+  size: 71, 83
+  orig: 71, 83
+  offset: 0, 0
+  index: -1
+chu3_body2
+  rotate: false
+  xy: 2, 203
+  size: 91, 51
+  orig: 91, 51
+  offset: 0, 0
+  index: -1
+chu3_bodyhair
+  rotate: true
+  xy: 2, 176
+  size: 25, 54
+  orig: 25, 54
+  offset: 0, 0
+  index: -1
+chu3_ear
+  rotate: false
+  xy: 130, 152
+  size: 10, 7
+  orig: 12, 9
+  offset: 1, 1
+  index: -1
+chu3_face
+  rotate: false
+  xy: 180, 174
+  size: 56, 55
+  orig: 56, 55
+  offset: 0, 0
+  index: -1
+chu3_face2
+  rotate: true
+  xy: 238, 179
+  size: 19, 15
+  orig: 21, 17
+  offset: 1, 1
+  index: -1
+chu3_facehair
+  rotate: true
+  xy: 31, 112
+  size: 18, 19
+  orig: 18, 19
+  offset: 0, 0
+  index: -1
+chu3_finger
+  rotate: true
+  xy: 130, 139
+  size: 11, 9
+  orig: 11, 10
+  offset: 0, 0
+  index: -1
+chu3_hair1
+  rotate: false
+  xy: 94, 161
+  size: 46, 20
+  orig: 46, 20
+  offset: 0, 0
+  index: -1
+chu3_mou
+  rotate: true
+  xy: 52, 114
+  size: 20, 24
+  orig: 20, 24
+  offset: 0, 0
+  index: -1
+chu3_tail
+  rotate: false
+  xy: 2, 109
+  size: 27, 22
+  orig: 27, 22
+  offset: 0, 0
+  index: -1
+su1
+  rotate: false
+  xy: 180, 231
+  size: 59, 23
+  orig: 59, 23
+  offset: 0, 0
+  index: -1
+su2
+  rotate: false
+  xy: 238, 150
+  size: 12, 27
+  orig: 12, 27
+  offset: 0, 0
+  index: -1

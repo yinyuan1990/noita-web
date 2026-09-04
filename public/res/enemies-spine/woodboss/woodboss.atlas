@@ -1,0 +1,174 @@
+
+woodboss.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+L_arm1
+  rotate: true
+  xy: 908, 876
+  size: 88, 104
+  orig: 88, 104
+  offset: 0, 0
+  index: -1
+L_arm2
+  rotate: true
+  xy: 908, 966
+  size: 52, 110
+  orig: 52, 110
+  offset: 0, 0
+  index: -1
+L_leg
+  rotate: false
+  xy: 908, 712
+  size: 102, 162
+  orig: 102, 162
+  offset: 0, 0
+  index: -1
+R_leg
+  rotate: true
+  xy: 274, 746
+  size: 86, 174
+  orig: 86, 174
+  offset: 0, 0
+  index: -1
+acc1
+  rotate: true
+  xy: 276, 718
+  size: 26, 74
+  orig: 26, 74
+  offset: 0, 0
+  index: -1
+acc2
+  rotate: true
+  xy: 792, 794
+  size: 38, 86
+  orig: 38, 86
+  offset: 0, 0
+  index: -1
+acc3
+  rotate: true
+  xy: 714, 646
+  size: 38, 70
+  orig: 38, 70
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: true
+  xy: 250, 560
+  size: 152, 186
+  orig: 152, 186
+  offset: 0, 0
+  index: -1
+bell1
+  rotate: false
+  xy: 226, 738
+  size: 24, 94
+  orig: 24, 94
+  offset: 0, 0
+  index: -1
+bell2
+  rotate: true
+  xy: 184, 714
+  size: 20, 90
+  orig: 20, 90
+  offset: 0, 0
+  index: -1
+bell3
+  rotate: false
+  xy: 252, 744
+  size: 20, 88
+  orig: 20, 88
+  offset: 0, 0
+  index: -1
+bell4
+  rotate: true
+  xy: 92, 712
+  size: 22, 90
+  orig: 22, 90
+  offset: 0, 0
+  index: -1
+body1
+  rotate: true
+  xy: 450, 654
+  size: 178, 188
+  orig: 178, 188
+  offset: 0, 0
+  index: -1
+body2
+  rotate: false
+  xy: 92, 736
+  size: 132, 96
+  orig: 132, 96
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 834
+  size: 300, 184
+  orig: 300, 184
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 304, 834
+  size: 300, 184
+  orig: 300, 184
+  offset: 0, 0
+  index: -1
+face3
+  rotate: false
+  xy: 606, 834
+  size: 300, 184
+  orig: 300, 184
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 640, 686
+  size: 150, 146
+  orig: 150, 146
+  offset: 0, 0
+  index: -1
+hairacc
+  rotate: false
+  xy: 792, 726
+  size: 76, 66
+  orig: 76, 66
+  offset: 0, 0
+  index: -1
+neck
+  rotate: false
+  xy: 870, 656
+  size: 58, 54
+  orig: 60, 56
+  offset: 1, 1
+  index: -1
+rope
+  rotate: true
+  xy: 792, 674
+  size: 50, 76
+  orig: 50, 76
+  offset: 0, 0
+  index: -1
+vine1
+  rotate: false
+  xy: 2, 456
+  size: 246, 254
+  orig: 246, 254
+  offset: 0, 0
+  index: -1
+yum1
+  rotate: false
+  xy: 640, 616
+  size: 72, 68
+  orig: 72, 68
+  offset: 0, 0
+  index: -1
+yum2
+  rotate: true
+  xy: 2, 732
+  size: 100, 88
+  orig: 100, 88
+  offset: 0, 0
+  index: -1

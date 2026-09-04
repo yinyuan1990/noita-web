@@ -1,0 +1,48 @@
+
+Zombie.png
+size: 128,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: false
+  xy: 2, 118
+  size: 96, 127
+  orig: 96, 127
+  offset: 0, 0
+  index: -1
+forelegL
+  rotate: true
+  xy: 39, 4
+  size: 54, 29
+  orig: 54, 29
+  offset: 0, 0
+  index: -1
+forelegR
+  rotate: true
+  xy: 70, 4
+  size: 54, 29
+  orig: 54, 29
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 2, 60
+  size: 46, 56
+  orig: 46, 56
+  offset: 0, 0
+  index: -1
+hindlegL
+  rotate: false
+  xy: 2, 2
+  size: 35, 56
+  orig: 35, 56
+  offset: 0, 0
+  index: -1
+hindlegR
+  rotate: false
+  xy: 50, 60
+  size: 35, 56
+  orig: 35, 56
+  offset: 0, 0
+  index: -1

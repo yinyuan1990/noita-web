@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>像素材质实验场 · 低配 Noita 验证</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #07090c; }
+      body {
+        font-family: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+        color: #e8eef4;
+        display: flex;
+      }
+      #panel {
+        width: 200px;
+        height: 100%;
+        overflow-y: auto;
+        padding: 12px 10px;
+        background: rgba(10, 14, 20, 0.92);
+        border-right: 1px solid rgba(120, 140, 160, 0.35);
+        flex-shrink: 0;
+      }
+      #panel h1 { font-size: 0.85rem; letter-spacing: 0.12em; margin-bottom: 4px; }
+      #panel .sub { font-size: 0.62rem; color: #8a9aab; margin-bottom: 10px; line-height: 1.6; }
+      #panel .group { font-size: 0.6rem; color: #66788a; letter-spacing: 0.12em; margin: 10px 0 5px; }
+      #panel button {
+        display: block;
+        width: 100%;
+        margin-bottom: 4px;
+        padding: 0.36rem 0.5rem;
+        font-family: inherit;
+        font-size: 0.7rem;
+        letter-spacing: 0.05em;
+        text-align: left;
+        color: #c5d6e4;
+        background: rgba(14, 18, 24, 0.9);
+        border: 1px solid rgba(120, 140, 160, 0.35);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #panel button:hover { border-color: #7ea0b8; color: #fff; }
+      #panel button.active { border-color: currentColor; background: rgba(30, 44, 58, 0.95); color: #fff; }
+      #panel button .sw {
+        display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+        margin-right: 6px; vertical-align: -1px;
+      }
+      .minirow { display: flex; flex-wrap: wrap; gap: 4px; }
+      .minirow button { flex: 1 1 44%; margin: 0 !important; text-align: center !important; padding: 0.3rem 0 !important; font-size: 0.66rem !important; }
+      #panel label.row {
+        display: flex; align-items: center; gap: 6px;
+        margin: 6px 0; font-size: 0.66rem; color: #8a9aab; cursor: pointer;
+      }
+      #stage { flex: 1; height: 100%; position: relative; display: flex; align-items: center; justify-content: center; background: #04050a; }
+      #stage canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+      #tip {
+        position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+        font-size: 0.66rem; letter-spacing: 0.08em; color: rgba(200, 214, 226, 0.5);
+        pointer-events: none; text-align: center; line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <h1>像素材质实验场</h1>
+      <div class="sub">低配 Noita:落沙模拟 ×<br />可破坏地形 × 射击</div>
+      <div class="group">法杖（1-5 / Q/E 切换）</div>
+      <div id="wands"></div>
+      <div class="group">卡组（修正卡吃右边一张）</div>
+      <div class="sub" id="deckview" style="margin-bottom:0; line-height:1.9"></div>
+      <div class="group">材质画笔（右键涂画）</div>
+      <div class="minirow" id="brushes"></div>
+      <label class="row">笔刷 <input type="range" id="bsize" min="1" max="10" value="4" /></label>
+      <div class="group">敌人</div>
+      <div id="mobs"></div>
+      <label class="row"><input type="checkbox" id="autospawn" checked /> 自动出怪</label>
+      <div class="group">世界</div>
+      <button id="regen">重新生成地图</button>
+      <div class="group">试试这些</div>
+      <div class="sub" style="margin-bottom:0">
+        · 法杖=卡组:抽空整轮装填<br />
+        · 工兵触发:触发弹空中放炸弹<br />
+        · 三叉元素:一次糊三种材质<br />
+        · 混沌洗牌:每轮抽卡顺序都变<br />
+        · 聚能卡是负蓝耗,回法力<br />
+        · 拖油卡沿弹道滴油…再点火
+      </div>
+    </div>
+    <div id="stage"><div id="tip">A/D 行走 · W/空格 喷气悬浮(耗燃料,落地回充) · 鼠标瞄准 · 左键开火 · 右键涂材质<br />着火了就跳进水里!</div></div>
+    <script type="module" src="/src/demo/pixelDemo.js"></script>
+  </body>
+</html>

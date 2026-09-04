@@ -1,0 +1,181 @@
+
+baekjak.png
+size: 219,219
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 38, 71
+  size: 49, 60
+  orig: 49, 60
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 116, 163
+  size: 54, 53
+  orig: 54, 53
+  offset: 0, 0
+  index: -1
+arm2_ribon
+  rotate: true
+  xy: 143, 110
+  size: 17, 20
+  orig: 17, 20
+  offset: 0, 0
+  index: -1
+arm2_ribon_back
+  rotate: true
+  xy: 38, 51
+  size: 18, 23
+  orig: 18, 23
+  offset: 0, 0
+  index: -1
+armL_ribon
+  rotate: false
+  xy: 180, 45
+  size: 30, 29
+  orig: 30, 29
+  offset: 0, 0
+  index: -1
+back_skirt_side
+  rotate: true
+  xy: 2, 51
+  size: 80, 34
+  orig: 80, 34
+  offset: 0, 0
+  index: -1
+backskirt
+  rotate: false
+  xy: 61, 134
+  size: 46, 23
+  orig: 46, 23
+  offset: 0, 0
+  index: -1
+bird
+  rotate: false
+  xy: 180, 76
+  size: 32, 15
+  orig: 32, 15
+  offset: 0, 0
+  index: -1
+bird2
+  rotate: false
+  xy: 109, 134
+  size: 32, 23
+  orig: 32, 23
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 2, 2
+  size: 47, 49
+  orig: 47, 49
+  offset: 0, 0
+  index: -1
+body_acc
+  rotate: true
+  xy: 143, 129
+  size: 19, 20
+  orig: 19, 20
+  offset: 0, 0
+  index: -1
+body_acc_2
+  rotate: false
+  xy: 143, 150
+  size: 23, 11
+  orig: 23, 11
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 180, 93
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 143, 77
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 61, 159
+  size: 53, 58
+  orig: 53, 58
+  offset: 0, 0
+  index: -1
+hair2
+  rotate: false
+  xy: 2, 133
+  size: 57, 84
+  orig: 57, 84
+  offset: 0, 0
+  index: -1
+hair_pin
+  rotate: true
+  xy: 93, 4
+  size: 46, 29
+  orig: 46, 29
+  offset: 0, 0
+  index: -1
+hair_pin2
+  rotate: true
+  xy: 82, 52
+  size: 17, 22
+  orig: 17, 22
+  offset: 0, 0
+  index: -1
+legL
+  rotate: true
+  xy: 124, 12
+  size: 38, 54
+  orig: 38, 54
+  offset: 0, 0
+  index: -1
+legR
+  rotate: false
+  xy: 171, 126
+  size: 44, 37
+  orig: 44, 37
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: true
+  xy: 171, 165
+  size: 52, 44
+  orig: 52, 44
+  offset: 0, 0
+  index: -1
+skirt2
+  rotate: true
+  xy: 53, 3
+  size: 46, 38
+  orig: 46, 38
+  offset: 0, 0
+  index: -1
+skirt_side
+  rotate: true
+  xy: 89, 76
+  size: 56, 52
+  orig: 56, 52
+  offset: 0, 0
+  index: -1
+wing
+  rotate: false
+  xy: 106, 52
+  size: 23, 22
+  orig: 23, 22
+  offset: 0, 0
+  index: -1
+wing_back
+  rotate: false
+  xy: 63, 51
+  size: 17, 18
+  orig: 17, 18
+  offset: 0, 0
+  index: -1

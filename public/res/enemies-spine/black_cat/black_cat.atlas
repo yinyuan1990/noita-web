@@ -1,0 +1,48 @@
+
+black_cat.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 46, 4
+  size: 16, 16
+  orig: 16, 16
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 64, 6
+  size: 19, 14
+  orig: 19, 14
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 44, 58
+  size: 28, 34
+  orig: 28, 34
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 44
+  size: 40, 42
+  orig: 40, 42
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 2, 2
+  size: 40, 42
+  orig: 40, 42
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 46, 22
+  size: 25, 34
+  orig: 25, 34
+  offset: 0, 0
+  index: -1

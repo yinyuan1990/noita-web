@@ -1,0 +1,62 @@
+
+gdr.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc1
+  rotate: true
+  xy: 51, 106
+  size: 15, 25
+  orig: 15, 25
+  offset: 0, 0
+  index: -1
+accb
+  rotate: false
+  xy: 2, 183
+  size: 59, 71
+  orig: 59, 71
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: false
+  xy: 62, 14
+  size: 23, 47
+  orig: 23, 47
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 61, 63
+  size: 31, 41
+  orig: 31, 41
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 105
+  size: 47, 76
+  orig: 47, 76
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 2, 45
+  size: 58, 57
+  orig: 58, 57
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 51, 123
+  size: 58, 57
+  orig: 58, 57
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 2, 2
+  size: 58, 41
+  orig: 58, 41
+  offset: 0, 0
+  index: -1

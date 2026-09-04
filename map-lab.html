@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Noita 地图实验室 · 原版 coalmine 管线单独复现</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #07090c; }
+      body { font-family: "Noto Serif SC", Georgia, serif; color: #e8eef4; display: flex; }
+      #panel {
+        width: 216px; height: 100%; overflow-y: auto; padding: 12px 10px;
+        background: rgba(10, 14, 20, 0.92); border-right: 1px solid rgba(120, 140, 160, 0.35); flex-shrink: 0;
+      }
+      #panel h1 { font-size: 0.85rem; letter-spacing: 0.12em; margin-bottom: 4px; }
+      #panel .sub { font-size: 0.62rem; color: #8a9aab; margin-bottom: 10px; line-height: 1.6; }
+      #panel .group { font-size: 0.6rem; color: #66788a; letter-spacing: 0.12em; margin: 12px 0 5px; }
+      #panel button {
+        display: block; width: 100%; margin-bottom: 4px; padding: 0.36rem 0.5rem;
+        font-family: inherit; font-size: 0.7rem; text-align: left; color: #c5d6e4;
+        background: rgba(14, 18, 24, 0.9); border: 1px solid rgba(120, 140, 160, 0.35);
+        border-radius: 6px; cursor: pointer;
+      }
+      #panel button:hover { border-color: #7ea0b8; color: #fff; }
+      #panel label.row {
+        display: flex; align-items: center; gap: 6px; margin: 5px 0;
+        font-size: 0.68rem; color: #a8b8c8; cursor: pointer;
+      }
+      #panel .stat { font-size: 0.62rem; color: #8a9aab; line-height: 1.8; }
+      #panel .legend { font-size: 0.6rem; color: #8a9aab; line-height: 1.9; }
+      #panel .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+      #stage { flex: 1; height: 100%; position: relative; overflow: hidden; background: #04050a; cursor: grab; }
+      #stage.drag { cursor: grabbing; }
+      #view { position: absolute; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; }
+      #tip {
+        position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+        font-size: 0.66rem; color: rgba(200, 214, 226, 0.5); pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <h1>NOITA 地图实验室</h1>
+      <div class="sub">要的是算法不是原图。地表=SIN_CAPPED_SIMPLEX 高度场;洞选=BitmapCaves 按数量抽签再分叉。零原作贴图。</div>
+      <div class="group">看哪一套</div>
+      <button id="modeHills">地表+洞选(纯算法)</button>
+      <button id="modeMine">煤矿 wang 砖(地下)</button>
+      <button id="modeTemple">圣山(整图,对照用)</button>
+      <button id="modeAtlas">世界图 70×48</button>
+      <div class="group">重掷</div>
+      <button id="regen">换个种子重拼(R)</button>
+      <div class="stat" id="seedStat"></div>
+      <div class="group">管线分层(拆开看谁贡献了什么)</div>
+      <div id="toggles"></div>
+      <div class="group">缩放</div>
+      <button id="zin">放大(滚轮↑)</button>
+      <button id="zout">缩小(滚轮↓)</button>
+      <div class="group">标记图例(wang_scripts.csv)</div>
+      <div class="legend" id="legend"></div>
+      <div class="group">统计</div>
+      <div class="stat" id="stat"></div>
+    </div>
+    <div id="stage"><canvas id="view"></canvas><div id="tip">拖拽平移 · 滚轮缩放 · R 重掷</div></div>
+    <script type="module" src="/src/demo/mapLab.js"></script>
+  </body>
+</html>

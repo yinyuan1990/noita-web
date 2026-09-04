@@ -1,0 +1,62 @@
+
+tih.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc1
+  rotate: true
+  xy: 2, 2
+  size: 13, 24
+  orig: 13, 24
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: false
+  xy: 45, 77
+  size: 26, 42
+  orig: 26, 42
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 47, 136
+  size: 28, 37
+  orig: 28, 37
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 175
+  size: 52, 76
+  orig: 52, 76
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 2, 69
+  size: 50, 41
+  orig: 50, 41
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 2, 17
+  size: 50, 41
+  orig: 50, 41
+  offset: 0, 0
+  index: -1
+hair1
+  rotate: false
+  xy: 56, 230
+  size: 21, 21
+  orig: 21, 21
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 2, 121
+  size: 43, 52
+  orig: 43, 52
+  offset: 0, 0
+  index: -1

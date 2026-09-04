@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>星际空战 · Star Air Combat</title>
+    <style>
+      :root {
+        --ink: #e8eef4;
+        --dim: #8a9aab;
+        --panel: rgba(10, 14, 20, 0.82);
+        --line: rgba(120, 140, 160, 0.4);
+        --accent: #9ed48a;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      html, body {
+        width: 100%; height: 100%; overflow: hidden; background: #07090c; color: var(--ink);
+        font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
+        -webkit-user-select: none; user-select: none; touch-action: none;
+      }
+      #app { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+      /* 竖版 9:16，自动信箱化居中；手机竖屏铺满宽度 */
+      #host {
+        position: relative;
+        width: min(100vw, calc(100vh * 9 / 16));
+        height: min(100vh, calc(100vw * 16 / 9));
+        background: #0a0c12; overflow: hidden;
+      }
+      #host canvas { display: block; width: 100% !important; height: 100% !important; }
+
+      /* ── 顶部紧凑状态条 ── */
+      #status {
+        position: absolute; left: 6px; right: 6px; top: 6px; z-index: 3;
+        display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+        padding: 0.4rem 0.6rem; font-size: 12px; color: var(--dim); pointer-events: none;
+      }
+      #status .num { color: var(--ink); font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+      #hp-bar {
+        flex: 1 1 90px; min-width: 80px; height: 10px; border: 1px solid var(--line);
+        border-radius: 6px; overflow: hidden; background: rgba(0,0,0,.5);
+      }
+      #hp-fill { height: 100%; width: 100%; background: #7ec86a; transition: width .15s; }
+      #weapon { display: flex; flex-direction: column; line-height: 1.25; flex: 1 1 100%; }
+      #weapon b { font-size: 12px; }
+      #weapon span { font-size: 10px; color: var(--dim); }
+      #combo { color: #ffd24a; font-weight: 700; }
+      #nuke { color: #ffb347; font-weight: 700; }
+      #fps {
+        position: absolute; right: 8px; bottom: 8px; z-index: 3;
+        font-size: 11px; font-variant-numeric: tabular-nums;
+        color: var(--accent); pointer-events: none; opacity: .6;
+      }
+      #bossbar {
+        position: absolute; left: 50%; top: 74px; transform: translateX(-50%); z-index: 3;
+        width: 88%; display: none; pointer-events: none; text-align: center;
+      }
+      #bossname {
+        font-size: 13px; color: #ff8a70; font-weight: 700; letter-spacing: 2px;
+        text-shadow: 0 1px 3px rgba(0,0,0,.8); margin-bottom: 3px;
+      }
+      #bossfill-wrap {
+        height: 9px; border: 1px solid rgba(255, 100, 80, 0.55); border-radius: 5px;
+        overflow: hidden; background: rgba(20, 6, 4, 0.7);
+      }
+      #bossfill {
+        height: 100%; width: 100%; transition: width .12s;
+        background: #ff4433;
+      }
+      #bosslayer {
+        position: absolute; right: 2px; top: -3px;
+        font-size: 12px; font-weight: 700; color: #ffd9a0;
+        text-shadow: 0 1px 3px rgba(0,0,0,.8);
+      }
+
+      /* ── 触屏控件 ── */
+      #touch { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+      #joy {
+        position: absolute; width: 132px; height: 132px; border-radius: 50%;
+        border: 2px solid rgba(158, 212, 138, 0.5); background: rgba(10, 20, 14, 0.35);
+        transform: translate(-50%, -50%); display: none; pointer-events: none;
+      }
+      #joy-knob {
+        position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; border-radius: 50%;
+        background: rgba(158, 212, 138, 0.55); border: 1px solid rgba(220,240,220,.6);
+        transform: translate(-50%, -50%);
+      }
+      .btn {
+        --c: #8a9aab; --glow: rgba(140, 160, 180, 0.4);
+        opacity: 0.5;
+        position: absolute; z-index: 5; pointer-events: auto;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 1px; text-align: center; border-radius: 50%;
+        border: 2px solid var(--c);
+        background:
+          radial-gradient(circle at 50% 26%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 45%),
+          radial-gradient(circle at 50% 115%, var(--glow), rgba(0, 0, 0, 0) 62%),
+          radial-gradient(circle, #202b3c 0%, #101722 62%, #060a10 100%);
+        box-shadow:
+          0 0 14px var(--glow),
+          0 5px 12px rgba(0, 0, 0, 0.65),
+          inset 0 2px 5px rgba(255, 255, 255, 0.28),
+          inset 0 -7px 12px rgba(0, 0, 0, 0.6);
+        color: var(--ink); font-weight: 800; line-height: 1;
+        user-select: none; touch-action: none;
+      }
+      .btn > * { pointer-events: none; }
+      .btn i { font-style: normal; font-size: 21px; text-shadow: 0 0 10px var(--glow), 0 2px 3px rgba(0, 0, 0, 0.8); }
+      .btn span { font-size: 11px; letter-spacing: 2px; margin-right: -2px; color: #f2f7fb; text-shadow: 0 0 6px var(--glow), 0 1px 2px #000; }
+      .btn:active {
+        opacity: 1;
+        transform: scale(0.9); filter: brightness(1.45);
+        box-shadow:
+          0 0 26px var(--glow),
+          0 3px 8px rgba(0, 0, 0, 0.6),
+          inset 0 2px 5px rgba(255, 255, 255, 0.35),
+          inset 0 -7px 12px rgba(0, 0, 0, 0.5);
+      }
+      #btn-nuke { right: 18px; bottom: 26px; width: 82px; height: 82px; --c: #ff9a40; --glow: rgba(255, 150, 60, 0.55); }
+      #btn-nuke i { font-size: 30px; color: #ffcf7a; }
+      #btn-boost { right: 108px; bottom: 40px; width: 66px; height: 66px; --c: #55c4ff; --glow: rgba(80, 190, 255, 0.5); }
+      #btn-weapon { right: 30px; bottom: 122px; width: 62px; height: 62px; --c: #ffd24a; --glow: rgba(255, 210, 74, 0.45); }
+      #btn-max { right: 30px; bottom: 196px; width: 62px; height: 62px; --c: #d488ff; --glow: rgba(212, 136, 255, 0.5); }
+
+      /* ── 加载界面 ── */
+      #loading {
+        position: absolute; inset: 0; z-index: 20; display: flex;
+        flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+        background: radial-gradient(circle at 50% 40%, #101826, #05070b 75%); text-align: center;
+      }
+      #loading h1 { font-size: 30px; color: var(--accent); letter-spacing: 6px; text-shadow: 0 2px 12px rgba(0,0,0,.7); }
+      #loading .sub { color: var(--dim); font-size: 12px; letter-spacing: 1px; }
+      #load-bar-wrap {
+        width: 72%; max-width: 340px; height: 12px; border: 1px solid var(--line);
+        border-radius: 7px; overflow: hidden; background: rgba(0,0,0,.5);
+      }
+      #load-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #7ec86a, #9ed48a); transition: width .2s; }
+      #load-pct { color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+      #load-tip { color: var(--dim); font-size: 11px; max-width: 80%; line-height: 1.5; }
+
+      /* ── 结算 ── */
+      #gameover {
+        position: absolute; inset: 0; z-index: 6; display: none;
+        flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+        background: rgba(4, 6, 10, 0.72); text-align: center;
+      }
+      #gameover h1 { font-size: 44px; color: #e05540; letter-spacing: 8px; }
+      #gameover p { color: var(--ink); font-size: 16px; }
+      #btn-restart {
+        pointer-events: auto; padding: 0.7rem 1.8rem; font-size: 16px; font-weight: 700;
+        color: #07090c; background: var(--accent); border: none; border-radius: 10px;
+        letter-spacing: 2px;
+      }
+      #btn-restart:active { filter: brightness(1.2); }
+
+      #chapter {
+        position: absolute; inset: 0; z-index: 12; display: none;
+        flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+        background: radial-gradient(circle at 50% 40%, rgba(16,24,38,.96), rgba(5,7,11,.98) 75%);
+        text-align: center;
+      }
+      #chapter.show { display: flex; }
+      #chapter-title { font-size: 26px; color: #ffd88a; letter-spacing: 4px; text-shadow: 0 2px 12px rgba(0,0,0,.8); }
+      #chapter-sub { font-size: 13px; color: var(--dim); letter-spacing: 2px; }
+      #chapter-spin {
+        margin-top: 8px; width: 44px; height: 44px; border-radius: 50%;
+        border: 3px solid rgba(158,212,138,.25); border-top-color: #9ed48a;
+        animation: chspin .8s linear infinite;
+      }
+      @keyframes chspin { to { transform: rotate(360deg); } }
+
+      a.back {
+        position: absolute; left: 8px; bottom: 8px; z-index: 6;
+        font-size: 11px; color: var(--dim); text-decoration: none;
+        border: 1px solid var(--line); border-radius: 6px; padding: 0.24rem 0.5rem;
+        background: var(--panel); pointer-events: auto; opacity: .5;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="host">
+        <div id="status">
+          <div id="hp-bar"><div id="hp-fill"></div></div>
+          <div>生 <span class="num" id="hp-num">100/100</span></div>
+          <div>力 <span class="num" id="combat-num">800</span></div>
+          <div>分 <span class="num" id="score">0</span></div>
+          <div>机 <span class="num" id="hangar-lv">Lv1</span></div>
+          <div>关 <span class="num" id="wave">1</span></div>
+          <div id="nuke" title="核弹"></div>
+          <div id="combo"></div>
+          <div id="weapon"></div>
+        </div>
+        <div id="bossbar">
+          <div id="bossname"></div>
+          <div id="bossfill-wrap"><div id="bossfill"></div></div>
+          <span id="bosslayer"></span>
+        </div>
+
+        <!-- 触屏：左半屏浮动摇杆移动，右侧按钮 -->
+        <div id="touch">
+          <div id="joy"><div id="joy-knob"></div></div>
+        </div>
+        <div id="btn-max" class="btn"><i>🔥</i><span>全开</span></div>
+        <div id="btn-weapon" class="btn"><i>🔄</i><span>换弹</span></div>
+        <div id="btn-boost" class="btn"><i>💨</i><span>冲刺</span></div>
+        <div id="btn-nuke" class="btn"><i>☢</i><span>核弹</span></div>
+
+        <div id="fps">-- FPS</div>
+        <a class="back" href="/forest-demo.html">←</a>
+
+        <div id="loading">
+          <h1>星际空战</h1>
+          <div class="sub">STAR AIR COMBAT</div>
+          <div id="load-bar-wrap"><div id="load-bar"></div></div>
+          <div id="load-pct">0%</div>
+          <div id="load-tip">正在预载星图、机体骨骼与爆炸粒子…<br />首次加载稍久，之后进入战场即刻流畅</div>
+        </div>
+
+        <div id="gameover">
+          <h1>坠 机</h1>
+          <p id="final-score"></p>
+          <button id="btn-restart">重新起飞</button>
+        </div>
+
+        <!-- 关间加载：打完 Boss 进入下一章时，加载该章妖魔军团素材 -->
+        <div id="chapter">
+          <div id="chapter-title"></div>
+          <div id="chapter-sub"></div>
+          <div id="chapter-spin"></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/demo/airCombat.js"></script>
+  </body>
+</html>

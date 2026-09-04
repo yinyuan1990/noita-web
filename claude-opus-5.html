@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>高速穿透气功波 · claude-opus-5</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+  body { font: 13px/1.6 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; color: #cfd3e2; }
+  #stage { display: block; width: 100vw; height: 100vh; }
+
+  .panel {
+    position: fixed; left: 16px; top: 16px; width: 244px;
+    padding: 14px 16px 12px;
+    background: rgba(12, 10, 20, .72);
+    border: 1px solid rgba(190, 120, 255, .28);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .6);
+    user-select: none;
+    transition: transform .25s ease, opacity .25s ease;
+  }
+  .panel.hidden { transform: translateX(-118%); opacity: 0; pointer-events: none; }
+  .panel h1 {
+    font-size: 13px; font-weight: 600; letter-spacing: .06em;
+    color: #ffd98a; margin-bottom: 2px;
+  }
+  .panel .sub { font-size: 11px; color: #7c7f95; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .row label { flex: 0 0 62px; font-size: 11px; color: #9aa0bb; }
+  .row input[type=range] {
+    flex: 1; height: 3px; appearance: none; background: #2a2440; border-radius: 3px; outline: none;
+  }
+  .row input[type=range]::-webkit-slider-thumb {
+    appearance: none; width: 12px; height: 12px; border-radius: 50%;
+    background: #ffcf5c; box-shadow: 0 0 8px #ff9d2e; cursor: pointer;
+  }
+  .row .val { flex: 0 0 34px; text-align: right; font-size: 11px; color: #6f748f; font-variant-numeric: tabular-nums; }
+  .btns { display: flex; gap: 6px; margin-top: 10px; }
+  .btns button {
+    flex: 1; padding: 6px 0; font-size: 11px; color: #d9dcec; cursor: pointer;
+    background: rgba(120, 80, 200, .18); border: 1px solid rgba(160, 120, 255, .3);
+    border-radius: 7px;
+  }
+  .btns button:hover { background: rgba(150, 100, 240, .32); color: #fff; }
+  .tip { position: fixed; right: 16px; bottom: 12px; font-size: 11px; color: #4c5068; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div class="panel" id="panel">
+  <h1>高速穿透气功波</h1>
+  <div class="sub">claude-opus-5 / Canvas2D</div>
+  <div class="row"><label>长度</label><input id="p_len"   type="range" min="50" max="130" value="92"><span class="val" id="v_len"></span></div>
+  <div class="row"><label>粗细</label><input id="p_rad"   type="range" min="30" max="140" value="100"><span class="val" id="v_rad"></span></div>
+  <div class="row"><label>尖锐度</label><input id="p_sharp" type="range" min="100" max="260" value="165"><span class="val" id="v_sharp"></span></div>
+  <div class="row"><label>螺旋圈数</label><input id="p_turn" type="range" min="4" max="18" value="10"><span class="val" id="v_turn"></span></div>
+  <div class="row"><label>旋转速度</label><input id="p_spin" type="range" min="0" max="300" value="130"><span class="val" id="v_spin"></span></div>
+  <div class="row"><label>紫焰拖尾</label><input id="p_fire" type="range" min="0" max="200" value="110"><span class="val" id="v_fire"></span></div>
+  <div class="row"><label>尾部爆发</label><input id="p_burst" type="range" min="0" max="200" value="110"><span class="val" id="v_burst"></span></div>
+  <div class="row"><label>辉光</label><input id="p_bloom" type="range" min="0" max="220" value="105"><span class="val" id="v_bloom"></span></div>
+  <div class="row"><label>倾角</label><input id="p_ang"  type="range" min="-45" max="15" value="-21"><span class="val" id="v_ang"></span></div>
+  <div class="btns">
+    <button id="b_pause">暂停</button>
+    <button id="b_shot">截图</button>
+    <button id="b_reset">复位</button>
+  </div>
+</div>
+<div class="tip">H 键隐藏面板 · 空格暂停</div>
+
+<script>
+(() => {
+'use strict';
+
+const TAU = Math.PI * 2;
+const view = document.getElementById('stage');
+const vctx = view.getContext('2d');
+const scene = document.createElement('canvas');       // 主绘制层
+const ctx   = scene.getContext('2d');
+const blurA = document.createElement('canvas');       // 辉光降采样层
+const bctx  = blurA.getContext('2d');
+
+let W = 0, H = 0, DPR = 1;
+let paused = false, tPrev = 0, T = 0;
+
+/* ---------- 参数 ---------- */
+const DEF = {
+  len: .92, rad: 1.0, sharp: 1.25, turns: 11,
+  spin: 1.3, fire: 1.0, burst: 1.0, bloom: .50, ang: -21
+};
+const P = Object.assign({}, DEF);
+
+/* ---------- 噪声 ---------- */
+const NT = new Float32Array(1024);
+for (let i = 0; i < 1024; i++) NT[i] = Math.random();
+const n1 = x => {
+  const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f);
+  return NT[i & 1023] * (1 - u) + NT[(i + 1) & 1023] * u;
+};
+const fbm = x => n1(x) * .6 + n1(x * 2.17 + 19.3) * .27 + n1(x * 4.63 + 57.1) * .13;
+
+/* ---------- 尺寸 ---------- */
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.round(window.innerWidth  * DPR);
+  H = Math.round(window.innerHeight * DPR);
+  view.width = scene.width = W;
+  view.height = scene.height = H;
+  view.style.width = window.innerWidth + 'px';
+  view.style.height = window.innerHeight + 'px';
+  blurA.width  = Math.max(1, Math.round(W / 4));
+  blurA.height = Math.max(1, Math.round(H / 4));
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------- 几何：圆锥半径剖面 ----------
+   t=0 起爆端最粗，t=1 前端收敛为 0 —— 保证针状尖头，绝不成球 */
+const CAP = .05;
+function R(t) {
+  if (t >= 1) return 0;
+  const k = Math.max(0, 1 - t);
+  const body = Math.pow(k, P.sharp);          // 主收敛
+  const neck = 1 + .34 * Math.exp(-((t / .07) ** 2));   // 根部略微鼓起
+  const mid  = 1 + .10 * Math.exp(-(((t - .28) / .22) ** 2));
+  // 尾端做半圆收口，避免出现生硬的竖直切边
+  const cap = t < CAP ? Math.sqrt(Math.max(0, 1 - ((CAP - t) / CAP) ** 2)) : 1;
+  return body * neck * mid * cap;
+}
+
+/* 沿轴的手绘抖动边缘（火焰感） */
+function edge(t, seed, amp, tm) {
+  if (amp <= 0) return 1;
+  const a = (fbm(t * 26 + seed + tm * 3.4) - .5) * 1.15;
+  const b = (fbm(t * 9.5 + seed * .61 + tm * 1.7) - .5) * .85;
+  return 1 + amp * (a + b) * Math.min(1, (1 - t) * 4);
+}
+
+/* ---------- 锥体轮廓 ---------- */
+const NSEG = 220;
+function coneLoop(L, R0, k, amp, seed, tm, reverse) {
+  if (!reverse) {
+    for (let i = 0; i <= NSEG; i++) {
+      const t = i / NSEG, x = t * L;
+      const y = -R(t) * R0 * k * edge(t, seed, amp, tm);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    for (let i = NSEG; i >= 0; i--) {
+      const t = i / NSEG;
+      ctx.lineTo(t * L, R(t) * R0 * k * edge(t, seed + 41.7, amp, tm));
+    }
+  } else {
+    for (let i = NSEG; i >= 0; i--) {
+      const t = i / NSEG, x = t * L;
+      const y = -R(t) * R0 * k * edge(t, seed, amp, tm);
+      i === NSEG ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    for (let i = 0; i <= NSEG; i++) {
+      const t = i / NSEG;
+      ctx.lineTo(t * L, R(t) * R0 * k * edge(t, seed + 41.7, amp, tm));
+    }
+  }
+}
+
+/* 环状色壳：kOut..kIn 之间的环带，避免同心叠加互相冲白 */
+function shell(L, R0, kOut, kIn, amp, seed, tm, c0, c1, alpha) {
+  const g = ctx.createLinearGradient(0, 0, L, 0);
+  g.addColorStop(0,   c0);
+  g.addColorStop(.30, c1);
+  g.addColorStop(.72, c1);
+  g.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  coneLoop(L, R0, kOut, amp, seed, tm, false);
+  ctx.closePath();
+  if (kIn > 0) {
+    coneLoop(L, R0, kIn, amp * .5, seed + 5.3, tm, true);
+    ctx.closePath();
+  }
+  ctx.fill('evenodd');
+  ctx.globalAlpha = 1;
+}
+
+/* 多层渐变环带：把硬边色壳拆成若干细带，得到柔和的体积光晕 */
+function aura(L, R0, kIn, kOut, bands, cIn, cOut, aIn, aOut, amp, seed, tm) {
+  for (let i = 0; i < bands; i++) {
+    const f0 = i / bands, f1 = (i + 1) / bands, fm = (f0 + f1) * .5;
+    const kA = kIn + (kOut - kIn) * f0;
+    const kB = kIn + (kOut - kIn) * f1;
+    const r = Math.round(cIn[0] + (cOut[0] - cIn[0]) * fm);
+    const g = Math.round(cIn[1] + (cOut[1] - cIn[1]) * fm);
+    const b = Math.round(cIn[2] + (cOut[2] - cIn[2]) * fm);
+    const a = aIn + (aOut - aIn) * Math.pow(fm, 1.35);
+    const c = `rgba(${r},${g},${b},1)`;
+    shell(L, R0, kB, kA, amp * (.55 + .9 * fm), seed + i * 13.7, tm, c, c, a);
+  }
+}
+
+/* ---------- 金色螺旋能量环 ----------
+   每个环 = 绕轴的一圈螺旋，投影为倾斜椭圆；后半圈压暗、前半圈高亮，
+   并留一个随时间旋转的缺口，读作"高速旋转的连续螺旋" */
+function helix(L, R0, tm) {
+  const M = Math.max(5, Math.round(P.turns * 1.7));
+  const drift = (tm * P.spin * .42) % 1;
+  const gap = -tm * P.spin * 4.6;
+
+  for (let i = 0; i < M; i++) {
+    const q = (i + drift) / M;
+    if (q >= 1) continue;
+    const t = 1 - Math.pow(1 - q, 2.25);            // 越靠前端间距越小
+    const ry = R(t) * R0 * 1.52 + 1.2 * DPR;
+    const rx = ry * .74 + .6 * DPR;
+    const cx = t * L;
+    const fade = Math.min(1, (1.0 - t) * 7) * Math.min(1, q * 14);
+    if (fade <= .01 || ry < 1) continue;
+
+    const w = Math.max(.9 * DPR, ry * .19);
+    const pitch = ry * .40;                          // 螺旋前进量（一圈的轴向位移）
+
+    const N = 42;
+    let prev = null;
+    for (let k = 0; k <= N; k++) {
+      const a = gap + (k / N) * TAU;
+      const sa = Math.sin(a), ca = Math.cos(a);
+      const x = cx + rx * sa + pitch * (k / N - .5);
+      const y = ry * ca;
+      if (prev) {
+        const front = sa > 0;
+        const openness = k / N;                      // 首尾留缺口
+        const ea = openness < .045 || openness > .965 ? 0 : 1;
+        if (ea) {
+          ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(x, y);
+          ctx.lineCap = 'round';
+          ctx.strokeStyle = front ? `rgba(255,140,12,${.30 * fade})` : `rgba(140,62,6,${.12 * fade})`;
+          ctx.lineWidth = w * 3.2; ctx.stroke();
+          ctx.strokeStyle = front ? `rgba(255,190,38,${.95 * fade})` : `rgba(186,104,20,${.30 * fade})`;
+          ctx.lineWidth = w * 1.5; ctx.stroke();
+          ctx.strokeStyle = front ? `rgba(255,244,196,${.72 * fade})` : `rgba(255,190,96,${.16 * fade})`;
+          ctx.lineWidth = Math.max(.7 * DPR, w * .5); ctx.stroke();
+        }
+      }
+      prev = { x, y };
+    }
+  }
+}
+
+/* ---------- 紫色火焰 / 尖刺拖尾 ---------- */
+function flames(L, R0, tm) {
+  const amt = P.fire;
+  if (amt <= 0) return;
+
+  // 羽状紫焰尖刺：细长、向后喷射、外扩
+  const COUNT = 200;
+  for (let i = 0; i < COUNT; i++) {
+    const side = i & 1 ? 1 : -1;
+    const s = i * 6.73;
+    const t = Math.pow((i / COUNT + fbm(s * .37) * .08) % 1, .82) * .95;
+    const rE = R(t) * R0 * 1.42;
+    if (rE < .8) continue;
+
+    const fl = fbm(s + tm * 5.6);
+    const fl2 = fbm(s * 1.7 + 4.1 + tm * 3.1);
+    const len = Math.min(rE * (1.5 + 5.2 * fl) * amt, R0 * 4.6);
+    const bx = t * L, by = side * rE * (.94 + .18 * fl2);
+    const spread = .12 + .42 * fl2;
+    const tx = bx - len;
+    const ty = by + side * len * spread;
+    const w  = Math.max(.8 * DPR, rE * (.07 + .09 * fl2));
+    const cx1 = bx - len * .42, cy1 = by + side * len * spread * .18;
+
+    ctx.beginPath();
+    ctx.moveTo(bx, by - side * w);
+    ctx.quadraticCurveTo(cx1, cy1 - side * w * .5, tx, ty);
+    ctx.quadraticCurveTo(cx1, cy1 + side * w * 1.35, bx, by + side * w * 1.1);
+    ctx.closePath();
+
+    const g = ctx.createLinearGradient(bx, by, tx, ty);
+    g.addColorStop(0,   `rgba(255,138,244,${.30 + .30 * fl})`);
+    g.addColorStop(.30, `rgba(196,52,236,${.22 + .20 * fl})`);
+    g.addColorStop(.70, `rgba(122,14,196,${.12 + .10 * fl})`);
+    g.addColorStop(1,   'rgba(58,0,124,0)');
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+
+  // 极细速度针：贴着外缘拉长
+  for (let i = 0; i < 46; i++) {
+    const side = i & 1 ? 1 : -1;
+    const s = i * 11.91;
+    const t = Math.pow(((i / 46) + fbm(s * .53 + tm * .8) * .1) % 1, .9) * .96;
+    const rE = R(t) * R0 * 1.3;
+    if (rE < .6) continue;
+    const fl = fbm(s + tm * 7.4);
+    const len = Math.min(rE * (2.2 + 5.4 * fl) * amt, R0 * 3.2);
+    const bx = t * L, by = side * rE * (.85 + .55 * fl);
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - len, by + side * len * (.14 + .40 * fl));
+    ctx.lineTo(bx - len * .04, by + side * Math.max(.9 * DPR, rE * .12));
+    ctx.closePath();
+    ctx.fillStyle = `rgba(236,132,255,${.09 + .17 * fl})`;
+    ctx.fill();
+  }
+}
+
+/* ---------- 尾部能量爆发 ---------- */
+function tailBurst(R0, tm) {
+  const amt = P.burst;
+  if (amt <= 0) return;
+  const pulse = 1 + .12 * Math.sin(tm * 17) + .08 * fbm(tm * 9);
+  const Rb = R0 * 2.1 * amt * pulse;
+
+  // 紫色长尖刺星芒（向后为主）
+  for (let i = 0; i < 30; i++) {
+    const s = i * 5.13;
+    const base = (i / 30) * TAU + fbm(s) * .5;
+    const back = .55 + .45 * Math.cos(base + Math.PI); // 向后更长
+    const fl = fbm(s + tm * 4.4);
+    const len = Rb * (.9 + 3.1 * fl) * (0.45 + back);
+    const w = Rb * (.05 + .08 * fl);
+    const ca = Math.cos(base), sa = Math.sin(base);
+    ctx.beginPath();
+    ctx.moveTo(-sa * w, ca * w);
+    ctx.lineTo(ca * len, sa * len);
+    ctx.lineTo(sa * w, -ca * w);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, 0, ca * len, sa * len);
+    g.addColorStop(0, `rgba(250,170,255,${.34 * amt})`);
+    g.addColorStop(.4, `rgba(196,52,240,${.20 * amt})`);
+    g.addColorStop(1, 'rgba(90,0,170,0)');
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+
+  // 紫色球状火焰
+  let g = ctx.createRadialGradient(0, 0, 0, 0, 0, Rb * 1.5);
+  g.addColorStop(0,   `rgba(246,150,255,${.30 * amt})`);
+  g.addColorStop(.32, `rgba(198,56,240,${.22 * amt})`);
+  g.addColorStop(.62, `rgba(112,12,182,${.12 * amt})`);
+  g.addColorStop(1,   'rgba(40,0,90,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, Rb * 1.5, 0, TAU); ctx.fill();
+
+  // 白黄核心爆点
+  g = ctx.createRadialGradient(0, 0, 0, 0, 0, Rb * .62);
+  g.addColorStop(0,   `rgba(255,255,250,${.92 * amt})`);
+  g.addColorStop(.26, `rgba(255,242,170,${.60 * amt})`);
+  g.addColorStop(.55, `rgba(255,158,36,${.26 * amt})`);
+  g.addColorStop(1,   'rgba(255,80,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, Rb * .62, 0, TAU); ctx.fill();
+
+  // 白色放射硬光
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * TAU + tm * .35;
+    const len = Rb * (.85 + 1.5 * fbm(i * 3.9 + tm * 6));
+    const w = Rb * .04;
+    ctx.beginPath();
+    ctx.moveTo(-Math.sin(a) * w, Math.cos(a) * w);
+    ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+    ctx.lineTo(Math.sin(a) * w, -Math.cos(a) * w);
+    ctx.closePath();
+    const lg = ctx.createLinearGradient(0, 0, Math.cos(a) * len, Math.sin(a) * len);
+    lg.addColorStop(0, `rgba(255,252,226,${.5 * amt})`);
+    lg.addColorStop(1, 'rgba(255,150,40,0)');
+    ctx.fillStyle = lg;
+    ctx.fill();
+  }
+}
+
+/* ---------- 轴向速度线 ---------- */
+function speedLines(L, R0, tm) {
+  for (let i = 0; i < 26; i++) {
+    const s = i * 9.17;
+    const off = (fbm(s) - .5) * 1.6;
+    const t0 = ((i / 26) + tm * 1.9 + fbm(s + 3) * .4) % 1;
+    const t1 = Math.min(.995, t0 + .10 + fbm(s + tm) * .22);
+    if (t1 <= t0) continue;
+    const y0 = off * R(t0) * R0 * .62, y1 = off * R(t1) * R0 * .62;
+    ctx.beginPath();
+    ctx.moveTo(t0 * L, y0); ctx.lineTo(t1 * L, y1);
+    const g = ctx.createLinearGradient(t0 * L, y0, t1 * L, y1);
+    g.addColorStop(0, 'rgba(255,220,120,0)');
+    g.addColorStop(.5, 'rgba(255,250,215,.75)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = Math.max(.8 * DPR, R(t0) * R0 * .07);
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+}
+
+/* ---------- 主绘制 ---------- */
+function drawBeam(tm) {
+  const ang = P.ang * Math.PI / 180;
+  const ox = W * .13, oy = H * .80;
+  const L  = P.len * W / Math.cos(ang);
+  const R0 = H * .072 * P.rad;
+
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.rotate(ang);
+  ctx.globalCompositeOperation = 'lighter';
+
+  // 外层紫色能量体（最外一层做柔和体积雾，其余为环带避免互相冲白）
+  shell(L, R0, 2.90, 0,    .26, 3.1,  tm, 'rgba(58,2,116,.55)',   'rgba(40,0,88,.36)',   .32);
+  shell(L, R0, 2.35, 1.82, .26, 17.4, tm, 'rgba(138,22,212,.92)', 'rgba(96,8,178,.62)',  .78);
+  shell(L, R0, 1.86, 1.42, .20, 29.8, tm, 'rgba(216,56,236,.92)', 'rgba(158,24,218,.64)', .66);
+
+  flames(L, R0, tm);
+
+  // 内层：橙 → 金 → 白热核心
+  shell(L, R0, 1.32, 1.02, .13, 51.2, tm, 'rgba(255,104,20,.92)',  'rgba(226,70,12,.62)',  .58);
+  shell(L, R0, 1.06, .74,  .10, 63.7, tm, 'rgba(255,158,26,.96)',  'rgba(244,120,14,.72)', .70);
+  shell(L, R0, .78,  .24,  .07, 71.9, tm, 'rgba(255,200,58,.96)',  'rgba(255,168,32,.84)', .68);
+  shell(L, R0, .30,  0,    .04, 83.5, tm, 'rgba(255,254,240,.98)', 'rgba(255,250,214,.94)', .74);
+
+  helix(L, R0, tm);
+  speedLines(L, R0, tm);
+
+  // 极细穿透针尖：一路拉到锥尖之外
+  const tipG = ctx.createLinearGradient(L * .45, 0, L * 1.015, 0);
+  tipG.addColorStop(0, 'rgba(255,235,140,0)');
+  tipG.addColorStop(.35, 'rgba(255,248,200,.85)');
+  tipG.addColorStop(.86, 'rgba(255,255,255,1)');
+  tipG.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.beginPath();
+  ctx.moveTo(L * .45, -R(.45) * R0 * .16);
+  ctx.lineTo(L * 1.015, 0);
+  ctx.lineTo(L * .45, R(.45) * R0 * .16);
+  ctx.closePath();
+  ctx.fillStyle = tipG; ctx.fill();
+
+  // 针尖外的金色余辉
+  const halo = ctx.createLinearGradient(L * .6, 0, L * 1.03, 0);
+  halo.addColorStop(0, 'rgba(255,180,40,0)');
+  halo.addColorStop(.6, 'rgba(255,206,90,.35)');
+  halo.addColorStop(1, 'rgba(255,240,180,0)');
+  ctx.beginPath();
+  ctx.moveTo(L * .6, -R(.6) * R0 * .7);
+  ctx.lineTo(L * 1.03, 0);
+  ctx.lineTo(L * .6, R(.6) * R0 * .7);
+  ctx.closePath();
+  ctx.fillStyle = halo; ctx.fill();
+
+  tailBurst(R0, tm);
+  ctx.restore();
+}
+
+/* ---------- 帧循环 ---------- */
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(.05, (now - tPrev) / 1000 || 0);
+  tPrev = now;
+  if (!paused) T += dt;
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  drawBeam(T);
+
+  // 输出 + 辉光
+  vctx.globalCompositeOperation = 'source-over';
+  vctx.fillStyle = '#000';
+  vctx.fillRect(0, 0, W, H);
+  vctx.drawImage(scene, 0, 0);
+
+  if (P.bloom > 0) {
+    bctx.globalCompositeOperation = 'source-over';
+    bctx.clearRect(0, 0, blurA.width, blurA.height);
+    // 先用 contrast 做高光阈值，只让最亮的部分溢出，避免整体泛白
+    bctx.filter = 'contrast(2.8) brightness(1.15) blur(3px)';
+    bctx.drawImage(scene, 0, 0, blurA.width, blurA.height);
+    bctx.filter = 'none';
+
+    vctx.globalCompositeOperation = 'lighter';
+    vctx.globalAlpha = .60 * P.bloom;
+    vctx.drawImage(blurA, 0, 0, W, H);
+    vctx.globalAlpha = .45 * P.bloom;
+    vctx.filter = 'blur(' + (14 * DPR) + 'px)';
+    vctx.drawImage(blurA, 0, 0, W, H);
+    vctx.filter = 'none';
+    vctx.globalAlpha = 1;
+    vctx.globalCompositeOperation = 'source-over';
+  }
+}
+requestAnimationFrame(t => { tPrev = t; frame(t); });
+
+/* ---------- UI ---------- */
+const map = {
+  p_len:   [v => P.len   = v / 100,          v => (v / 100).toFixed(2)],
+  p_rad:   [v => P.rad   = v / 100,          v => (v / 100).toFixed(2)],
+  p_sharp: [v => P.sharp = v / 100,          v => (v / 100).toFixed(2)],
+  p_turn:  [v => P.turns = v,                v => v],
+  p_spin:  [v => P.spin  = v / 100,          v => (v / 100).toFixed(2)],
+  p_fire:  [v => P.fire  = v / 100,          v => (v / 100).toFixed(2)],
+  p_burst: [v => P.burst = v / 100,          v => (v / 100).toFixed(2)],
+  p_bloom: [v => P.bloom = v / 100,          v => (v / 100).toFixed(2)],
+  p_ang:   [v => P.ang   = v,                v => v + '°']
+};
+for (const id in map) {
+  const el = document.getElementById(id);
+  const lab = document.getElementById('v_' + id.slice(2));
+  const sync = () => { const v = +el.value; map[id][0](v); lab.textContent = map[id][1](v); };
+  el.addEventListener('input', sync);
+  sync();
+}
+
+const panel = document.getElementById('panel');
+document.getElementById('b_pause').onclick = e => { paused = !paused; e.target.textContent = paused ? '播放' : '暂停'; };
+document.getElementById('b_reset').onclick = () => {
+  const src = { p_len: DEF.len * 100, p_rad: DEF.rad * 100, p_sharp: DEF.sharp * 100, p_turn: DEF.turns,
+                p_spin: DEF.spin * 100, p_fire: DEF.fire * 100, p_burst: DEF.burst * 100,
+                p_bloom: DEF.bloom * 100, p_ang: DEF.ang };
+  for (const id in src) { const el = document.getElementById(id); el.value = src[id]; el.dispatchEvent(new Event('input')); }
+};
+document.getElementById('b_shot').onclick = () => {
+  const a = document.createElement('a');
+  a.download = 'claude-opus-5-beam.png';
+  a.href = view.toDataURL('image/png');
+  a.click();
+};
+window.addEventListener('keydown', e => {
+  if (e.key === 'h' || e.key === 'H') panel.classList.toggle('hidden');
+  if (e.code === 'Space') { e.preventDefault(); document.getElementById('b_pause').click(); }
+});
+})();
+</script>
+</body>
+</html>

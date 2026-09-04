@@ -1,0 +1,111 @@
+
+hyun3.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 92, 178
+  size: 29, 39
+  orig: 29, 39
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 205, 179
+  size: 23, 36
+  orig: 23, 36
+  offset: 0, 0
+  index: -1
+armor
+  rotate: false
+  xy: 63, 180
+  size: 20, 17
+  orig: 22, 19
+  offset: 1, 1
+  index: -1
+body
+  rotate: false
+  xy: 92, 209
+  size: 81, 45
+  orig: 81, 45
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 133, 177
+  size: 35, 30
+  orig: 35, 30
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 170, 174
+  size: 33, 28
+  orig: 35, 30
+  offset: 1, 1
+  index: -1
+h1
+  rotate: true
+  xy: 243, 179
+  size: 9, 11
+  orig: 11, 13
+  offset: 1, 1
+  index: -1
+h2
+  rotate: true
+  xy: 243, 190
+  size: 12, 9
+  orig: 14, 11
+  offset: 1, 1
+  index: -1
+house
+  rotate: false
+  xy: 175, 204
+  size: 71, 50
+  orig: 73, 52
+  offset: 1, 1
+  index: -1
+leg1
+  rotate: true
+  xy: 205, 154
+  size: 23, 33
+  orig: 23, 33
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: true
+  xy: 2, 174
+  size: 23, 33
+  orig: 23, 33
+  offset: 0, 0
+  index: -1
+muouse
+  rotate: true
+  xy: 37, 174
+  size: 23, 24
+  orig: 23, 24
+  offset: 0, 0
+  index: -1
+sanke
+  rotate: false
+  xy: 2, 199
+  size: 88, 55
+  orig: 88, 55
+  offset: 0, 0
+  index: -1
+shead
+  rotate: false
+  xy: 63, 163
+  size: 19, 15
+  orig: 21, 17
+  offset: 1, 1
+  index: -1
+smouse
+  rotate: true
+  xy: 248, 240
+  size: 14, 6
+  orig: 16, 8
+  offset: 1, 1
+  index: -1

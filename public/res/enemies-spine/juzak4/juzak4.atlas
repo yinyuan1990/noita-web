@@ -1,0 +1,139 @@
+
+juzak4.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: false
+  xy: 2, 85
+  size: 48, 91
+  orig: 48, 91
+  offset: 0, 0
+  index: -1
+body2
+  rotate: true
+  xy: 121, 194
+  size: 24, 17
+  orig: 24, 19
+  offset: 0, 1
+  index: -1
+dudm
+  rotate: true
+  xy: 72, 183
+  size: 21, 47
+  orig: 21, 47
+  offset: 0, 0
+  index: -1
+dudm2
+  rotate: true
+  xy: 2, 16
+  size: 30, 51
+  orig: 30, 51
+  offset: 0, 0
+  index: -1
+eye
+  rotate: false
+  xy: 23, 8
+  size: 6, 6
+  orig: 8, 8
+  offset: 1, 1
+  index: -1
+face1
+  rotate: false
+  xy: 55, 7
+  size: 37, 39
+  orig: 37, 39
+  offset: 0, 0
+  index: -1
+fir1
+  rotate: false
+  xy: 98, 220
+  size: 24, 33
+  orig: 24, 33
+  offset: 0, 0
+  index: -1
+fir2
+  rotate: true
+  xy: 100, 138
+  size: 14, 32
+  orig: 14, 32
+  offset: 0, 0
+  index: -1
+git3
+  rotate: false
+  xy: 100, 154
+  size: 26, 27
+  orig: 26, 27
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: true
+  xy: 52, 100
+  size: 27, 47
+  orig: 27, 47
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: true
+  xy: 94, 7
+  size: 39, 37
+  orig: 39, 37
+  offset: 0, 0
+  index: -1
+mou1
+  rotate: true
+  xy: 2, 2
+  size: 12, 10
+  orig: 14, 12
+  offset: 1, 1
+  index: -1
+mou2
+  rotate: false
+  xy: 14, 5
+  size: 7, 9
+  orig: 9, 11
+  offset: 1, 1
+  index: -1
+wingL
+  rotate: false
+  xy: 98, 60
+  size: 32, 38
+  orig: 32, 38
+  offset: 0, 0
+  index: -1
+wingL2
+  rotate: false
+  xy: 2, 178
+  size: 68, 75
+  orig: 68, 75
+  offset: 0, 0
+  index: -1
+wingR1
+  rotate: false
+  xy: 52, 129
+  size: 46, 47
+  orig: 46, 50
+  offset: 0, 0
+  index: -1
+wingR2
+  rotate: true
+  xy: 2, 48
+  size: 35, 94
+  orig: 35, 94
+  offset: 0, 0
+  index: -1
+wingRg1
+  rotate: false
+  xy: 72, 206
+  size: 24, 47
+  orig: 24, 47
+  offset: 0, 0
+  index: -1
+wingRg2
+  rotate: false
+  xy: 124, 228
+  size: 15, 25
+  orig: 15, 25
+  offset: 0, 0
+  index: -1

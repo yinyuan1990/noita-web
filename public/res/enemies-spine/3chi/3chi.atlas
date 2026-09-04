@@ -1,0 +1,41 @@
+
+3chi.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 94, 75
+  size: 14, 13
+  orig: 14, 13
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 110, 78
+  size: 10, 14
+  orig: 10, 14
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 94, 90
+  size: 29, 34
+  orig: 29, 34
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 81
+  size: 44, 43
+  orig: 44, 43
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 48, 81
+  size: 44, 43
+  orig: 44, 43
+  offset: 0, 0
+  index: -1

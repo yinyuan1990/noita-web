@@ -1,0 +1,125 @@
+
+white_snake.png
+size: 184,184
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 58, 82
+  size: 46, 63
+  orig: 46, 63
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 2, 74
+  size: 54, 54
+  orig: 54, 54
+  offset: 0, 0
+  index: -1
+back_skirt
+  rotate: false
+  xy: 45, 2
+  size: 36, 30
+  orig: 36, 30
+  offset: 0, 0
+  index: -1
+back_snake
+  rotate: true
+  xy: 140, 120
+  size: 62, 25
+  orig: 62, 25
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 109, 36
+  size: 31, 37
+  orig: 31, 37
+  offset: 0, 0
+  index: -1
+cloud
+  rotate: false
+  xy: 81, 130
+  size: 57, 52
+  orig: 57, 52
+  offset: 0, 0
+  index: -1
+earing
+  rotate: true
+  xy: 167, 154
+  size: 4, 6
+  orig: 4, 6
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 148, 36
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 110, 3
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+hair
+  rotate: true
+  xy: 123, 69
+  size: 49, 53
+  orig: 49, 53
+  offset: 0, 0
+  index: -1
+inner_skirt
+  rotate: false
+  xy: 2, 130
+  size: 77, 52
+  orig: 77, 52
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: false
+  xy: 58, 34
+  size: 49, 46
+  orig: 49, 46
+  offset: 0, 0
+  index: -1
+snake_acc
+  rotate: true
+  xy: 83, 4
+  size: 28, 25
+  orig: 28, 25
+  offset: 0, 0
+  index: -1
+snake_head
+  rotate: true
+  xy: 2, 37
+  size: 35, 39
+  orig: 35, 39
+  offset: 0, 0
+  index: -1
+snake_tail
+  rotate: true
+  xy: 2, 6
+  size: 29, 41
+  orig: 29, 41
+  offset: 0, 0
+  index: -1
+snake_tassle
+  rotate: true
+  xy: 167, 160
+  size: 9, 14
+  orig: 9, 14
+  offset: 0, 0
+  index: -1
+snake_tassle2
+  rotate: true
+  xy: 167, 171
+  size: 11, 13
+  orig: 11, 13
+  offset: 0, 0
+  index: -1

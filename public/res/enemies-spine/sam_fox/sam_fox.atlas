@@ -1,0 +1,55 @@
+
+sam_fox.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 44, 2
+  size: 26, 29
+  orig: 26, 29
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 75, 3
+  size: 25, 29
+  orig: 25, 29
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 2, 27
+  size: 39, 40
+  orig: 39, 40
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 41, 73
+  size: 37, 41
+  orig: 37, 41
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 44, 30
+  size: 37, 41
+  orig: 37, 41
+  offset: 0, 0
+  index: -1
+fur
+  rotate: false
+  xy: 2, 2
+  size: 31, 23
+  orig: 31, 23
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 2, 68
+  size: 37, 42
+  orig: 37, 42
+  offset: 0, 0
+  index: -1

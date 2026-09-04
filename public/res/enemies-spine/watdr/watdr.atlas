@@ -1,0 +1,55 @@
+
+watdr.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc1
+  rotate: false
+  xy: 31, 20
+  size: 24, 28
+  orig: 24, 28
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: false
+  xy: 2, 2
+  size: 27, 46
+  orig: 27, 46
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 76, 42
+  size: 30, 44
+  orig: 30, 44
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 110
+  size: 49, 84
+  orig: 49, 84
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 50
+  size: 72, 58
+  orig: 72, 58
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 53, 136
+  size: 72, 58
+  orig: 72, 58
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 76, 74
+  size: 45, 60
+  orig: 45, 60
+  offset: 0, 0
+  index: -1

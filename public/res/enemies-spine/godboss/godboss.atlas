@@ -1,0 +1,272 @@
+
+godboss.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Samr1
+  rotate: false
+  xy: 590, 778
+  size: 74, 72
+  orig: 76, 74
+  offset: 1, 1
+  index: -1
+Sarm1-2
+  rotate: true
+  xy: 668, 930
+  size: 90, 198
+  orig: 90, 198
+  offset: 0, 0
+  index: -1
+Sarm1-2atta
+  rotate: true
+  xy: 668, 840
+  size: 88, 196
+  orig: 90, 198
+  offset: 1, 1
+  index: -1
+Sarm2
+  rotate: true
+  xy: 258, 878
+  size: 142, 208
+  orig: 142, 208
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: false
+  xy: 590, 696
+  size: 68, 80
+  orig: 70, 82
+  offset: 1, 1
+  index: -1
+arm1-2
+  rotate: false
+  xy: 660, 668
+  size: 56, 52
+  orig: 58, 54
+  offset: 1, 1
+  index: -1
+arm2
+  rotate: true
+  xy: 660, 722
+  size: 46, 60
+  orig: 48, 62
+  offset: 1, 1
+  index: -1
+arm2-1
+  rotate: true
+  xy: 986, 664
+  size: 66, 32
+  orig: 68, 34
+  offset: 1, 1
+  index: -1
+athead1
+  rotate: true
+  xy: 666, 770
+  size: 68, 124
+  orig: 70, 126
+  offset: 1, 1
+  index: -1
+athead2
+  rotate: true
+  xy: 868, 756
+  size: 78, 122
+  orig: 80, 124
+  offset: 1, 1
+  index: -1
+b_arm1
+  rotate: true
+  xy: 468, 852
+  size: 168, 198
+  orig: 168, 198
+  offset: 0, 0
+  index: -1
+b_arm2
+  rotate: false
+  xy: 2, 878
+  size: 254, 142
+  orig: 254, 142
+  offset: 0, 0
+  index: -1
+bacc1
+  rotate: false
+  xy: 160, 734
+  size: 114, 46
+  orig: 114, 46
+  offset: 0, 0
+  index: -1
+bacc2
+  rotate: true
+  xy: 992, 732
+  size: 102, 28
+  orig: 102, 28
+  offset: 0, 0
+  index: -1
+boarm
+  rotate: false
+  xy: 160, 782
+  size: 150, 94
+  orig: 152, 96
+  offset: 1, 1
+  index: -1
+boarm2
+  rotate: false
+  xy: 312, 782
+  size: 150, 94
+  orig: 152, 96
+  offset: 1, 1
+  index: -1
+body
+  rotate: false
+  xy: 864, 664
+  size: 120, 90
+  orig: 120, 90
+  offset: 0, 0
+  index: -1
+cobbody
+  rotate: false
+  xy: 132, 744
+  size: 26, 38
+  orig: 28, 40
+  offset: 1, 1
+  index: -1
+cobh
+  rotate: true
+  xy: 792, 784
+  size: 54, 74
+  orig: 54, 74
+  offset: 0, 0
+  index: -1
+ef
+  rotate: false
+  xy: 868, 836
+  size: 150, 96
+  orig: 162, 102
+  offset: 3, 1
+  index: -1
+eteh2
+  rotate: false
+  xy: 792, 690
+  size: 70, 92
+  orig: 70, 92
+  offset: 0, 0
+  index: -1
+eyeh1
+  rotate: false
+  xy: 386, 690
+  size: 68, 90
+  orig: 70, 92
+  offset: 1, 1
+  index: -1
+hair1
+  rotate: true
+  xy: 370, 630
+  size: 58, 62
+  orig: 58, 62
+  offset: 0, 0
+  index: -1
+hair3
+  rotate: false
+  xy: 2, 654
+  size: 128, 128
+  orig: 128, 128
+  offset: 0, 0
+  index: -1
+hair3-1
+  rotate: true
+  xy: 276, 636
+  size: 78, 92
+  orig: 78, 92
+  offset: 0, 0
+  index: -1
+hand2
+  rotate: false
+  xy: 254, 710
+  size: 20, 22
+  orig: 22, 24
+  offset: 1, 1
+  index: -1
+head1
+  rotate: true
+  xy: 456, 710
+  size: 68, 90
+  orig: 70, 92
+  offset: 1, 1
+  index: -1
+head1htail
+  rotate: true
+  xy: 132, 726
+  size: 16, 24
+  orig: 16, 24
+  offset: 0, 0
+  index: -1
+head2
+  rotate: true
+  xy: 464, 780
+  size: 70, 124
+  orig: 70, 124
+  offset: 0, 0
+  index: -1
+head2htail
+  rotate: false
+  xy: 132, 704
+  size: 20, 20
+  orig: 20, 20
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: true
+  xy: 276, 716
+  size: 64, 108
+  orig: 66, 110
+  offset: 1, 1
+  index: -1
+leg1_2
+  rotate: true
+  xy: 456, 660
+  size: 48, 64
+  orig: 50, 66
+  offset: 1, 1
+  index: -1
+leg1_3
+  rotate: false
+  xy: 548, 680
+  size: 38, 50
+  orig: 38, 50
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: false
+  xy: 158, 648
+  size: 94, 84
+  orig: 96, 86
+  offset: 1, 1
+  index: -1
+leg2_1
+  rotate: false
+  xy: 722, 716
+  size: 58, 52
+  orig: 60, 54
+  offset: 1, 1
+  index: -1
+leg2_3
+  rotate: false
+  xy: 548, 732
+  size: 40, 46
+  orig: 42, 48
+  offset: 1, 1
+  index: -1
+skirt
+  rotate: false
+  xy: 868, 934
+  size: 152, 86
+  orig: 152, 86
+  offset: 0, 0
+  index: -1
+waist
+  rotate: false
+  xy: 2, 784
+  size: 156, 92
+  orig: 156, 92
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,55 @@
+
+scarf_monkey.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 30, 2
+  size: 22, 25
+  orig: 22, 25
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 2, 2
+  size: 22, 26
+  orig: 22, 26
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 52, 93
+  size: 28, 31
+  orig: 28, 31
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 76
+  size: 48, 48
+  orig: 48, 48
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 2, 26
+  size: 48, 48
+  orig: 48, 48
+  offset: 0, 0
+  index: -1
+scarf
+  rotate: false
+  xy: 82, 110
+  size: 30, 14
+  orig: 30, 14
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 52, 65
+  size: 26, 42
+  orig: 26, 42
+  offset: 0, 0
+  index: -1

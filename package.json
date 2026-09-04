@@ -1,0 +1,24 @@
+{
+  "name": "xiaoshuo-donghua",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:noita": "node scripts/build-noita.mjs",
+    "preview": "vite preview",
+    "record:douyin": "node scripts/record-douyin.mjs"
+  },
+  "dependencies": {
+    "pixi-spine": "^2.1.12",
+    "pixi.js": "^5.3.12",
+    "three": "^0.185.1",
+    "three.quarks": "^0.17.1"
+  },
+  "devDependencies": {
+    "ffmpeg-static": "^5.3.0",
+    "playwright": "^1.62.1",
+    "vite": "^5.4.11"
+  }
+}

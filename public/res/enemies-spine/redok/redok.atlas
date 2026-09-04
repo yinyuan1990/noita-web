@@ -1,0 +1,97 @@
+
+redok.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc
+  rotate: true
+  xy: 53, 230
+  size: 12, 19
+  orig: 12, 19
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: true
+  xy: 187, 214
+  size: 28, 55
+  orig: 28, 55
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 107, 221
+  size: 21, 42
+  orig: 21, 42
+  offset: 0, 0
+  index: -1
+bhair
+  rotate: true
+  xy: 98, 147
+  size: 44, 45
+  orig: 44, 45
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 51, 149
+  size: 42, 45
+  orig: 42, 45
+  offset: 0, 0
+  index: -1
+face
+  rotate: true
+  xy: 2, 159
+  size: 37, 47
+  orig: 39, 49
+  offset: 1, 1
+  index: -1
+hair1
+  rotate: true
+  xy: 27, 231
+  size: 11, 24
+  orig: 11, 24
+  offset: 0, 0
+  index: -1
+hair2
+  rotate: true
+  xy: 2, 234
+  size: 8, 23
+  orig: 8, 23
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: true
+  xy: 2, 198
+  size: 30, 52
+  orig: 30, 52
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: true
+  xy: 184, 177
+  size: 35, 51
+  orig: 35, 51
+  offset: 0, 0
+  index: -1
+neckcl
+  rotate: false
+  xy: 74, 222
+  size: 31, 20
+  orig: 33, 22
+  offset: 1, 1
+  index: -1
+skirt
+  rotate: true
+  xy: 151, 218
+  size: 24, 34
+  orig: 24, 34
+  offset: 0, 0
+  index: -1
+weponhand
+  rotate: false
+  xy: 56, 193
+  size: 126, 23
+  orig: 128, 25
+  offset: 1, 1
+  index: -1

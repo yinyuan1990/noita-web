@@ -1,0 +1,41 @@
+
+2fr.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 48, 22
+  size: 13, 21
+  orig: 13, 21
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 34, 25
+  size: 12, 21
+  orig: 12, 21
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 11
+  size: 30, 35
+  orig: 30, 35
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 48
+  size: 44, 41
+  orig: 44, 41
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 48, 45
+  size: 44, 41
+  orig: 44, 41
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,48 @@
+
+letter_hawk.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 56, 105
+  size: 26, 21
+  orig: 26, 21
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 31, 111
+  size: 15, 23
+  orig: 15, 23
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 84, 92
+  size: 42, 34
+  orig: 42, 34
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 74
+  size: 38, 35
+  orig: 38, 35
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 42, 68
+  size: 38, 35
+  orig: 38, 35
+  offset: 0, 0
+  index: -1
+letter
+  rotate: false
+  xy: 2, 112
+  size: 27, 14
+  orig: 27, 14
+  offset: 0, 0
+  index: -1

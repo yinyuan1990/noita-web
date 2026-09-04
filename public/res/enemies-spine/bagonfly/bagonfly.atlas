@@ -1,0 +1,202 @@
+
+bagonfly.png
+size: 1024,2048
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: false
+  xy: 606, 96
+  size: 196, 233
+  orig: 196, 233
+  offset: 0, 0
+  index: -1
+charge/charge1
+  rotate: false
+  xy: 2, 878
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge10
+  rotate: false
+  xy: 304, 633
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge12
+  rotate: false
+  xy: 304, 331
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge13
+  rotate: false
+  xy: 560, 1237
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge14
+  rotate: false
+  xy: 704, 1539
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge15
+  rotate: false
+  xy: 606, 935
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge16
+  rotate: false
+  xy: 606, 633
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge17
+  rotate: false
+  xy: 606, 331
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge18
+  rotate: false
+  xy: 304, 29
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge4
+  rotate: false
+  xy: 2, 576
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge5
+  rotate: false
+  xy: 2, 274
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge6
+  rotate: false
+  xy: 402, 1539
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge7
+  rotate: false
+  xy: 258, 1237
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+charge/charge9
+  rotate: false
+  xy: 304, 935
+  size: 300, 300
+  orig: 300, 300
+  offset: 0, 0
+  index: -1
+eye
+  rotate: false
+  xy: 824, 1944
+  size: 169, 91
+  orig: 169, 91
+  offset: 0, 0
+  index: -1
+fang
+  rotate: false
+  xy: 995, 1998
+  size: 27, 37
+  orig: 27, 37
+  offset: 0, 0
+  index: -1
+fly1
+  rotate: false
+  xy: 2, 2
+  size: 253, 270
+  orig: 253, 270
+  offset: 0, 0
+  index: -1
+fly2
+  rotate: false
+  xy: 402, 1841
+  size: 420, 194
+  orig: 420, 194
+  offset: 0, 0
+  index: -1
+fly3a
+  rotate: false
+  xy: 2, 1637
+  size: 398, 398
+  orig: 398, 398
+  offset: 0, 0
+  index: -1
+fly4a
+  rotate: true
+  xy: 2, 1180
+  size: 455, 254
+  orig: 455, 254
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 258, 1560
+  size: 107, 75
+  orig: 107, 75
+  offset: 0, 0
+  index: -1
+tail1
+  rotate: false
+  xy: 862, 1356
+  size: 77, 79
+  orig: 77, 79
+  offset: 0, 0
+  index: -1
+tail2
+  rotate: true
+  xy: 944, 1449
+  size: 88, 78
+  orig: 88, 78
+  offset: 0, 0
+  index: -1
+tail3
+  rotate: false
+  xy: 824, 1860
+  size: 94, 82
+  orig: 94, 82
+  offset: 0, 0
+  index: -1
+tail4
+  rotate: false
+  xy: 804, 246
+  size: 94, 83
+  orig: 94, 83
+  offset: 0, 0
+  index: -1
+tail5
+  rotate: false
+  xy: 804, 162
+  size: 92, 82
+  orig: 92, 82
+  offset: 0, 0
+  index: -1
+tail6
+  rotate: false
+  xy: 862, 1437
+  size: 80, 100
+  orig: 80, 100
+  offset: 0, 0
+  index: -1

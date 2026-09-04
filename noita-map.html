@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Noita 地图模块 · 原版算法复刻 · 区块流查看器</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #07090c; }
+      body { font-family: "Noto Serif SC", Georgia, serif; color: #e8eef4; display: flex; }
+      #panel {
+        width: 232px; height: 100%; overflow-y: auto; padding: 12px 10px; flex-shrink: 0;
+        background: rgba(10, 14, 20, 0.94); border-right: 1px solid rgba(120, 140, 160, 0.35);
+      }
+      #panel h1 { font-size: 0.85rem; letter-spacing: 0.12em; margin-bottom: 4px; }
+      #panel .sub { font-size: 0.62rem; color: #8a9aab; margin-bottom: 8px; line-height: 1.6; }
+      #panel .group { font-size: 0.6rem; color: #66788a; letter-spacing: 0.12em; margin: 12px 0 5px; }
+      #panel button, #panel input[type=text], #panel input[type=number] {
+        display: block; width: 100%; margin-bottom: 4px; padding: 0.36rem 0.5rem;
+        font-family: inherit; font-size: 0.7rem; text-align: left; color: #c5d6e4;
+        background: rgba(14, 18, 24, 0.9); border: 1px solid rgba(120, 140, 160, 0.35); border-radius: 6px; cursor: pointer;
+      }
+      #panel input { cursor: text; }
+      #panel button:hover { border-color: #7ea0b8; color: #fff; }
+      #panel button.active { border-color: #9ad; background: rgba(30, 44, 58, 0.95); color: #fff; }
+      #panel label.row { display: flex; align-items: center; gap: 6px; margin: 5px 0; font-size: 0.68rem; color: #a8b8c8; cursor: pointer; }
+      #panel .stat { font-size: 0.62rem; color: #8a9aab; line-height: 1.8; word-break: break-all; }
+      #panel .stat b { color: #d8e4ee; font-weight: normal; }
+      #stage { flex: 1; height: 100%; position: relative; overflow: hidden; background: #04050a; cursor: grab; touch-action: none; }
+      #stage.drag { cursor: grabbing; }
+      #view { position: absolute; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; }
+      #hud {
+        position: absolute; left: 8px; top: 8px; font-size: 0.64rem; color: rgba(200, 214, 226, 0.75);
+        background: rgba(0, 0, 0, 0.45); padding: 4px 8px; border-radius: 4px; pointer-events: none; line-height: 1.6; white-space: pre;
+      }
+      #tip { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); font-size: 0.66rem; color: rgba(200, 214, 226, 0.5); pointer-events: none; }
+      @media (max-width: 720px) {
+        body { flex-direction: column; }
+        #panel { width: 100%; height: 38%; border-right: 0; border-bottom: 1px solid rgba(120, 140, 160, 0.35); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <h1>NOITA 地图模块</h1>
+      <div class="sub">src/noita-map:原版 PRNG + 人字砖 + 重掷校验 + 秘室 + 布景,按 512×512 区块流式生成。默认种子 = 存档真值种子,可逐像素对照。</div>
+      <div class="group">种子</div>
+      <input type="text" id="seed" value="1674172626" />
+      <button id="gen">生成(回车)</button>
+      <button id="rand">随机种子</button>
+      <div class="group">看哪一层</div>
+      <button id="mGen" class="active">① 生成结果(材质+贴图+布景)</button>
+      <button id="mWang">② wang 原色层(10×,调试)</button>
+      <button id="mTruth">③ 存档真值(仅 1674172626)</button>
+      <button id="mSplit">④ 左生成 | 右真值(同视口)</button>
+      <button id="mDiff">⑤ 差异图(红=实/空不一致)</button>
+      <label class="row"><input type="checkbox" id="optVisual" checked /> 布景手绘层</label>
+      <label class="row"><input type="checkbox" id="optEdges" checked /> 边缘明暗</label>
+      <label class="row"><input type="checkbox" id="optGrid" /> 区块网格</label>
+      <label class="row"><input type="checkbox" id="optScenes" checked /> 布景框+名字</label>
+      <div class="group">性能(手机测这个)</div>
+      <label class="row"><input type="checkbox" id="optWorker" checked /> Worker 生成(主线程只贴图)</label>
+      <label class="row"><input type="checkbox" id="optPrefetch" checked /> 预取(Worker 模式按移动方向)</label>
+      <label class="row">前方预取格数 <input type="number" id="optAhead" value="2" min="0" max="4" style="width:50px;margin:0" /></label>
+      <label class="row"><input type="checkbox" id="optDig" /> 挖洞模式(或直接右键)</label>
+      <button id="storeFlush">立刻落盘已改动区块</button>
+      <button id="storeClear">清空本种子存档</button>
+      <label class="row">巡航秒数 <input type="number" id="benchSec" value="20" min="5" max="120" style="width:60px;margin:0" /></label>
+      <button id="bench">跑分:自动巡航 + 帧统计</button>
+      <button id="benchCopy">复制跑分 JSON</button>
+      <div class="sub" style="margin-top:4px">判据:帧 p95 ≤ 33ms、无 &gt;100ms 长帧、区块到达 p95 ≤ 500ms → 流畅</div>
+      <div class="group">导航</div>
+      <button id="goStart">回到出生点 (0,0)</button>
+      <button id="goMine">煤矿中心</button>
+      <button id="zin">放大</button>
+      <button id="zout">缩小</button>
+      <div class="group">统计</div>
+      <div class="stat" id="stat">加载资源…</div>
+      <div class="group">鼠标处</div>
+      <div class="stat" id="hover"></div>
+    </div>
+    <div id="stage">
+      <canvas id="view"></canvas>
+      <div id="hud"></div>
+      <div id="tip">拖拽平移 · 滚轮/双指缩放 · 手机可直接开</div>
+    </div>
+    <script type="module" src="/src/demo/noitaMapViewer.js"></script>
+  </body>
+</html>

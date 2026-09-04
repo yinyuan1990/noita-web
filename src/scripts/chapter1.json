@@ -1,0 +1,191 @@
+[
+  { "cmd": "setMap", "map": "cave_tunnel" },
+  { "cmd": "wait", "ms": 400 },
+
+  {
+    "cmd": "narrate",
+    "text": "由千万个通道与洞窟构筑而成的无边地下世界……卡斯卡城，就坐落在这样的超巨大洞窟内。"
+  },
+  { "cmd": "wait", "ms": 400 },
+  {
+    "cmd": "narrate",
+    "text": "乐琳站在远离卡斯卡城的通道入口，望着斜上方的菲穆莉卡女神巨像。"
+  },
+  { "cmd": "wait", "ms": 200 },
+
+  {
+    "cmd": "direct",
+    "action": "enter",
+    "id": "lelin",
+    "slot": "center",
+    "face": "right",
+    "enter": "fade",
+    "camera": "focus",
+    "zoom": 1.04,
+    "lock": true
+  },
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "菲穆莉卡……你这虚伪而恶毒的神祗啊。今天，我终于可以永远地离开你了。"
+  },
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "一想到那些女祭司气急败坏的模样，我恨不得立刻远走高飞。"
+  },
+  { "cmd": "direct", "action": "exit", "id": "lelin", "exit": "fade", "to": "hide" },
+  { "cmd": "camera", "action": "unlock" },
+  { "cmd": "camera", "action": "pan", "x": "stageCenter", "y": 520, "zoom": 1, "ms": 900 },
+  { "cmd": "wait", "ms": 200 },
+
+  {
+    "cmd": "narrate",
+    "text": "六个身影借着石笋掩护，小心翼翼地靠近约定地点。"
+  },
+  { "cmd": "wait", "ms": 150 },
+
+  {
+    "cmd": "direct",
+    "action": "enterFormation",
+    "formation": "party_six",
+    "enter": "walk",
+    "staggerMs": 80,
+    "zoom": 0.98
+  },
+
+  {
+    "cmd": "say",
+    "who": "jiruifu",
+    "text": "怎么没看见乐琳？是不是她丢下我们自己先走了？",
+    "faceTarget": "lansika"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "住嘴！也许她是来晚了！不要总是疑神疑鬼的！",
+    "faceTarget": "jiruifu"
+  },
+  {
+    "cmd": "say",
+    "who": "jiruifu",
+    "text": "真的没人！要是碰到巡逻队，我们会被拿去生祭的！",
+    "faceTarget": "lansika"
+  },
+  {
+    "cmd": "say",
+    "who": "kesijia",
+    "text": "别慌。约定地点没错——再等等。",
+    "faceTarget": "jiruifu"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "给我闭嘴！你这胆小如鼠的家伙！简直像住在垃圾堆里的地精！",
+    "faceTarget": "jiruifu"
+  },
+  { "cmd": "wait", "ms": 250 },
+
+  {
+    "cmd": "narrate",
+    "text": "兰丝卡取出石块，有节奏地敲击大石笋。——咚、咚、咚。"
+  },
+  { "cmd": "wait", "ms": 300 },
+
+  { "cmd": "camera", "action": "unlock" },
+  {
+    "cmd": "direct",
+    "action": "enter",
+    "id": "lelin",
+    "slot": "center",
+    "face": "left",
+    "enter": "jump",
+    "from": "hide",
+    "camera": "focus",
+    "zoom": 1.03,
+    "lock": false
+  },
+  {
+    "cmd": "camera",
+    "action": "lock",
+    "x": "stageCenter",
+    "y": 520,
+    "zoom": 0.98,
+    "ms": 700
+  },
+
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "真高兴你们能准时到这里。我还担心有什么事情发生了呢。",
+    "faceTarget": "lansika"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "乐琳，你真的能肯定，那些半精灵会接受我们？",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "卡奎纳不是某类精灵的组织，而是整个精灵种族的联合。在那里，你可以抛下一切，开始新的生活。",
+    "faceTarget": "lansika"
+  },
+  {
+    "cmd": "say",
+    "who": "jiruifu",
+    "text": "我总觉得他们的实力靠不住……万一失败，下场比地底还惨。",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "卡奎纳给我们的最大礼物是「希望」。事情已经到这一步——如果现在退出，那我只能不客气了。",
+    "faceTarget": "jiruifu"
+  },
+  { "cmd": "wait", "ms": 400 },
+
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "好，我决定跟你走！",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "narrate",
+    "text": "六人解下带有菲穆莉卡印记的项链，扔在地上。"
+  },
+  { "cmd": "wait", "ms": 250 },
+
+  {
+    "cmd": "direct",
+    "action": "faceAll",
+    "ids": ["lelin", "lansika", "kesijia", "jiruifu", "nvwei", "zhencha", "zhanshi"],
+    "face": "right"
+  },
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "我们出发吧。只要两天，就能与卡奎纳的人汇合——一周后，彻底逃出这个大囚笼。"
+  },
+
+  {
+    "cmd": "direct",
+    "action": "march",
+    "ids": ["nvwei", "lansika", "kesijia", "lelin", "jiruifu", "zhencha", "zhanshi"],
+    "dir": "far",
+    "distance": 48,
+    "ms": 900,
+    "staggerMs": 45,
+    "zoom": 0.98,
+    "cameraFollow": false
+  },
+  { "cmd": "wait", "ms": 200 },
+  { "cmd": "fade", "to": "black", "ms": 700 },
+  {
+    "cmd": "narrate",
+    "text": "通道深处，岔路口将近——"
+  },
+  { "cmd": "wait", "ms": 400 }
+]

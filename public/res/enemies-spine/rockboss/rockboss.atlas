@@ -1,0 +1,195 @@
+
+rockboss.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+L_arm1
+  rotate: true
+  xy: 46, 962
+  size: 28, 78
+  orig: 28, 78
+  offset: 0, 0
+  index: -1
+L_arm2
+  rotate: true
+  xy: 656, 934
+  size: 56, 130
+  orig: 56, 130
+  offset: 0, 0
+  index: -1
+L_arm3
+  rotate: false
+  xy: 216, 952
+  size: 46, 38
+  orig: 46, 38
+  offset: 0, 0
+  index: -1
+R_arm1
+  rotate: false
+  xy: 788, 934
+  size: 70, 56
+  orig: 70, 56
+  offset: 0, 0
+  index: -1
+R_arm2
+  rotate: true
+  xy: 374, 864
+  size: 78, 102
+  orig: 78, 102
+  offset: 0, 0
+  index: -1
+R_arm3
+  rotate: true
+  xy: 478, 864
+  size: 78, 92
+  orig: 78, 92
+  offset: 0, 0
+  index: -1
+R_attarm1
+  rotate: true
+  xy: 572, 854
+  size: 78, 100
+  orig: 78, 100
+  offset: 0, 0
+  index: -1
+R_attarm2
+  rotate: false
+  xy: 568, 758
+  size: 96, 94
+  orig: 96, 94
+  offset: 0, 0
+  index: -1
+acc
+  rotate: true
+  xy: 126, 954
+  size: 36, 88
+  orig: 36, 88
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 782, 846
+  size: 84, 94
+  orig: 84, 94
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 878, 840
+  size: 90, 100
+  orig: 90, 100
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 364, 772
+  size: 90, 100
+  orig: 90, 100
+  offset: 0, 0
+  index: -1
+face3
+  rotate: true
+  xy: 466, 772
+  size: 90, 100
+  orig: 90, 100
+  offset: 0, 0
+  index: -1
+hair1
+  rotate: false
+  xy: 70, 876
+  size: 86, 76
+  orig: 86, 76
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: true
+  xy: 170, 784
+  size: 88, 192
+  orig: 88, 192
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: true
+  xy: 158, 874
+  size: 76, 214
+  orig: 76, 214
+  offset: 0, 0
+  index: -1
+san1
+  rotate: true
+  xy: 2, 788
+  size: 84, 166
+  orig: 84, 166
+  offset: 0, 0
+  index: -1
+san2
+  rotate: false
+  xy: 394, 944
+  size: 134, 46
+  orig: 134, 46
+  offset: 0, 0
+  index: -1
+san3
+  rotate: true
+  xy: 860, 932
+  size: 58, 66
+  orig: 58, 66
+  offset: 0, 0
+  index: -1
+san4
+  rotate: false
+  xy: 2, 626
+  size: 234, 156
+  orig: 234, 156
+  offset: 0, 0
+  index: -1
+san5
+  rotate: false
+  xy: 2, 968
+  size: 42, 22
+  orig: 42, 22
+  offset: 0, 0
+  index: -1
+skirt1
+  rotate: true
+  xy: 530, 944
+  size: 46, 124
+  orig: 46, 124
+  offset: 0, 0
+  index: -1
+skirt2
+  rotate: false
+  xy: 2, 894
+  size: 66, 66
+  orig: 66, 66
+  offset: 0, 0
+  index: -1
+skirt3
+  rotate: true
+  xy: 674, 854
+  size: 78, 106
+  orig: 78, 106
+  offset: 0, 0
+  index: -1
+sto1
+  rotate: true
+  xy: 666, 684
+  size: 154, 284
+  orig: 154, 284
+  offset: 0, 0
+  index: -1
+sto2
+  rotate: false
+  xy: 928, 932
+  size: 62, 58
+  orig: 62, 58
+  offset: 0, 0
+  index: -1
+sto3
+  rotate: true
+  xy: 264, 952
+  size: 38, 128
+  orig: 38, 128
+  offset: 0, 0
+  index: -1

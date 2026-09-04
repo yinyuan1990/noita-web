@@ -1,0 +1,174 @@
+
+erlangzhenjun.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: false
+  xy: 221, 615
+  size: 127, 137
+  orig: 289, 220
+  offset: 74, 83
+  index: -1
+fa_01
+  rotate: false
+  xy: 112, 437
+  size: 25, 116
+  orig: 25, 116
+  offset: 0, 0
+  index: -1
+fa_02
+  rotate: false
+  xy: 138, 6
+  size: 32, 118
+  orig: 32, 118
+  offset: 0, 0
+  index: -1
+jianjia_L
+  rotate: false
+  xy: 329, 888
+  size: 94, 134
+  orig: 95, 134
+  offset: 0, 0
+  index: -1
+jianjia_R
+  rotate: true
+  xy: 2, 2
+  size: 122, 134
+  orig: 122, 134
+  offset: 0, 0
+  index: -1
+jiao_L
+  rotate: true
+  xy: 333, 557
+  size: 56, 80
+  orig: 56, 80
+  offset: 0, 0
+  index: -1
+jiao_R
+  rotate: false
+  xy: 291, 472
+  size: 62, 81
+  orig: 62, 81
+  offset: 0, 0
+  index: -1
+kaijia_01
+  rotate: true
+  xy: 172, 7
+  size: 117, 108
+  orig: 117, 108
+  offset: 0, 0
+  index: -1
+kaijia_02
+  rotate: true
+  xy: 221, 555
+  size: 58, 110
+  orig: 58, 110
+  offset: 0, 0
+  index: -1
+piaodai
+  rotate: true
+  xy: 2, 126
+  size: 304, 228
+  orig: 304, 228
+  offset: 0, 0
+  index: -1
+piaodai_L
+  rotate: false
+  xy: 232, 251
+  size: 64, 87
+  orig: 64, 87
+  offset: 0, 0
+  index: -1
+shou_L
+  rotate: false
+  xy: 298, 275
+  size: 70, 79
+  orig: 70, 79
+  offset: 0, 0
+  index: -1
+shou_R
+  rotate: false
+  xy: 355, 474
+  size: 52, 81
+  orig: 54, 84
+  offset: 1, 1
+  index: -1
+shoubi_L
+  rotate: false
+  xy: 280, 356
+  size: 74, 82
+  orig: 74, 82
+  offset: 0, 0
+  index: -1
+shoubi_R
+  rotate: true
+  xy: 232, 170
+  size: 79, 78
+  orig: 79, 78
+  offset: 0, 0
+  index: -1
+tou
+  rotate: false
+  xy: 112, 754
+  size: 146, 268
+  orig: 146, 268
+  offset: 0, 0
+  index: -1
+tui_L
+  rotate: false
+  xy: 218, 440
+  size: 71, 113
+  orig: 71, 113
+  offset: 0, 0
+  index: -1
+tui_R
+  rotate: false
+  xy: 139, 438
+  size: 77, 115
+  orig: 77, 115
+  offset: 0, 0
+  index: -1
+wuqi
+  rotate: false
+  xy: 2, 432
+  size: 108, 590
+  orig: 108, 590
+  offset: 0, 0
+  index: -1
+yaodai_01
+  rotate: false
+  xy: 232, 340
+  size: 46, 98
+  orig: 46, 98
+  offset: 0, 0
+  index: -1
+yaodai_03
+  rotate: true
+  xy: 112, 555
+  size: 197, 107
+  orig: 197, 112
+  offset: 0, 0
+  index: -1
+yibai
+  rotate: false
+  xy: 348, 780
+  size: 64, 106
+  orig: 64, 106
+  offset: 0, 0
+  index: -1
+yibai_02
+  rotate: false
+  xy: 260, 754
+  size: 86, 131
+  orig: 86, 131
+  offset: 0, 0
+  index: -1
+yibai_03
+  rotate: false
+  xy: 260, 887
+  size: 67, 135
+  orig: 67, 135
+  offset: 0, 0
+  index: -1

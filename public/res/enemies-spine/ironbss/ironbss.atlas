@@ -1,0 +1,167 @@
+
+ironbss.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 222, 310
+  size: 98, 136
+  orig: 98, 136
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 222, 194
+  size: 102, 126
+  orig: 102, 126
+  offset: 0, 0
+  index: -1
+belt
+  rotate: false
+  xy: 492, 468
+  size: 48, 42
+  orig: 48, 42
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 360, 316
+  size: 92, 100
+  orig: 92, 100
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 474, 298
+  size: 102, 164
+  orig: 104, 166
+  offset: 1, 1
+  index: -1
+face2
+  rotate: true
+  xy: 56, 306
+  size: 102, 164
+  orig: 104, 166
+  offset: 1, 1
+  index: -1
+face3
+  rotate: true
+  xy: 56, 202
+  size: 102, 164
+  orig: 104, 166
+  offset: 1, 1
+  index: -1
+fhair
+  rotate: true
+  xy: 364, 480
+  size: 20, 36
+  orig: 20, 36
+  offset: 0, 0
+  index: -1
+fhair2
+  rotate: true
+  xy: 322, 478
+  size: 22, 40
+  orig: 22, 40
+  offset: 0, 0
+  index: -1
+hair1
+  rotate: true
+  xy: 416, 512
+  size: 108, 180
+  orig: 108, 180
+  offset: 0, 0
+  index: -1
+hair2
+  rotate: true
+  xy: 240, 502
+  size: 118, 174
+  orig: 118, 174
+  offset: 0, 0
+  index: -1
+hair3
+  rotate: true
+  xy: 56, 462
+  size: 158, 182
+  orig: 158, 182
+  offset: 0, 0
+  index: -1
+hel1
+  rotate: true
+  xy: 184, 114
+  size: 78, 68
+  orig: 80, 70
+  offset: 1, 1
+  index: -1
+hel2
+  rotate: true
+  xy: 240, 462
+  size: 38, 80
+  orig: 40, 82
+  offset: 1, 1
+  index: -1
+kata1
+  rotate: false
+  xy: 2, 180
+  size: 52, 440
+  orig: 52, 440
+  offset: 0, 0
+  index: -1
+kata2
+  rotate: true
+  xy: 56, 410
+  size: 50, 416
+  orig: 50, 416
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: false
+  xy: 254, 78
+  size: 66, 114
+  orig: 66, 114
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: false
+  xy: 350, 188
+  size: 66, 120
+  orig: 66, 120
+  offset: 0, 0
+  index: -1
+sho1
+  rotate: true
+  xy: 418, 220
+  size: 76, 62
+  orig: 78, 64
+  offset: 1, 1
+  index: -1
+sho2
+  rotate: true
+  xy: 418, 144
+  size: 74, 62
+  orig: 76, 64
+  offset: 1, 1
+  index: -1
+skarmor1
+  rotate: true
+  xy: 184, 32
+  size: 80, 64
+  orig: 80, 64
+  offset: 0, 0
+  index: -1
+skarmor2
+  rotate: true
+  xy: 416, 464
+  size: 46, 74
+  orig: 46, 74
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: true
+  xy: 2, 2
+  size: 176, 180
+  orig: 176, 180
+  offset: 0, 0
+  index: -1

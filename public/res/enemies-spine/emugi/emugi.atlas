@@ -1,0 +1,41 @@
+
+emugi.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 88, 6
+  size: 29, 55
+  orig: 29, 55
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 64, 2
+  size: 22, 44
+  orig: 22, 44
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 48
+  size: 75, 75
+  orig: 75, 75
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 79, 63
+  size: 44, 60
+  orig: 44, 60
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 2, 2
+  size: 44, 60
+  orig: 44, 60
+  offset: 0, 0
+  index: -1

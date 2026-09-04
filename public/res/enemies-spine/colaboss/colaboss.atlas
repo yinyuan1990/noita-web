@@ -1,0 +1,230 @@
+
+colaboss.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+00acc
+  rotate: true
+  xy: 530, 898
+  size: 72, 106
+  orig: 72, 106
+  offset: 0, 0
+  index: -1
+L_arm1
+  rotate: true
+  xy: 302, 982
+  size: 30, 52
+  orig: 32, 54
+  offset: 1, 1
+  index: -1
+L_arm2
+  rotate: false
+  xy: 230, 812
+  size: 252, 88
+  orig: 252, 88
+  offset: 0, 0
+  index: -1
+L_att1
+  rotate: false
+  xy: 452, 572
+  size: 254, 184
+  orig: 254, 184
+  offset: 0, 0
+  index: -1
+L_leg1
+  rotate: true
+  xy: 656, 758
+  size: 118, 186
+  orig: 118, 186
+  offset: 0, 0
+  index: -1
+R_arm
+  rotate: false
+  xy: 638, 888
+  size: 140, 82
+  orig: 140, 82
+  offset: 0, 0
+  index: -1
+R_arm2
+  rotate: false
+  xy: 324, 920
+  size: 56, 56
+  orig: 58, 58
+  offset: 1, 1
+  index: -1
+R_leg1
+  rotate: true
+  xy: 2, 682
+  size: 152, 206
+  orig: 152, 206
+  offset: 0, 0
+  index: -1
+armor0
+  rotate: true
+  xy: 452, 902
+  size: 70, 76
+  orig: 72, 78
+  offset: 1, 1
+  index: -1
+armor1
+  rotate: false
+  xy: 270, 930
+  size: 52, 50
+  orig: 54, 52
+  offset: 1, 1
+  index: -1
+armor2
+  rotate: true
+  xy: 946, 966
+  size: 46, 50
+  orig: 48, 52
+  offset: 1, 1
+  index: -1
+armor3
+  rotate: true
+  xy: 2, 954
+  size: 46, 52
+  orig: 48, 54
+  offset: 1, 1
+  index: -1
+backken
+  rotate: true
+  xy: 210, 640
+  size: 170, 240
+  orig: 170, 240
+  offset: 0, 0
+  index: -1
+bfire1
+  rotate: true
+  xy: 146, 934
+  size: 48, 122
+  orig: 50, 124
+  offset: 1, 1
+  index: -1
+bfire1_2
+  rotate: true
+  xy: 802, 970
+  size: 42, 142
+  orig: 44, 144
+  offset: 1, 1
+  index: -1
+bfire1_3
+  rotate: true
+  xy: 184, 984
+  size: 28, 116
+  orig: 30, 118
+  offset: 1, 1
+  index: -1
+bfire1_4
+  rotate: true
+  xy: 356, 978
+  size: 34, 116
+  orig: 36, 118
+  offset: 1, 1
+  index: -1
+bfire2
+  rotate: true
+  xy: 602, 972
+  size: 40, 108
+  orig: 42, 110
+  offset: 1, 1
+  index: -1
+bfire2_2
+  rotate: true
+  xy: 712, 972
+  size: 40, 88
+  orig: 42, 90
+  offset: 1, 1
+  index: -1
+bfire2_3
+  rotate: true
+  xy: 474, 974
+  size: 38, 126
+  orig: 40, 128
+  offset: 1, 1
+  index: -1
+bfire2_4
+  rotate: true
+  xy: 56, 946
+  size: 42, 88
+  orig: 44, 90
+  offset: 1, 1
+  index: -1
+bigarm1
+  rotate: true
+  xy: 2, 472
+  size: 208, 202
+  orig: 208, 202
+  offset: 0, 0
+  index: -1
+bigarm2
+  rotate: false
+  xy: 206, 330
+  size: 504, 228
+  orig: 504, 228
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 780, 878
+  size: 90, 118
+  orig: 90, 118
+  offset: 0, 0
+  index: -1
+chain
+  rotate: false
+  xy: 382, 912
+  size: 68, 64
+  orig: 68, 64
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 900, 868
+  size: 112, 96
+  orig: 114, 98
+  offset: 1, 1
+  index: -1
+face2
+  rotate: false
+  xy: 2, 848
+  size: 112, 96
+  orig: 114, 98
+  offset: 1, 1
+  index: -1
+face3
+  rotate: false
+  xy: 116, 836
+  size: 112, 96
+  orig: 114, 98
+  offset: 1, 1
+  index: -1
+hair1
+  rotate: true
+  xy: 90, 990
+  size: 22, 92
+  orig: 22, 92
+  offset: 0, 0
+  index: -1
+hair2
+  rotate: true
+  xy: 2, 1002
+  size: 10, 86
+  orig: 10, 86
+  offset: 0, 0
+  index: -1
+hair5
+  rotate: false
+  xy: 708, 560
+  size: 220, 196
+  orig: 220, 196
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: true
+  xy: 484, 772
+  size: 114, 170
+  orig: 116, 172
+  offset: 1, 1
+  index: -1

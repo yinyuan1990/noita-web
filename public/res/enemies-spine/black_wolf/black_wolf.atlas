@@ -1,0 +1,55 @@
+
+black_wolf.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 44, 86
+  size: 24, 37
+  orig: 24, 37
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 48, 4
+  size: 30, 41
+  orig: 30, 41
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 81
+  size: 40, 42
+  orig: 40, 42
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 36
+  size: 36, 43
+  orig: 36, 43
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 40, 36
+  size: 36, 43
+  orig: 36, 43
+  offset: 0, 0
+  index: -1
+fur
+  rotate: true
+  xy: 70, 95
+  size: 28, 23
+  orig: 28, 23
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 2, 2
+  size: 32, 44
+  orig: 32, 44
+  offset: 0, 0
+  index: -1

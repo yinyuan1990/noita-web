@@ -1,0 +1,293 @@
+
+hellboss.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+00acc
+  rotate: true
+  xy: 838, 836
+  size: 82, 130
+  orig: 82, 130
+  offset: 0, 0
+  index: -1
+L_arm1
+  rotate: true
+  xy: 2, 948
+  size: 48, 82
+  orig: 48, 82
+  offset: 0, 0
+  index: -1
+L_arm2
+  rotate: false
+  xy: 266, 778
+  size: 234, 88
+  orig: 234, 88
+  offset: 0, 0
+  index: -1
+L_att1
+  rotate: false
+  xy: 346, 434
+  size: 224, 206
+  orig: 226, 208
+  offset: 1, 1
+  index: -1
+L_leg1
+  rotate: true
+  xy: 2, 518
+  size: 150, 152
+  orig: 150, 152
+  offset: 0, 0
+  index: -1
+L_leg2
+  rotate: true
+  xy: 428, 868
+  size: 68, 112
+  orig: 68, 112
+  offset: 0, 0
+  index: -1
+R_arm
+  rotate: false
+  xy: 652, 738
+  size: 122, 104
+  orig: 122, 104
+  offset: 0, 0
+  index: -1
+R_arm2
+  rotate: true
+  xy: 668, 848
+  size: 72, 80
+  orig: 74, 82
+  offset: 1, 1
+  index: -1
+R_leg1
+  rotate: true
+  xy: 574, 596
+  size: 140, 150
+  orig: 140, 150
+  offset: 0, 0
+  index: -1
+R_leg2
+  rotate: true
+  xy: 542, 860
+  size: 68, 124
+  orig: 68, 124
+  offset: 0, 0
+  index: -1
+R_wing1
+  rotate: true
+  xy: 80, 876
+  size: 66, 190
+  orig: 66, 190
+  offset: 0, 0
+  index: -1
+R_wing2
+  rotate: false
+  xy: 502, 756
+  size: 148, 102
+  orig: 148, 102
+  offset: 0, 0
+  index: -1
+R_wing3
+  rotate: false
+  xy: 156, 484
+  size: 188, 156
+  orig: 188, 156
+  offset: 0, 0
+  index: -1
+acc1
+  rotate: true
+  xy: 380, 984
+  size: 30, 116
+  orig: 30, 116
+  offset: 0, 0
+  index: -1
+bfire1
+  rotate: true
+  xy: 562, 930
+  size: 48, 122
+  orig: 50, 124
+  offset: 1, 1
+  index: -1
+bfire1_2
+  rotate: true
+  xy: 306, 940
+  size: 42, 142
+  orig: 44, 144
+  offset: 1, 1
+  index: -1
+bfire1_3
+  rotate: true
+  xy: 178, 986
+  size: 28, 116
+  orig: 30, 118
+  offset: 1, 1
+  index: -1
+bfire1_4
+  rotate: true
+  xy: 594, 980
+  size: 34, 116
+  orig: 36, 118
+  offset: 1, 1
+  index: -1
+bfire2
+  rotate: true
+  xy: 450, 938
+  size: 42, 110
+  orig: 42, 110
+  offset: 0, 0
+  index: -1
+bfire2_2
+  rotate: true
+  xy: 892, 974
+  size: 40, 88
+  orig: 42, 90
+  offset: 1, 1
+  index: -1
+bfire2_3
+  rotate: true
+  xy: 764, 976
+  size: 38, 126
+  orig: 40, 128
+  offset: 1, 1
+  index: -1
+bfire2_4
+  rotate: true
+  xy: 86, 944
+  size: 42, 88
+  orig: 44, 90
+  offset: 1, 1
+  index: -1
+body
+  rotate: true
+  xy: 2, 680
+  size: 106, 126
+  orig: 106, 126
+  offset: 0, 0
+  index: -1
+bp1
+  rotate: true
+  xy: 272, 642
+  size: 112, 300
+  orig: 112, 300
+  offset: 0, 0
+  index: -1
+bp2
+  rotate: true
+  xy: 726, 594
+  size: 134, 278
+  orig: 134, 278
+  offset: 0, 0
+  index: -1
+bp3
+  rotate: true
+  xy: 2, 788
+  size: 86, 262
+  orig: 86, 262
+  offset: 0, 0
+  index: -1
+bpacc
+  rotate: true
+  xy: 686, 922
+  size: 50, 244
+  orig: 50, 244
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 2, 880
+  size: 66, 76
+  orig: 68, 78
+  offset: 1, 1
+  index: -1
+face2
+  rotate: true
+  xy: 272, 872
+  size: 66, 76
+  orig: 68, 78
+  offset: 1, 1
+  index: -1
+face3
+  rotate: true
+  xy: 350, 872
+  size: 66, 76
+  orig: 68, 78
+  offset: 1, 1
+  index: -1
+hacc
+  rotate: true
+  xy: 712, 980
+  size: 34, 50
+  orig: 34, 50
+  offset: 0, 0
+  index: -1
+haiir
+  rotate: false
+  xy: 498, 984
+  size: 38, 30
+  orig: 38, 30
+  offset: 0, 0
+  index: -1
+hat
+  rotate: false
+  xy: 776, 730
+  size: 172, 104
+  orig: 172, 104
+  offset: 0, 0
+  index: -1
+hbelt
+  rotate: false
+  xy: 176, 944
+  size: 128, 40
+  orig: 128, 40
+  offset: 0, 0
+  index: -1
+hyum1
+  rotate: true
+  xy: 296, 986
+  size: 28, 82
+  orig: 28, 82
+  offset: 0, 0
+  index: -1
+hyum2
+  rotate: true
+  xy: 2, 998
+  size: 16, 82
+  orig: 16, 82
+  offset: 0, 0
+  index: -1
+pur
+  rotate: true
+  xy: 750, 844
+  size: 76, 86
+  orig: 76, 86
+  offset: 0, 0
+  index: -1
+redacc
+  rotate: true
+  xy: 932, 920
+  size: 52, 82
+  orig: 52, 82
+  offset: 0, 0
+  index: -1
+skirt1
+  rotate: true
+  xy: 130, 670
+  size: 106, 140
+  orig: 106, 140
+  offset: 0, 0
+  index: -1
+skul
+  rotate: false
+  xy: 538, 982
+  size: 54, 32
+  orig: 56, 34
+  offset: 1, 1
+  index: -1
+wacc
+  rotate: true
+  xy: 86, 988
+  size: 26, 90
+  orig: 26, 90
+  offset: 0, 0
+  index: -1

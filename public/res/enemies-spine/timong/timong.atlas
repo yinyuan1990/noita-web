@@ -1,0 +1,83 @@
+
+timong.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 2, 84
+  size: 29, 74
+  orig: 29, 74
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 33, 85
+  size: 29, 71
+  orig: 29, 71
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 38
+  size: 70, 44
+  orig: 70, 44
+  offset: 0, 0
+  index: -1
+face
+  rotate: false
+  xy: 105, 118
+  size: 48, 40
+  orig: 50, 42
+  offset: 1, 1
+  index: -1
+foot1
+  rotate: false
+  xy: 106, 97
+  size: 31, 19
+  orig: 31, 19
+  offset: 0, 0
+  index: -1
+foot2
+  rotate: true
+  xy: 42, 3
+  size: 33, 17
+  orig: 33, 17
+  offset: 0, 0
+  index: -1
+hand1
+  rotate: false
+  xy: 2, 2
+  size: 18, 34
+  orig: 18, 34
+  offset: 0, 0
+  index: -1
+hand2
+  rotate: false
+  xy: 22, 5
+  size: 18, 31
+  orig: 18, 31
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: true
+  xy: 74, 47
+  size: 36, 62
+  orig: 36, 62
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: true
+  xy: 74, 10
+  size: 35, 54
+  orig: 35, 54
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 33, 116
+  size: 42, 70
+  orig: 42, 70
+  offset: 0, 0
+  index: -1

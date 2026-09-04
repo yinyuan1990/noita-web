@@ -1,0 +1,55 @@
+
+soldier_2.png
+size: 604,126
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 2, 2
+  size: 210, 122
+  orig: 210, 122
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 562, 82
+  size: 42, 30
+  orig: 42, 30
+  offset: 0, 0
+  index: -1
+arm5
+  rotate: false
+  xy: 548, 12
+  size: 54, 68
+  orig: 54, 68
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 214, 8
+  size: 130, 116
+  orig: 130, 116
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 346, 30
+  size: 110, 94
+  orig: 110, 94
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: true
+  xy: 458, 82
+  size: 42, 102
+  orig: 42, 102
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: true
+  xy: 458, 18
+  size: 62, 88
+  orig: 62, 88
+  offset: 0, 0
+  index: -1

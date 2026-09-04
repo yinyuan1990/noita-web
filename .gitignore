@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-noita/
+*.tar.gz
+*.tgz
+.tmp-*
+test-results/
+scripts/out/
+scripts/shots/
+public/stages/_tmp/
+# Noita 原版解包数据(data.wak 解包件 / 存档真值),版权内容且只有资源重生成脚本用;运行只需要 public/res/noita
+noita-ref/
+*.log
+.DS_Store
+Thumbs.db

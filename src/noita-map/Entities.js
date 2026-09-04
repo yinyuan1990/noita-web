@@ -1,0 +1,1513 @@
+// ── 实体层(第 1 步):敌人 / 动物,定义全部来自 entities.json(data/entities/animals/*.xml 经 Base 合并)──
+// 生成点由 Worker 按 lua 的 spawn() 掷骰算好挂在 chunk.spawns(种子确定),主线程首次拿到该 chunk 时实例化一次。
+// 行走 = CharacterPlatformingComponent(pixel_gravity / run_velocity / accel_x / climb_over_y,与玩家同一个模型);
+// 精灵 = SpriteComponent 的 Sprite xml(RectAnimation 按名字播:stand/walk/jump_up/jump_fall/attack/swim_*);
+// AI = AnimalAIComponent 的简化版:sense_creatures + creature_detection_range 发现玩家 → 追 → attack_melee_max_distance 内近战
+//      (attack_melee_damage_min/max、frames_between、impulse);helpless 阵营见人就跑;没人时闲逛/站着。
+// 伤害 = DamageModelComponent:hp;被弹丸/爆炸打到掉血,喷 blood_spray_material;死亡洒 blood_material。布娃娃 / 掉金块 下一步。
+// 物理道具(prop)在这一步只登记,不实例化——像素刚体是第 2 步。
+
+import { RigidBody } from './RigidBody.js'
+import { NollaPrng } from './core/NollaPrng.js'
+
+const K_LIQUID = 3
+const BODY_GRAVITY = 350 // 与角色 pixel_gravity 同量级(box2d 世界重力换算后 ≈ 这个数,炸弹刚体也用它)
+
+export class Entities {
+  /**
+   * @param {object} o
+   * @param {string} o.res
+   * @param {(url:string)=>Promise<{width:number,height:number,data:Uint8Array,image:ImageBitmap}>} o.decodePng
+   * @param {object} o.mats  assets.materials
+   * @param {object} o.sim   CellSim(bind 后可 get/set)
+   * @param {(wx:number,wy:number)=>number} o.matAt  世界坐标 → 材质 id(-1 未加载)
+   * @param {object} o.player  {x,y,vx,vy,hp}
+   * @param {object} o.hooks  {debris(x,y,vx,vy,m,col), sfx(name,opt), damagePlayer(dmg, ix, iy, src), shake(t)}
+   */
+  constructor({ res, decodePng, mats, sim, matAt, player, projectiles = null, seed = 0, hooks = {} }) {
+    this.res = res; this.decodePng = decodePng; this.mats = mats; this.sim = sim; this.matAt = matAt; this.player = player; this.hooks = hooks
+    this.seed = seed >>> 0
+    this.projectiles = projectiles
+    this.defs = null
+    this.images = new Map()
+    this.list = []
+    this.worms = []        // 虫(WormComponent 节链)
+    this.bodies = []       // 像素刚体(物理道具)
+    this.pendingProps = [] // 形状图还没到的道具
+    this.spawnedChunks = new Set()
+    this.pendingImages = new Map()
+    this.stats = { spawned: 0, skipped: {}, killed: 0, bodies: 0, broken: 0 }
+    this.time = 0
+    this._solid = this._solid.bind(this)
+    this._liqDensity = (x, y) => { const m = this.matAt(x, y); return m > 0 && this.mats.kind[m] === 'liquid' ? (this.mats.list[m]?.density ?? 3) : 0 }
+  }
+
+  async init() {
+    this.defs = await (await fetch(`${this.res}/entities.json`)).json()
+    // 道具爆炸用的爆炸精灵借投射物的(explosion_032 = rocket 的那张)
+    if (this.projectiles?.load) await this.projectiles.load(['rocket', 'grenade']).catch(() => {})
+    return this
+  }
+
+  _img(name) {
+    if (!name) return null
+    if (this.images.has(name)) return this.images.get(name)
+    if (!this.pendingImages.has(name)) {
+      this.pendingImages.set(name, this.decodePng(`${this.res}/ent/${name}`).then((p) => { this.images.set(name, p); this.pendingImages.delete(name); return p }).catch(() => { this.images.set(name, null); this.pendingImages.delete(name) }))
+    }
+    return null
+  }
+
+  /** streamer 里某 chunk 首次就位 → 把它的生成点实例化(每 chunk 只做一次) */
+  spawnChunk(entry) {
+    if (!entry?.ready || !entry.spawns || this.spawnedChunks.has(entry.key)) return
+    this.spawnedChunks.add(entry.key)
+    for (const s of entry.spawns) {
+      if (/^wand_/.test(s.entity)) { this.hooks.spawnWand?.(s.entity, s.x, s.y); continue } // 法杖:交给 WandSystem 造,再当物品放回来
+      // 圣山的特殊物:商店货 / 特权 / 传送门(temple_altar.lua),由 noitaPlay 按各自 lua 掷
+      if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit') { this.hooks.spawnSpecial?.(s); continue }
+      const d = this.defs[s.entity]
+      if (!d) { this.stats.skipped[s.entity] = (this.stats.skipped[s.entity] || 0) + 1; continue }
+      if (d.kind === 'prop' && d.shape?.image) {
+        // 像素刚体:形状图到了再建(见 update 里的 pendingProps)
+        this._img(d.shape.image)
+        this.pendingProps.push({ name: s.entity, d, x: s.x, y: s.y })
+        continue
+      }
+      if (d.kind === 'item') { this.spawnItem(s.entity, s.x, s.y); continue }
+      if (d.worm && d.parts?.length) { for (const p of d.parts) this._img(p.image); this.worms.push(this._makeWorm(s.entity, d, s.x, s.y)); this.stats.spawned++; continue }
+      if (d.kind !== 'creature' || !d.sprite?.image || !d.platforming || !d.character) { this.stats.skipped[s.entity] = (this.stats.skipped[s.entity] || 0) + 1; continue }
+      this._preload(d)
+      this.list.push(this._make(s.entity, d, s.x, s.y))
+      this.stats.spawned++
+    }
+    if (this.list.length > 240) this.list.splice(0, this.list.length - 240)
+  }
+
+  /** 一只怪要用到的全部贴图先排队解码(主精灵 / PhysicsAI 本体图 / lukki 的腿与叠层) */
+  _preload(d) {
+    this._img(d.sprite.image)
+    if (d.bodyImage) this._img(d.bodyImage)
+    if (d.overlays) for (const o of d.overlays) this._img(o.image)
+    if (d.limbs) for (const L of d.limbs) { if (L.a) this._img(L.a.img); if (L.b) this._img(L.b.img); if (L.knee) this._img(L.knee.img) }
+  }
+
+  /** 直接放一只怪(巢吐虫 / 蜘蛛卵出小蜘蛛 / 探针用) */
+  spawnCreature(name, x, y) {
+    const d = this.defs[name]
+    if (!d?.sprite?.image || !d.platforming || !d.character) return null
+    this._preload(d)
+    const e = this._make(name, d, x, y)
+    this.list.push(e); this.stats.spawned++
+    return e
+  }
+
+  /**
+   * 物品(药水 / 宝箱 / 心 / 法术刷新 / 金块):有形状图用形状图,没有就用精灵图当形状;药水按 potion.lua 掷内容
+   * @param {object} [extra]  {potion:{mat,left}} 已有内容(扔出去的药水)/ vx,vy 初速
+   */
+  spawnItem(name, x, y, extra = {}) {
+    const d = this.defs[name]
+    if (!d) return null
+    const image = d.shape?.image || d.sprite?.image
+    if (!image) return null
+    this._img(image)
+    if (d.sprite?.image && d.sprite.image !== image) this._img(d.sprite.image)
+    const p = { name, d, x, y, item: true, vx: extra.vx || 0, vy: extra.vy || 0, w: extra.w || 0, pickCool: extra.pickCool || 0, nailed: name === 'perk_reroll' } // 重掷机是固定在地上的机器
+    if (name === 'potion') p.potion = extra.potion || this._rollPotion(x, y)
+    this.pendingProps.push(p)
+    return p
+  }
+
+  /** potion.lua init():SetRandomSeed(x,y);Random(0,100)≤75 → 魔法液体(极小概率回血/净化粉/虚弱),否则 standard 表 */
+  _rollPotion(x, y) {
+    const prng = new NollaPrng(0); prng.SetRandomSeed(this.seed, Math.floor(x), Math.floor(y))
+    const R = (a, b) => prng.Random(a, b)
+    const MAGIC = ['magic_liquid_unstable_teleportation', 'magic_liquid_polymorph', 'magic_liquid_random_polymorph', 'magic_liquid_berserk', 'magic_liquid_charm', 'magic_liquid_invisibility', 'magic_liquid_movement_faster', 'magic_liquid_faster_levitation', 'magic_liquid_worm_attractor', 'magic_liquid_protection_all', 'magic_liquid_mana_regeneration']
+    const STD = ['lava', 'water', 'blood', 'alcohol', 'oil', 'slime', 'acid', 'radioactive_liquid', 'gunpowder_unstable', 'liquid_fire', 'blood_cold']
+    let mat
+    if (R(0, 100) <= 75) {
+      if (R(0, 100000) <= 50) mat = 'magic_liquid_hp_regeneration'
+      else if (R(200, 100000) <= 250) mat = 'purifying_powder'
+      else if (R(250, 100000) <= 500) mat = 'magic_liquid_weakness'
+      else mat = MAGIC[R(1, MAGIC.length) - 1]
+    } else mat = STD[R(1, STD.length) - 1]
+    if (!this.mats.byName.has(mat)) mat = 'water'
+    return { mat, left: 1000 }
+  }
+
+  /** 扔药水(PhysicsThrowable:max_throw_speed 180):从手里飞出去,砸到东西就碎 */
+  throwItem(name, x, y, vx, vy, extra) { return this.spawnItem(name, x, y, { ...extra, vx, vy, w: (Math.random() - 0.5) * 10, pickCool: 0.6, thrown: true }) }
+
+  /**
+   * 宝箱(chest_random.lua drop_random_reward 主干):7% 小炸弹 · 33% 金 · 10% 药水 · 4% 法术刷新 · 6% 杂项(先给药水)· 5% 法术卡(先给金)·
+   * 19% 法杖 · 11% 心 · 3% 整箱变金 · 2% 骰子(再掷 2~3 次)
+   */
+  openChest(b) {
+    const x = b.x, y = b.y
+    const R = (a, c) => a + Math.floor(Math.random() * (c - a + 1))
+    const gold = (name, v, n = 1) => { for (let i = 0; i < n; i++) { this._img(this.defs[name].shape.image); this.pendingProps.push({ name, d: this.defs[name], x: x + R(-10, 10), y: y - 4 + R(-10, 5), vx: R(-40, 40), vy: -R(40, 90), item: true, gold: v, pickCool: 0.5 }) } }
+    let count = 1
+    while (count-- > 0) {
+      const rnd = R(1, 100)
+      if (rnd <= 7) { this.projectiles?.spawn?.('bomb_small', x, y - 6, -Math.PI / 2, {}) }
+      else if (rnd <= 40) {
+        let amount = 5; const r1 = R(0, 100); if (r1 <= 80) amount = 7; else if (r1 <= 95) amount = 10; else amount = 20
+        const r2 = R(0, 100)
+        if (r2 > 30 && r2 <= 80) gold('goldnugget_50', 50)
+        else if (r2 <= 95) gold('goldnugget_200', 200)
+        else if (r2 <= 99) gold('goldnugget_1000', 1000)
+        else { gold('goldnugget_50', 50, R(1, 3)); if (R(0, 100) > 50) gold('goldnugget_200', 200, R(1, 3)); if (R(0, 100) > 80) gold('goldnugget_1000', 1000, R(1, 3)) }
+        gold('goldnugget_10', 10, amount)
+      } else if (rnd <= 50) this.spawnItem('potion', x + R(-10, 10), y - 6, { vy: -60, pickCool: 0.5 })
+      else if (rnd <= 54) this.spawnItem('spell_refresh', x + R(-10, 10), y - 6, { vy: -60, pickCool: 0.5 })
+      else if (rnd <= 60) this.spawnItem('potion', x, y - 10, { vy: -60, pickCool: 0.5 })
+      else if (rnd <= 65) gold('goldnugget_10', 10, R(1, 5))
+      else if (rnd <= 84) this.hooks.spawnWand?.('wand_level_01', x, y - 8)
+      else if (rnd <= 95) this.spawnItem('heart', x + R(-10, 10), y - 6, { vy: -60, pickCool: 0.5 })
+      else if (rnd <= 98) gold('goldnugget_50', 50, 6)
+      else if (rnd <= 99) count += 2
+      else count += 3
+    }
+    this.hooks.sfx?.('magic', { vol: 0.6, rate: 0.8 })
+  }
+
+  /** 世界里的法杖(物品):法杖图当形状,碰到玩家捡起(pickup 钩子拿到 b.wand);shop = {cost, sale} 是商店货 */
+  spawnWandItem(imageName, x, y, wand, shop = null) {
+    this._img(imageName)
+    this.pendingProps.push({ name: 'wand', d: { kind: 'prop', shape: { image: imageName, material: 'wood_prop' }, body: { friction: 0.7, restitution: 0.05, linear_damping: 0.2, angular_damping: 0.5 } }, x, y, item: true, wand, shop })
+  }
+
+  /** 圣山特权(perk_spawn):图标当形状摆在祭坛上,碰到即拿;同一祭坛的其余几个由 pickup 钩子撤掉(killOthers) */
+  spawnPerkItem(iconName, x, y, perkId, group) {
+    this._img(iconName)
+    this.pendingProps.push({ name: 'perk', d: { kind: 'prop', shape: { image: iconName, material: 'wood_prop' }, body: {} }, x, y, item: true, perk: perkId, group, nailed: true })
+  }
+  /** 撤掉同组(同一祭坛)其他还没拿的特权 */
+  killGroup(group, except) { for (const b of this.bodies) if (b.group === group && b !== except) b.dead = true }
+
+  /** 商店里的法术卡(CreateItemActionEntity):卡图当形状,碰到 = 买(pickup 钩子看 b.shop.cost 够不够钱) */
+  spawnSpellItem(iconName, x, y, shop, spell = shop?.spell || null, extra = {}) {
+    this._img(iconName)
+    this.pendingProps.push({ name: 'spell_card', d: { kind: 'prop', shape: { image: iconName, material: 'wood_prop' }, body: { friction: 0.8, restitution: 0.02, linear_damping: 0.3, angular_damping: 0.8 } }, x, y, item: true, shop, spell, nailed: !!shop, ...extra })
+  }
+
+  /**
+   * 工具箱(utility_box.lua drop_random_reward):Random(1,100) ≤2 小炸弹 · ≤5 法术刷新 · ≤11 杂项(先给药水)· ≤97 抽 2~6 张 UTILITY / MODIFIER 卡(make_random_utility_card)· ≤99 再掷两次 · 100 再掷三次
+   */
+  openUtilityBox(b) {
+    const x = b.x, y = b.y
+    const R = (a, c) => a + Math.floor(Math.random() * (c - a + 1))
+    let count = 1
+    while (count-- > 0) {
+      const rnd = R(1, 100)
+      if (rnd <= 2) this.projectiles?.spawn?.('bomb_small', x, y - 6, -Math.PI / 2, {})
+      else if (rnd <= 5) this.spawnItem('spell_refresh', x + R(-10, 10), y - 6, { vy: -60, pickCool: 0.5 })
+      else if (rnd <= 11) this.spawnItem('potion', x, y - 10, { vy: -60, pickCool: 0.5 })
+      else if (rnd <= 97) {
+        const r2 = R(0, 100), amount = r2 <= 40 ? 2 : r2 <= 60 ? 3 : r2 <= 77 ? 4 : r2 <= 90 ? 5 : 6
+        for (let i = 1; i <= amount; i++) {
+          const card = this.hooks.utilityCard?.()
+          if (card?.icon) this.spawnSpellItem(card.icon, x + (i - amount / 2) * 8, y - 4 + R(-5, 5), null, card.id, { vx: (i - amount / 2) * 12, vy: -50 - R(0, 30), pickCool: 0.6 })
+        }
+      } else if (rnd <= 99) count += 2
+      else count += 3
+    }
+    this.hooks.sfx?.('magic', { vol: 0.6, rate: 0.9 })
+  }
+
+  /** 直接放一个道具(调试 / 布景脚本用) */
+  spawnProp(name, x, y) {
+    const d = this.defs[name]
+    if (!d?.shape?.image) return null
+    this._img(d.shape.image)
+    const p = { name, d, x, y }
+    this.pendingProps.push(p)
+    return p
+  }
+
+  _shapeImage(d) { return d.shape?.image || d.sprite?.image || null }
+
+  /**
+   * LooseGroundComponent 的一块:从世界里抠出一团地面(mask 由调用方给,1 = 该格属于这块),变成 chunk_material 的像素刚体落下来。
+   * 像素色 = 该格原材质色(抠出来的砖还是砖的花色),材质(睡着写回世界 / 可挖 / 可炸)= matName。
+   * @param {Uint8Array} mask  w×h,0/1
+   * @param {Uint32Array|number[]} colors  w×h 原材质 rgb(0 = 取材质基色)
+   */
+  spawnLooseChunk(x, y, w, h, mask, colors, matName = 'concrete_collapsed') {
+    const matId = this.mats.byName.get(matName); if (!(matId > 0)) return null
+    const base = this.mats.color[matId]
+    const data = new Uint8ClampedArray(w * h * 4)
+    let n = 0
+    for (let i = 0; i < w * h; i++) {
+      if (!mask[i]) continue
+      const c = colors?.[i] || base, jt = 0.9 + ((i * 7919) % 23) / 115
+      data[i * 4] = Math.min(255, ((c >> 16) & 255) * jt); data[i * 4 + 1] = Math.min(255, ((c >> 8) & 255) * jt); data[i * 4 + 2] = Math.min(255, (c & 255) * jt); data[i * 4 + 3] = 255; n++
+    }
+    if (n < 4) return null
+    const d = { kind: 'prop', shape: { material: matName }, body: { friction: 0.7, restitution: 0.05, linear_damping: 0.1, angular_damping: 0.3 } }
+    const b = new RigidBody(d, { width: w, height: h, data }, x, y, matId)
+    b.name = 'loose_chunk'; b.isBody = true; b.density = this.mats.list[matId]?.density ?? 10; b.life = Infinity
+    this.bodies.push(b); this.stats.bodies++
+    return b
+  }
+
+  _makeBody(p) {
+    const png = this.images.get(this._shapeImage(p.d))
+    if (!png?.data) return null
+    const matId = this.mats.byName.get(p.d.shape?.material || '') ?? this.mats.byName.get('wood_prop')
+    const b = new RigidBody(p.d, png, p.x, p.y, matId)
+    b.name = p.name; b.isBody = true
+    b.density = this.mats.list[matId]?.density ?? 6
+    b.vx = p.vx || 0; b.vy = p.vy || 0; b.w = p.w || 0
+    b.isItem = !!p.item; b.gold = p.gold || 0; b.isRagdoll = !!p.ragdoll; b.wand = p.wand || null; b.shop = p.shop || null; b.spell = p.spell || null
+    b.pickCool = p.pickCool || 0; b.thrown = !!p.thrown
+    if (p.nailed) { b.nailed = true; b.motor = 0 } // 货架上的法术卡 / 祭坛上的特权:摆着不动(原版是 ItemComponent 挂着,不是刚体)
+    b.perk = p.perk || null; b.group = p.group || null
+    this._attachRopes(b, p.d)
+    b.life = p.d.lifetime && !(this.goldForever && p.gold) ? p.d.lifetime / 60 : Infinity // 特权 GOLD_IS_FOREVER:金块不消失
+    // 药水:内容 + 瓶子按液体色染(PotionComponent 的着色)
+    if (p.potion) {
+      b.potion = p.potion
+      b.inventory = [{ m: p.potion.mat, left: p.potion.left }]
+      const sp = p.d.sprite?.image ? this.images.get(p.d.sprite.image) : null
+      if (sp?.image) {
+        const cv = new OffscreenCanvas(sp.width, sp.height), c = cv.getContext('2d')
+        c.drawImage(sp.image, 0, 0)
+        const m = this.mats.byName.get(p.potion.mat), col = m ? this.mats.color[m] : 0x4080ff
+        c.globalCompositeOperation = 'source-atop'
+        c.fillStyle = `rgba(${(col >> 16) & 255},${(col >> 8) & 255},${col & 255},0.7)`; c.fillRect(0, Math.floor(sp.height * 0.35), sp.width, sp.height)
+        b.skin = cv
+      }
+    } else if (p.d.sprite?.image && p.d.sprite.image !== this._shapeImage(p.d)) { const sp = this.images.get(p.d.sprite.image); if (sp?.image) b.skin = sp.image }
+    this.stats.bodies++
+    return b
+  }
+
+  /**
+   * 链与钉(RigidBody.ropes):
+   *   chain_to_ceiling.lua —— 每个挂点 (x+ox, y+oy) 往上找 200px 内的顶(RaytracePlatforms),够 16px 就拴一根链;链长 = 到顶的距离
+   *   PhysicsJointComponent nail_to_wall —— 钉子在图的 (pos_x, pos_y)(左上为原点);钉在图心的(轮子)= 只转不动,钉在边上的(吊桶)= 绕钉子摆
+   */
+  _attachRopes(b, d) {
+    const ropes = []
+    if (d.chains) {
+      for (const [ox, oy] of d.chains) {
+        const x = Math.floor(b.x + ox), y0 = Math.floor(b.y + oy)
+        let cy = -1
+        for (let y = y0 - 1; y >= y0 - 200; y--) if (this._solid(x, y)) { cy = y; break }
+        const dist = y0 - cy
+        if (cy >= 0 && dist > 16) ropes.push({ ax: x + 0.5, ay: cy + 1, lx: ox, ly: oy, len: dist - 1, breakDist: 20 })
+      }
+    }
+    if (d.joint?.nail && !b.motor) {
+      const lx = d.joint.px - b.w0 / 2, ly = d.joint.py - b.h0 / 2
+      if (Math.hypot(lx, ly) < 2) { b.nailed = true } // 钉在图心:等同轮子
+      else { b.nailed = false; ropes.push({ ax: b.x + lx, ay: b.y + ly, lx, ly, len: 0, breakDist: 24 }) }
+    }
+    if (ropes.length) b.ropes = ropes
+  }
+
+  /** 醒着的刚体像素挡人(玩家碰撞 / 站上去);睡着的已经在 mat 里 */
+  bodySolidAt(wx, wy) {
+    for (const b of this.bodies) if (!b.asleep && b.contains(wx + 0.5, wy + 0.5)) return b
+    return null
+  }
+  /** 这一格是哪个刚体的(醒着 / 睡着都算;推箱子时用:睡着的推一下就醒) */
+  bodyAt(wx, wy) {
+    for (const b of this.bodies) if (!b.dead && b.contains(wx + 0.5, wy + 0.5)) return b
+    return null
+  }
+
+  /** 推刚体(玩家顶着走):给速度并唤醒 */
+  pushBody(b, vx) {
+    if (b.asleep) b.wake(this.sim)
+    // 原版角色顶着箱子走,箱子大致跟着走的速度滑;太重的(矿车 / 大石头)慢一些
+    const k = Math.min(1, 400 / Math.max(1, b.m))
+    const want = vx * 0.8 * k
+    if (Math.sign(want) === Math.sign(b.vx) ? Math.abs(b.vx) < Math.abs(want) : true) b.vx += (want - b.vx) * 0.5
+    b.restT = 0
+  }
+
+  _updateBodies(dt, x0, y0, x1, y1) {
+    // 形状图到了 → 建刚体
+    if (this.pendingProps.length) {
+      for (let i = this.pendingProps.length - 1; i >= 0; i--) {
+        const p = this.pendingProps[i]
+        if (!this.images.has(this._shapeImage(p.d))) continue
+        if (p.d.sprite?.image && !this.images.has(p.d.sprite.image)) continue
+        this.pendingProps.splice(i, 1)
+        const b = this._makeBody(p)
+        if (b) this.bodies.push(b)
+      }
+    }
+    const sim = this.sim
+    const pl = this.player
+    for (let i = this.bodies.length - 1; i >= 0; i--) {
+      const b = this.bodies[i]
+      if (b.dead) { this.bodies.splice(i, 1); continue }
+      if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) continue
+      // 物品(金块):LifetimeComponent 到点消失;auto_pickup 碰到玩家就捡
+      if (b.isItem) {
+        b.life -= dt
+        if (b.life <= 0) { b.dead = true; continue }
+        if (b.pickCool > 0) b.pickCool -= dt
+        else if (Math.abs(b.x - pl.x) < 7 && Math.abs(b.y - (pl.y - 1)) < (b.nailed ? 12 : 9)) { b.dead = true; this.hooks.pickup?.(b); if (b.dead) continue }
+        if (b.asleep) { b.checkT -= dt; if (b.checkT <= 0) { b.checkT = 0.4; if (!b.supported(this._solid)) b.asleep = false } continue }
+        const before = Math.hypot(b.vx, b.vy)
+        const touching = b.step(dt, BODY_GRAVITY, this._solid, this._liqDensity, b.density)
+        // 药水:砸到东西(速度骤降 >100)就碎,洒一地(ExplodeOnDamage explode_on_death + MaterialInventory)
+        if (b.potion && touching && before > 165 && before - Math.hypot(b.vx, b.vy) > 100) { this._destroyBody(b, b.x, b.y); continue } // 扔出去(180)会碎,从手边掉下去(~140)不碎
+        if (b.restT > 0.5 && b.supported(this._solid)) { b.asleep = true; b.vx = b.vy = b.w = 0 } // 物品睡着不写进世界(捡的时候好认)
+        continue
+      }
+      // 链的锚点被挖掉 / 炸掉 → 断链(醒着睡着都查,便宜)
+      if (b.ropes) for (const r of b.ropes) if (!r.broken && !this._solid(Math.floor(r.ax), Math.floor(r.ay) - 1)) { r.broken = true; if (b.asleep) b.wake(sim) }
+      if (b.asleep) {
+        // 尸块睡够 8s 就"化"进世界:刚体对象撤掉,肉像素留着(原作尸体最后也就是一堆 meat)
+        if (b.isRagdoll) { b.sleptT = (b.sleptT || 0) + dt; if (b.sleptT > 8) { b.dead = true; continue } }
+        // 睡着:定期清点缺损 / 支撑
+        b.checkT -= dt
+        if (b.checkT <= 0) {
+          b.checkT = 0.4
+          const lost = b.audit(sim)
+          if (lost) this._bodyDamaged(b, 0, lost)
+          if (!b.dead && !b.supported(this._solid)) b.wake(sim)
+        }
+        continue
+      }
+      // 埋进实心太深(沙落上来 / 布景刚盖上)→ 顶出来;要在入睡前查,睡着后中心格是自己的像素
+      if (b.age > 1 && this._solid(Math.floor(b.x), Math.floor(b.y))) { for (let k = 0; k < 12 && this._solid(Math.floor(b.x), Math.floor(b.y)); k++) b.y -= 1 }
+      const vyBefore = b.vy
+      const touching = b.step(dt, BODY_GRAVITY, this._solid, this._liqDensity, b.density)
+      // 摔落伤害(DamageModel falling_damages:高度 70~250px 线性给 0.1~1.2 伤,矿灯 0.15 血摔一下就碎):记下开始下落的高度,落地时算落差
+      const D = b.d.damage
+      if (D?.falling_damages) {
+        if (!touching && b.vy > 30) { if (b.fallY0 === undefined) b.fallY0 = b.y }
+        else if (touching && b.fallY0 !== undefined) {
+          const drop = b.y - b.fallY0
+          b.fallY0 = undefined
+          const h0 = D.falling_damage_height_min ?? 70, h1 = D.falling_damage_height_max ?? 250
+          if (drop > h0 && vyBefore > 60) {
+            const t = Math.min(1, (drop - h0) / Math.max(1, h1 - h0))
+            this._bodyDamaged(b, (D.falling_damage_damage_min ?? 0.1) + t * ((D.falling_damage_damage_max ?? 1.2) - (D.falling_damage_damage_min ?? 0.1)))
+            if (b.dead) continue
+          }
+        }
+      }
+      if (b.restT > 0.5 && b.supported(this._solid)) b.sleep(sim)
+    }
+  }
+
+  /** xml 的 config_explosion → ProjectileSystem.explode(炸药箱 / 桶 / 地雷共用:坑 / 火 / 摇镜 / 伤害同一套) */
+  explodeConfig(x, y, c) {
+    const ref = Object.values(this.projectiles?.defs || {}).find((p) => p.explosion?.sprite?.image?.includes(String(c.explosion_sprite || '').replace(/^.*\/(explosion_\d+).*$/, '$1')))
+    const ex = {
+      radius: +c.explosion_radius || 0, damage: +c.damage || 0, shake: +c.camera_shake || 0, hole: c.hole_enabled !== 0 && c.hole_enabled !== '0',
+      holeLiquid: c.hole_destroy_liquid === 1, rayEnergy: +c.ray_energy || 0, maxDurability: +c.max_durability_to_destroy || 0,
+      sprite: ref?.explosion?.sprite || null, spriteLife: +c.explosion_sprite_lifetime || 0,
+      sparks: c.sparks_enabled === 1 || c.sparks_enabled === '1' ? [+c.sparks_count_min || 0, +c.sparks_count_max || 0] : null,
+      matSparks: null, light: { fade: 0.15, r: 255, g: 200, b: 120, radius: 1 },
+      createCell: +c.create_cell_probability ? { p: +c.create_cell_probability, mat: c.create_cell_material || 'fire' } : null,
+      loadEntity: c.load_this_entity || null, stains: +c.stains_radius || 0,
+    }
+    this.projectiles?.explode?.(x, y, ex)
+    this.hooks.sfx?.('explosion', { vol: Math.min(1, 0.4 + ex.radius / 80), rate: 1 })
+  }
+
+  /**
+   * 刚体受伤:dmg(DamageModel hp)/ lost(缺损像素数)。
+   * ExplodeOnDamageComponent:hp≤0 且 explode_on_death_percent → 炸;缺损比例 ≥ physics_body_destruction_required 按 modified_death_probability 炸;
+   * MaterialInventoryComponent:打漏(leak_on_damage_percent)→ 从伤口漏液体;毁了 → 全洒出来。
+   */
+  _bodyDamaged(b, dmg, lost = 0, hx = b.x, hy = b.y) {
+    if (b.dead) return
+    const d = b.d
+    if (dmg > 0) b.hp -= dmg
+    const ex = d.explode
+    let die = b.hp <= 0
+    if (!die && ex && lost > 0 && ex.physics_body_destruction_required !== undefined && b.destroyed >= ex.physics_body_destruction_required) {
+      if (Math.random() < (ex.physics_body_modified_death_probability ?? 1)) die = true
+    }
+    if (!die && ex && dmg > 0 && (ex.explode_on_damage_percent ?? 0) > 0 && Math.random() < ex.explode_on_damage_percent) die = true
+    // 漏:桶被打到 → 从伤口冒液体
+    if (!die && b.inventory && dmg > 0 && d.inventory?.leak_on_damage_percent !== undefined && dmg / Math.max(0.01, b.maxHp) >= d.inventory.leak_on_damage_percent * 0.5) this._leak(b, hx, hy, 12 + Math.round(Math.random() * 12))
+    if (b.destroyed > 0.6) die = true
+    if (die) this._destroyBody(b, hx, hy)
+  }
+
+  _leak(b, x, y, n) {
+    if (!b.inventory) return
+    for (const slot of b.inventory) {
+      const m = this.mats.byName.get(slot.m)
+      if (!m || slot.left <= 0) continue
+      const k = Math.min(n, slot.left)
+      for (let i = 0; i < k; i++) this.hooks.debris?.(x + (Math.random() - 0.5) * 4, y + (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 60, -10 - Math.random() * 40, m, this.mats.color[m])
+      slot.left -= k
+      return
+    }
+  }
+
+  _destroyBody(b, hx, hy) {
+    b.dead = true
+    this.stats.broken++
+    const sim = this.sim
+    if (b.asleep) b.wake(sim) // 先把世界里的像素收回
+    const d = b.d
+    // 装的液体全洒出来(油桶 300 油 / 药水)
+    if (b.inventory) for (const slot of b.inventory) {
+      const m = this.mats.byName.get(slot.m)
+      if (!m || slot.left <= 0) continue
+      const n = Math.min(slot.left, 400)
+      for (let i = 0; i < n; i++) this.hooks.debris?.(b.x + (Math.random() - 0.5) * b.w0, b.y + (Math.random() - 0.5) * b.h0, (Math.random() - 0.5) * 140, -Math.random() * 120, m, this.mats.color[m])
+      slot.left = 0
+    }
+    // 碎块:剩下的像素按材质飞出去(box2d 材质是"尘",落地散;油/血落地留)
+    const P = [0, 0]
+    let n = 0
+    for (let k = 0; k < b.n && n < 160; k += 2) {
+      if (!b.mask[b._idx(k)]) continue
+      b.worldOf(k, P)
+      const px = b.png.data, ii = b._idx(k) * 4
+      const col = (px[ii] << 16) | (px[ii + 1] << 8) | px[ii + 2]
+      this.hooks.debris?.(P[0], P[1], (P[0] - b.x) * 6 + (Math.random() - 0.5) * 60, (P[1] - b.y) * 6 - 40 - Math.random() * 60, b.mat, col)
+      n++
+    }
+    // 爆炸(炸药箱 / 桶):config_explosion 交给 ProjectileSystem.explode(同一套坑/火/摇镜/伤害)
+    if (d.explode?.config && (d.explode.explode_on_death_percent ?? 1) > 0 && Math.random() < (d.explode.explode_on_death_percent ?? 1)) this.explodeConfig(b.x, b.y, d.explode.config)
+    else this.hooks.sfx?.('clash', { vol: 0.5, rate: 0.6 + Math.random() * 0.3, minGap: 60 })
+    this.hooks.onBreak?.(b)
+  }
+
+  _make(name, d, x, y) {
+    const P = d.platforming, C = d.character, A = d.ai || {}
+    const e = {
+      name, d, x, y, vx: 0, vy: 0, face: Math.random() < 0.5 ? -1 : 1, onGround: false, inLiq: false,
+      hp: d.damage?.hp ?? 1, maxHp: d.damage?.hp ?? 1, dead: false,
+      box: { l: C.collision_aabb_min_x, r: C.collision_aabb_max_x, t: C.collision_aabb_min_y, b: C.collision_aabb_max_y },
+      hit: d.hitbox ? { l: d.hitbox.aabb_min_x, r: d.hitbox.aabb_max_x, t: d.hitbox.aabb_min_y, b: d.hitbox.aabb_max_y } : { l: C.collision_aabb_min_x, r: C.collision_aabb_max_x, t: C.collision_aabb_min_y, b: C.collision_aabb_max_y },
+      climb: C.climb_over_y ?? 4, buoyOff: C.buoyancy_check_offset_y ?? -4,
+      gravity: P.pixel_gravity ?? 600, run: P.run_velocity ?? 18, accel: P.accel_x ?? 0.15,
+      vmax: Math.abs(P.velocity_max_x ?? 50), vyMin: P.velocity_min_y ?? -200, vyMax: P.velocity_max_y ?? 350,
+      // 原版敌人的 jump_velocity_y 大多只有 -12(那是"小跳"),真正跨障碍靠 PathFinding 的 can_jump;这里遇墙用 base_humanoid 的 -125
+      jumpV: (P.jump_velocity_y ?? -12) <= -60 ? P.jump_velocity_y : -125,
+      helpless: d.genome?.herd_id === 'helpless', herd: d.genome?.herd_id || '',
+      // 飞行(AnimalAI can_fly / PathFinding can_fly:蝙蝠、火骷髅、史莱姆射手、无人机):没有重力,朝目标点飞,悬在人上方
+      flyer: !!(A.can_fly || d.path?.can_fly), flySpeed: d.ghost ? d.ghost.speed * 1.75 : Math.max(40, P.fly_velocity_x ?? 28) * 1.6, flyHover: -20 - Math.random() * 20, flySide: Math.random() < 0.5 ? -1 : 1,
+      // 爬墙(longleg / 蜘蛛阵营):贴着地/墙/顶爬,surf = 实心在哪一侧
+      crawler: d.genome?.herd_id === 'spider', surf: null,
+      stationary: !!d.stationary,
+      escapeP: A.escape_if_damaged_probability ?? 0,
+      lastX: x, stuckT: 0,
+      sense: !!A.sense_creatures, detX: A.creature_detection_range_x ?? 180, detY: A.creature_detection_range_y ?? 40,
+      // 远程(attack_ranged_*):弹丸走 ProjectileSystem 的 e_<名>;min/max 距离、间隔、一次几发、预判
+      ranged: !!A.attack_ranged_enabled && !!A.attack_ranged_entity_file && !!this.projectiles?.defs?.['e_' + String(A.attack_ranged_entity_file).split('/').pop().replace('.xml', '')],
+      rangedProj: 'e_' + String(A.attack_ranged_entity_file || '').split('/').pop().replace('.xml', ''),
+      rangedMin: A.attack_ranged_min_distance ?? 10, rangedMax: A.attack_ranged_max_distance ?? 180, rangedGap: (A.attack_ranged_frames_between ?? 60) / 60,
+      rangedCount: [A.attack_ranged_entity_count_min ?? 1, A.attack_ranged_entity_count_max ?? 1], rangedPredict: !!A.attack_ranged_predict,
+      rangedOff: [A.attack_ranged_offset_x ?? 0, A.attack_ranged_offset_y ?? -10], rangedFrame: A.attack_ranged_action_frame ?? 2, rangedCool: 1 + Math.random(),
+      melee: !!A.attack_melee_enabled && (A.attack_melee_max_distance ?? 0) > 0, meleeDist: A.attack_melee_max_distance ?? 10,
+      meleeDmg: [A.attack_melee_damage_min ?? 0.2, A.attack_melee_damage_max ?? 0.4], meleeGap: (A.attack_melee_frames_between ?? 20) / 60,
+      meleeImp: [(A.attack_melee_impulse_vector_x ?? 1) * (A.attack_melee_impulse_multiplier ?? 50), (A.attack_melee_impulse_vector_y ?? 0.25) * (A.attack_melee_impulse_multiplier ?? 50)],
+      meleeFrame: A.attack_melee_action_frame ?? 2,
+      state: 'idle', stateT: 0.5 + Math.random() * 1.5, dir: 0, think: Math.random() * 0.5, cool: 0, attackT: -1, attackDone: false, hurtT: 0, fireT: 0, fireTick: 0,
+      anim: d.sprite.def || 'stand', frame: 0, ft: 0, animLock: 0,
+    }
+    if (d.limbs) this._initLukki(e, d)
+    // 法杖幽灵:出生就拿一根 wand_level_03(wand_ghost.lua),画的就是这根法杖;死了掉下来
+    if (d.wandGhost) { const h = this.hooks.ghostWand?.(d.wandGhost, x, y); if (h?.image) { e.held = h; this._img(h.image) } }
+    if (d.attacks?.length) {
+      e.attacks = d.attacks.filter((a) => this.projectiles?.defs?.['e_' + a.proj])
+      if (e.attacks.length) { e.ranged = true; e.rangedMin = Math.min(...e.attacks.map((a) => a.min)); e.rangedMax = Math.max(...e.attacks.map((a) => a.max)) }
+    }
+    return e
+  }
+
+  /**
+   * lukki 蜘蛛(PhysicsBody 圆 + PhysicsAIComponent + LimbBossComponent state=1 FollowPlayer + IKLimb 子实体):
+   * 身体按飞行体走(PathFinding can_fly、原作靠腿撑着完全无视重力),速度由 PhysicsAI force_coeff 折算(10 → 45px/s,tiny 7 → 31;LimbBoss 的追人范围引擎内置,取 200×120);
+   * 腿:每条 IKLimbComponent length 的两段式 IK,脚找 length 内的实心踩住,身体走远了换脚;IKLimbAttackerComponent radius 的那条是攻击腿——
+   * 人进 radius 就抬腿瞄 0.45s 再刺出去(wiki:Melee 12.5 = 0.5,带击退);CellEaterComponent radius 的挖洞在 _flyStep 里(挡住了就吃)。
+   * 腿的 z_index 1.1 在身体后面;死亡 ragdollify_child_entity_sprites=1 → 每段腿变一块 meat_slime_green 肉刚体。
+   */
+  _initLukki(e, d) {
+    const n = d.limbs.length
+    e.legs = d.limbs.map((L, i) => {
+      const home = -Math.PI / 2 + ((i + 0.5) / n) * Math.PI * 2
+      return { L, len: L.len, home, fx: e.x + Math.cos(home) * L.len * 0.6, fy: e.y + Math.sin(home) * L.len * 0.6, tx: 0, ty: 0, planted: false, moving: 0, cool: Math.random() * 0.2, t: 0, phase: 'idle', cd: 0.5 + Math.random(), hit: false }
+    })
+    const att = d.limbs.find((L) => L.attacker)
+    e.keepDist = att ? att.attacker * 0.55 : 12
+    e.flySpeed = (d.physicsAI?.force_coeff ?? 10) * 4.5
+    e.detX = 200; e.detY = 120; e.sense = true
+    e.escapeP = 20 // wiki:"if a spider takes too much damage, it will usually attempt to flee"(引擎内置,取 20%)
+    e.eatR = d.cellEater?.radius || 0
+    e.bodyR = d.physShape?.r ?? 8
+  }
+
+  // ── 虫(WormComponent + WormAIComponent + CellEaterComponent)──
+  // 头带着节链在地里游(每帧把头周围 CellEater.radius 内的格吃成空气 = 打洞),出了地面靶重力抛物线再扎回去;
+  // WormAI:hunt_box_radius 内发现玩家 → 追(speed_hunt,转向 direction_adjust_speed_hunt),否则每 120 帧在 128 盒里换个随机目标;
+  // 头到玩家 target_kill_radius 内 = 一口(worm_tiny bite_damage 0.3;大虫 = 吞,给 1.6)。血 blood_worm,死了掉金(ItemChest level 2)。
+  _makeWorm(name, d, x, y) {
+    const W = d.worm, A = d.wormAI || {}
+    const n = d.parts.length
+    const segs = []
+    for (let i = 0; i < n; i++) segs.push({ x: x - i * W.part_distance, y, a: 0 })
+    return {
+      name, d, isWorm: true, x, y, vx: 0, vy: 0, dead: false, hp: d.damage?.hp ?? 20, maxHp: d.damage?.hp ?? 20,
+      segs, dist: W.part_distance, r: W.hitbox_radius ?? 5, eatR: d.cellEater?.radius ?? 6, killR: W.target_kill_radius ?? 7,
+      bite: W.bite_damage ?? 1.6, speed: (A.speed ?? 2) * 60, speedHunt: (A.speed_hunt ?? 4) * 60,
+      turn: (A.direction_adjust_speed ?? 0.012) * 60, turnHunt: (A.direction_adjust_speed_hunt ?? 0.06) * 60,
+      huntR: A.hunt_box_radius ?? 256, wanderR: A.random_target_box_radius ?? 128, retarget: (A.new_random_target_check_every ?? 120) / 60,
+      ang: Math.PI, tx: x - 100, ty: y, tT: 0, hunting: false, biteCool: 0, hurtT: 0, frame: 0, ft: 0, inGround: true, airT: 0,
+      hit: { l: -6, r: 6, t: -6, b: 6 }, herd: 'worm',
+    }
+  }
+
+  _updateWorm(w, dt, pl) {
+    const sim = this.sim
+    w.hurtT -= dt; w.biteCool -= dt; w.tT -= dt
+    const dx = pl.x - w.x, dy = pl.y - 4 - w.y, dist = Math.hypot(dx, dy)
+    // 目标:猎杀 / 漫游
+    if (dist < w.huntR) { w.hunting = true; w.tx = pl.x; w.ty = pl.y - 4 }
+    else if (w.hunting) { w.hunting = false; w.tT = 0 }
+    if (!w.hunting && w.tT <= 0) { w.tT = w.retarget; w.tx = w.x + (Math.random() - 0.5) * 2 * w.wanderR; w.ty = w.y + (Math.random() - 0.5) * 2 * w.wanderR }
+    // 头周围会被自己吃空,所以"在地里"看吃的半径之外:前方 / 下方 / 目标方向各探一格
+    const pr = w.eatR + 2
+    const probe = (a) => this._solid(Math.floor(w.x + Math.cos(a) * pr), Math.floor(w.y + Math.sin(a) * pr))
+    const want = Math.atan2(w.ty - w.y, w.tx - w.x)
+    const headSolid = probe(w.ang) || probe(Math.PI / 2) || probe(want) || probe(w.ang + 0.6) || probe(w.ang - 0.6)
+    if (headSolid) {
+      // 地里:恒速游,朝目标转向
+      w.inGround = true; w.airT = 0
+      let da = want - w.ang; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI
+      const maxTurn = (w.hunting ? w.turnHunt : w.turn) * dt
+      w.ang += Math.max(-maxTurn, Math.min(maxTurn, da))
+      const sp = w.hunting ? w.speedHunt : w.speed
+      w.vx = Math.cos(w.ang) * sp; w.vy = Math.sin(w.ang) * sp
+    } else {
+      // 空中:重力抛物线,只能微调
+      if (w.inGround) { w.inGround = false; this.hooks.shake?.(0.25); this.hooks.sfx?.('impact', { vol: 0.6, rate: 0.6, minGap: 200 }) }
+      w.airT += dt
+      w.vy += BODY_GRAVITY * dt
+      w.ang = Math.atan2(w.vy, w.vx)
+    }
+    const sp = Math.hypot(w.vx, w.vy)
+    const sub = Math.max(1, Math.ceil(sp * dt / 3))
+    for (let s = 0; s < sub; s++) {
+      w.x += (w.vx * dt) / sub; w.y += (w.vy * dt) / sub
+      // 吃:头周围 eatR 内非 box2d 的格全变空气(打出来的就是虫洞)
+      const R = w.eatR, cx = Math.floor(w.x), cy = Math.floor(w.y)
+      for (let yy = -R; yy <= R; yy++) for (let xx = -R; xx <= R; xx++) {
+        if (xx * xx + yy * yy > R * R) continue
+        const m = sim.get(cx + xx, cy + yy)
+        if (m > 0 && this.mats.kind[m] !== 'solid') sim.set(cx + xx, cy + yy, 0, 0)
+      }
+    }
+    // 节链跟随:每节拉到前一节后方 part_distance 处
+    w.segs[0].x = w.x; w.segs[0].y = w.y; w.segs[0].a = w.ang
+    for (let i = 1; i < w.segs.length; i++) {
+      const p = w.segs[i - 1], s = w.segs[i]
+      let ddx = s.x - p.x, ddy = s.y - p.y, l = Math.hypot(ddx, ddy) || 1
+      if (l > w.dist) { s.x = p.x + (ddx / l) * w.dist; s.y = p.y + (ddy / l) * w.dist }
+      s.a = Math.atan2(p.y - s.y, p.x - s.x)
+    }
+    // 一口
+    if (dist < w.killR + 3 && w.biteCool <= 0) { w.biteCool = 1.5; this.hooks.damagePlayer?.(w.bite, Math.sign(dx) * 80, -60, w) }
+    // 动画
+    const a = w.d.parts[0].anims.eat || w.d.parts[0].anims.stand
+    if (a) { w.ft += dt; while (w.ft >= a.wait) { w.ft -= a.wait; w.frame = (w.frame + 1) % a.frames } }
+  }
+
+  _hitWorm(x, y) {
+    for (const w of this.worms) { if (w.dead) continue; for (const s of w.segs) if ((x - s.x) ** 2 + (y - s.y) ** 2 <= (w.r + 1) ** 2) return w }
+    return null
+  }
+
+  _renderWorm(ctx, w, ox, oy) {
+    for (let i = w.segs.length - 1; i >= 0; i--) {
+      const P = w.d.parts[Math.min(i, w.d.parts.length - 1)], img = this._img(P.image)
+      if (!img?.image) continue
+      const a = P.anims.eat || P.anims.stand || Object.values(P.anims)[0]
+      if (!a) continue
+      const f = i === 0 ? w.frame : 0
+      const fx = a.x + (f % a.perRow) * a.fw, fy = a.y + Math.floor(f / a.perRow) * a.fh
+      const s = w.segs[i]
+      ctx.save()
+      ctx.translate(Math.round(s.x - ox), Math.round(s.y - oy))
+      ctx.rotate(s.a)
+      if (w.hurtT > 0) ctx.globalAlpha = 0.7
+      ctx.drawImage(img.image, fx, fy, a.fw, a.fh, -Math.round(a.fw / 2), -Math.round(a.fh / 2), a.fw, a.fh)
+      ctx.restore()
+    }
+    ctx.globalAlpha = 1
+  }
+
+  // ── 世界查询 ──
+  _solid(x, y) { const m = this.matAt(x, y); if (m < 0) return true; const k = this.mats.kind[m]; return k === 'static' || k === 'solid' || k === 'sand' }
+  /** 怪走路用:地形 + 醒着的刚体(物品 —— 货架上的法术卡 / 法杖 / 金块 —— 不挡怪) */
+  _solidC(x, y) { if (this._solid(x, y)) return true; const b = this.bodySolidAt(x, y); return !!b && !b.isItem }
+  _liquid(x, y) { const m = this.matAt(x, y); return m > 0 && this.mats.kind[m] === 'liquid' }
+  _blocked(e, cx, cy) {
+    const xl = Math.floor(cx + e.box.l), xr = Math.floor(cx + e.box.r - 0.01)
+    const h = e.box.b - e.box.t, n = Math.max(2, Math.ceil(h / 2.2))
+    for (let i = 0; i <= n; i++) { const y = Math.floor(cy + e.box.t + (h * i) / n); if (this._solidC(xl, y) || this._solidC(xr, y)) return true }
+    return false
+  }
+
+  /** 每帧:只更新激活窗口内的实体(视口 + 边距),窗口外冻结 */
+  update(dt, cam, VW, VH) {
+    this.time += dt
+    const x0 = cam.x - VW / 2 - 96, x1 = cam.x + VW / 2 + 96, y0 = cam.y - VH / 2 - 96, y1 = cam.y + VH / 2 + 96
+    this._updateBodies(dt, x0, y0, x1, y1)
+    const pl = this.player
+    for (let i = this.worms.length - 1; i >= 0; i--) {
+      const w = this.worms[i]
+      if (w.dead) { this.worms.splice(i, 1); continue }
+      if (w.x < x0 - 200 || w.x > x1 + 200 || w.y < y0 - 200 || w.y > y1 + 200) continue // 虫的活动范围放宽(它在地里跑得远)
+      if (this.sim.get(Math.floor(w.x), Math.floor(w.y)) < 0) continue // 头出了模拟窗口先冻着
+      this._updateWorm(w, dt, pl)
+    }
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const e = this.list[i]
+      if (e.dead) { this.list.splice(i, 1); continue }
+      if (e.x < x0 || e.x > x1 || e.y < y0 || e.y > y1) continue
+      const f60 = dt * 60
+      // ── 感知 / 状态机 ──
+      e.think -= dt; e.cool -= dt; e.hurtT -= dt; e.rangedCool -= dt
+      const dx = pl.x - e.x, dy = pl.y - e.y, adx = Math.abs(dx), ady = Math.abs(dy)
+      // 地雷(CollisionTriggerComponent radius 20, required_tag mortal, timer_for_destruction 30 帧):人或别的活物进圈 → 亮起 0.5s → 炸
+      if (e.d.mine) {
+        const M = e.d.mine
+        if (e.armT === undefined) {
+          let near = Math.hypot(dx, dy - 4) < M.radius
+          if (!near) for (const o of this.list) if (o !== e && !o.dead && !o.d.mine && Math.abs(o.x - e.x) < M.radius && Math.abs(o.y - e.y) < M.radius) { near = true; break }
+          if (near) { e.armT = M.timer; this._setAnim(e, e.d.sprite.anims.detonate ? 'detonate' : 'attack', true); this.hooks.sfx?.('clash', { vol: 0.3, rate: 3, minGap: 100 }) }
+        } else { e.armT -= dt; if (e.armT <= 0) { e.hp = 0; this._die(e); continue } }
+        // 没有别的行为,只走动画帧
+        const a = e.d.sprite.anims[e.anim] || e.d.sprite.anims[e.d.sprite.def]
+        if (a) { e.ft += dt; if (e.ft >= a.wait) { e.ft = 0; e.frame = (e.frame + 1) % Math.max(1, a.frames) } }
+        continue
+      }
+      // 光环伤害(DamageNearbyEntitiesComponent:幽灵 radius 16 每 3s 一次诅咒伤害)
+      if (e.d.aura) { e.auraT = (e.auraT ?? 0.5) - dt; if (e.auraT <= 0 && Math.hypot(dx, dy - 4) < e.d.aura.radius) { e.auraT = e.d.aura.every; this.hooks.damagePlayer?.(e.d.aura.dmg, 0, 0, e) } }
+      if (e.think <= 0) {
+        e.think = 0.5
+        if (e.helpless) { if (adx < 70 && ady < 40) { e.state = 'flee'; e.stateT = 1.5 } }
+        else if (e.sense && !pl.invisible && adx < e.detX && ady < e.detY && !(e.state === 'attack')) { e.state = 'chase'; e.stateT = 3 }
+        else if (e.state === 'chase' && (adx > e.detX * 1.3 || ady > e.detY * 1.5 || pl.invisible)) { e.state = 'idle'; e.stateT = 1 } // 隐身药:看不见人
+      }
+      e.stateT -= dt
+      if (e.state === 'idle') { e.dir = 0; if (e.stateT <= 0) { e.state = 'wander'; e.dir = Math.random() < 0.5 ? -1 : 1; e.stateT = 0.8 + Math.random() * 2 } }
+      else if (e.state === 'wander') { if (e.stateT <= 0) { e.state = 'idle'; e.stateT = 0.5 + Math.random() * 2.5 } }
+      else if (e.state === 'flee') { e.dir = dx > 0 ? -1 : 1; if (e.stateT <= 0) { e.state = 'wander'; e.stateT = 1 } }
+      else if (e.state === 'chase') {
+        e.dir = adx > 3 ? Math.sign(dx) : 0
+        const dist = Math.hypot(dx, dy)
+        if (e.melee && adx <= e.meleeDist && ady <= 12 && e.cool <= 0) { e.state = 'attack'; e.attackT = 0; e.attackDone = false; e.dir = 0; this._setAnim(e, 'attack', true) }
+        else if (e.ranged && e.rangedCool <= 0 && dist >= e.rangedMin && dist <= e.rangedMax && this._sees(e, pl)) {
+          // AIAttackComponent 多段(Stevari):按距离区间挑一段,弹 / 间隔 / 出手帧 / 动画都换成它的
+          let anim = 'attack_ranged', ok = true
+          if (e.attacks) {
+            const a = e.attacks.find((k) => dist >= k.min && dist <= k.max)
+            if (a) { e.rangedProj = 'e_' + a.proj; e.rangedGap = a.gap / 60; e.rangedFrame = a.frame; e.rangedOff = [a.ox, a.oy]; anim = a.anim; e.rangedAnim = anim } else ok = false
+          }
+          if (ok) { e.state = 'shoot'; e.attackT = 0; e.attackDone = false; e.dir = 0; e.face = Math.sign(dx) || e.face; this._setAnim(e, anim, true) }
+        }
+        else if (e.ranged && dist < e.rangedMin * 0.8 && !e.melee) e.dir = -Math.sign(dx) // 射手保持距离
+      } else if (e.state === 'shoot') {
+        e.dir = 0
+        e.attackT += dt
+        const a = e.d.sprite.anims[e.rangedAnim || 'attack_ranged'] || e.d.sprite.anims.attack_ranged
+        const actT = a ? e.rangedFrame * a.wait : 0.2, endT = a ? a.frames * a.wait : 0.5
+        if (!e.attackDone && e.attackT >= actT) { e.attackDone = true; this._shoot(e, pl) }
+        if (e.attackT >= endT) { e.state = 'chase'; e.rangedCool = e.rangedGap; e.animLock = 0 }
+      } else if (e.state === 'attack') {
+        e.dir = 0
+        e.attackT += dt
+        const a = e.d.sprite.anims.attack
+        const actT = a ? e.meleeFrame * a.wait : 0.15, endT = a ? a.frames * a.wait : 0.4
+        if (!e.attackDone && e.attackT >= actT) {
+          e.attackDone = true
+          if (adx <= e.meleeDist + 3 && ady <= 14) {
+            const dmg = e.meleeDmg[0] + Math.random() * (e.meleeDmg[1] - e.meleeDmg[0])
+            this.hooks.damagePlayer?.(dmg, Math.sign(dx) * e.meleeImp[0], -Math.abs(e.meleeImp[1]), e)
+          }
+        }
+        if (e.attackT >= endT) { e.state = 'chase'; e.cool = e.meleeGap; e.animLock = 0 }
+      }
+      if (e.dir) e.face = e.dir
+
+      // ── 身体:三种模型 ──
+      const inLiq = this._liquid(e.x, e.y + e.box.b + e.buoyOff)
+      e.inLiq = inLiq
+      if (e.stationary) {
+        e.vx = e.vy = 0; e.dir = 0 // 站桩(shooterflower 那种没有 CharacterPlatforming 的):不动,只朝人开火
+        // 神殿陷阱(crypt_trap_check.lua):每 60 帧查一次,人在正面 170px、竖向 ydist 内 → 朝人射一发(箭 300~400 + 上抬 50,火 320,雷 50,吐 360)
+        const T = e.d.trap
+        if (T) {
+          e.face = T.dir
+          e.trapT = (e.trapT ?? 1) - dt
+          if (e.trapT <= 0) {
+            e.trapT = 1
+            if (adx < 170 && ady < T.ydist && Math.sign(dx) === T.dir) {
+              const name = 'e_' + T.proj
+              if (this.projectiles?.defs?.[name]) {
+                const v = T.vel[0] + Math.random() * (T.vel[1] - T.vel[0]), a = Math.atan2(dy, dx)
+                const p = this.projectiles.spawn(name, e.x, e.y + 2, a, { owner: 'enemy' })
+                if (p) { p.vx = Math.cos(a) * v; p.vy = Math.sin(a) * v + T.arrowLift }
+                this._setAnim(e, 'attack', true)
+                this.hooks.sfx?.('wind', { vol: 0.3, rate: 1.3, minGap: 80 })
+              }
+            }
+          }
+        }
+        // 激光门(lasergate_ver.lua):cos(frame·0.03 + x·0.05) < 0 时亮;光束沿 angle 方向到第一格实心 / max_length;人碰到光束掉 damage_to_entities
+        const LZ = e.d.lasergate
+        if (LZ) {
+          e.laserOn = Math.cos(this.time * 60 * 0.03 + e.x * 0.05) < 0
+          if (e.laserOn) {
+            const ca = Math.cos(LZ.angle), sa = Math.sin(LZ.angle)
+            let len = 0
+            for (; len < LZ.maxLen; len += 2) if (this._solid(Math.floor(e.x + ca * len), Math.floor(e.y + sa * len))) break
+            e.laserLen = len
+            // 玩家盒(±3 × −12..3)与光束线段的距离
+            const px = pl.x, py = pl.y - 4
+            const t = Math.max(0, Math.min(len, (px - e.x) * ca + (py - e.y) * sa))
+            const qx = e.x + ca * t, qy = e.y + sa * t
+            if (Math.abs(px - qx) < 3 + LZ.radius && Math.abs(py - qy) < 8 + LZ.radius) this.hooks.damagePlayer?.(LZ.dmg, 0, 0, e)
+            if (Math.random() < 0.3) { const k = Math.random() * len; this.hooks.spark?.(e.x + ca * k, e.y + sa * k, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, '#ff60c0', 0.25) }
+          }
+        }
+        // 放射云(cloud_trap):每 every 秒往圆内随机一格写 cloud_radioactive 真气体(会飘、会下雨放射液)
+        const CT = e.d.cloudTrap
+        if (CT) {
+          if (e.cloudMat === undefined) e.cloudMat = this.mats.byName.get(CT.mat) ?? 0
+          e.cloudT = (e.cloudT ?? 0) - dt
+          if (e.cloudT <= 0 && e.cloudMat > 0) {
+            e.cloudT = CT.every
+            const a = Math.random() * 6.28, r = Math.sqrt(Math.random()) * CT.r
+            const cx = Math.floor(e.x + Math.cos(a) * r), cy = Math.floor(e.y + Math.sin(a) * r)
+            if (this.sim.get(cx, cy) === 0) this.sim.set(cx, cy, e.cloudMat, 0)
+          }
+        }
+        // 雕像陷阱(statue_trap.lua 每 40 帧):人到 32px 内 → 换成会飞的活雕像 animals/statue + 尘土,自己消失
+        const ST = e.d.statueTrap
+        if (ST) {
+          e.stT = (e.stT ?? 40 / 60) - dt
+          if (e.stT <= 0) {
+            e.stT = 40 / 60
+            if (Math.hypot(dx, dy - 4) < ST.radius) {
+              e.dead = true
+              const s = this.spawnCreature(ST.spawn, e.x, e.y - 6)
+              if (s) { s.state = 'chase'; s.stateT = 4 }
+              for (let k = 0; k < 14; k++) this.hooks.spark?.(e.x + (Math.random() - 0.5) * 12, e.y - Math.random() * 14, (Math.random() - 0.5) * 60, -20 - Math.random() * 40, '#a0988a', 0.5)
+              this.hooks.sfx?.('clash', { vol: 0.6, rate: 0.6, minGap: 100 })
+              continue
+            }
+          }
+        }
+        // 激光炮(lasergun.lua):每 tick 计一次,timing 从 Random(0,10) 起,到 period 归零并朝下射一发 laser_lasergun(vy 1000)
+        const LG = e.d.lasergun
+        if (LG) {
+          if (e.lgTiming === undefined) { e.lgTiming = Math.floor(Math.random() * 11); e.lgT = LG.tick }
+          e.lgT -= dt
+          if (e.lgT <= 0) {
+            e.lgT += LG.tick; e.lgTiming++
+            if (e.lgTiming >= LG.period) {
+              e.lgTiming = 0
+              const name = 'e_' + LG.proj
+              if (this.projectiles?.defs?.[name]) { const p = this.projectiles.spawn(name, e.x, e.y + LG.oy, Math.PI / 2, { owner: 'enemy' }); if (p) { p.vx = 0; p.vy = LG.vy } this.hooks.sfx?.('electric', { vol: 0.3, rate: 1.4, minGap: 80 }) }
+            }
+          }
+        }
+        // 巢吐虫(flynest.lua 等):每 121 帧掷一次,75% 且玩家在 200px 内且没到上限 → 在巢边放一只
+        const N = e.d.nest
+        if (N) {
+          e.nestT = (e.nestT ?? N.every) - dt
+          if (e.nestT <= 0) {
+            e.nestT = N.every
+            if (Math.random() < N.chance && (e.spawned || 0) < N.max && adx * adx + ady * ady < N.dist * N.dist) {
+              let r = Math.random(), pick = N.spawns[N.spawns.length - 1][0]
+              for (const [name, p] of N.spawns) { if (r < p) { pick = name; break } r -= p }
+              if (this.spawnCreature(pick, e.x + (Math.random() * 8 - 4), e.y + N.oy + (Math.random() * 8 - 4))) e.spawned = (e.spawned || 0) + 1
+            }
+          }
+        }
+      }
+      else if (e.flyer) this._flyStep(e, dt, dx, dy)
+      else if (e.crawler) this._crawlStep(e, dt, dx, dy)
+      else this._walkStep(e, dt, f60, inLiq, dy)
+      if (e.legs) this._legsStep(e, dt)
+      // AreaDamageComponent(lukki_tiny:盒里的人每 update_every_n_frame 帧掉 damage_per_frame)
+      const AD = e.d.areaDamage
+      if (AD) {
+        e.areaT = (e.areaT ?? AD.every) - dt
+        if (e.areaT <= 0) { e.areaT = AD.every; const px = pl.x, py = pl.y - 4; if (px > e.x + AD.l - 3 && px < e.x + AD.r + 3 && py > e.y + AD.t - 8 && py < e.y + AD.b + 4) this.hooks.damagePlayer?.(AD.dmg, 0, 0, e) }
+      }
+
+      // ── 动画 ──
+      if (e.state !== 'attack' && e.state !== 'shoot') {
+        let want
+        const A = e.d.sprite.anims
+        if (e.flyer) want = Math.hypot(e.vx, e.vy) > 6 ? (A.fly_move ? 'fly_move' : 'walk') : (A.fly_idle ? 'fly_idle' : 'stand')
+        else if (inLiq) want = Math.abs(e.vx) > 4 ? 'swim_move' : 'swim_idle'
+        else if (!e.onGround && !e.crawler) want = e.vy < 0 ? 'jump_up' : 'jump_fall'
+        else want = Math.hypot(e.vx, e.vy) > 3 ? (A.walk ? 'walk' : 'run') : 'stand'
+        if (e.hurtT > 0 && e.d.sprite.anims.hurt) want = 'hurt'
+        if (e.fireT > 0 && e.d.sprite.anims.burn) want = 'burn'
+        this._setAnim(e, want, false)
+      }
+      const a = e.d.sprite.anims[e.anim]
+      if (a) { e.ft += dt; while (e.ft >= a.wait) { e.ft -= a.wait; e.frame = a.loop ? (e.frame + 1) % a.frames : Math.min(a.frames - 1, e.frame + 1) } }
+
+      // ── 材质伤害(materials_that_damage)/ 火 ──
+      const m = this.matAt(Math.floor(e.x), Math.floor(e.y + e.box.t / 2))
+      if (m > 0) {
+        const n = this.mats.list[m]?.name
+        if (n && e.d.damage?.materials_that_damage) {
+          const idx = e.d.damage.materials_that_damage.split(',').indexOf(n)
+          if (idx >= 0) { const per = +(e.d.damage.materials_how_much_damage || '').split(',')[idx] || 0.001; this.hurt(e, per * f60, 0, 0, 'material') }
+        }
+        if (n === 'fire' && Math.random() < (e.d.damage?.fire_probability_of_ignition ?? 0) * dt * 8) this.ignite(e)
+      }
+      this._burn(e, dt)
+    }
+  }
+
+  /** 走路(CharacterPlatforming):重力 / 目标速度插值 / 子步进 / 爬台阶 / 遇墙跳 / 卡住给放弃 */
+  _walkStep(e, dt, f60, inLiq, dy) {
+    e.onGround = this._solidC(Math.floor(e.x + e.box.l), Math.floor(e.y + e.box.b + 1)) || this._solidC(Math.floor(e.x + e.box.r - 0.01), Math.floor(e.y + e.box.b + 1))
+    e.vy += (inLiq ? e.gravity * 0.25 : e.gravity) * dt
+    const target = e.dir * e.run
+    e.vx += (target - e.vx) * Math.min(1, e.accel * f60)
+    if (inLiq) { e.vx *= Math.pow(0.2, dt); e.vy *= Math.pow(0.15, dt); if (e.state === 'chase' && dy < -4) e.vy -= 300 * dt }
+    e.vx = Math.max(-e.vmax, Math.min(e.vmax, e.vx))
+    e.vy = Math.max(e.vyMin, Math.min(e.vyMax, e.vy))
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(e.vx), Math.abs(e.vy)) * dt / 2))
+    let blocked = false
+    for (let s = 0; s < steps; s++) {
+      const nx = e.x + (e.vx * dt) / steps
+      if (!this._blocked(e, nx, e.y)) e.x = nx
+      else {
+        let ok = false
+        for (let c = 1; c <= e.climb; c++) if (!this._blocked(e, nx, e.y - c)) { e.x = nx; e.y -= c; ok = true; break }
+        if (!ok) { blocked = true; e.vx = 0 }
+      }
+      const ny = e.y + (e.vy * dt) / steps
+      if (!this._blocked(e, e.x, ny)) e.y = ny
+      else e.vy = 0
+    }
+    // 遇墙(追人/闲逛)跳一下;卡进墙里顶出去
+    if (blocked && e.onGround && e.dir && (e.state === 'chase' || e.state === 'flee' || Math.random() < 0.3)) e.vy = e.jumpV
+    else if (blocked && e.state === 'wander') e.dir = -e.dir
+    if (this._blocked(e, e.x, e.y)) { for (let k = 0; k < 16 && this._blocked(e, e.x, e.y); k++) e.y -= 1 }
+    // 追人时前方是坑:窄坑(≤24px)跳过去;闲逛不往悬崖走
+    if (e.onGround && e.dir) {
+      const gapAhead = !this._solid(Math.floor(e.x + e.dir * 6), Math.floor(e.y + e.box.b + 12))
+      if (gapAhead && e.state === 'wander') e.dir = -e.dir
+      else if (gapAhead && (e.state === 'chase' || e.state === 'flee')) {
+        let far = false
+        for (let k = 8; k <= 24; k += 4) if (this._solid(Math.floor(e.x + e.dir * k), Math.floor(e.y + e.box.b + 12))) { far = true; break }
+        if (far && dy <= 8) e.vy = e.jumpV // 对面有地就跳;人在下面就直接掉
+      }
+    }
+    // PathFinding(粗网格 BFS,PathFindingComponent 的替身):人不在同一层 / 被挡 → 每 0.4s 算一条 8px 网格路,照下一个路点走 / 跳
+    if (e.state === 'chase' && (Math.abs(dy) > 14 || blocked || e.stuckT > 0.3)) {
+      e.pathT = (e.pathT || 0) - dt
+      if (e.pathT <= 0) { e.pathT = 0.4; e.path = this._findPath(e, this.player) }
+      const wp = e.path && e.path[1]
+      if (wp) {
+        const wx = wp[0] * 8 + 4, wy = wp[1] * 8 + 8
+        if (Math.abs(wx - e.x) > 3) e.dir = Math.sign(wx - e.x)
+        if (wy < e.y - 6 && e.onGround) e.vy = e.jumpV
+        if (Math.abs(wx - e.x) <= 3 && Math.abs(wy - (e.y + e.box.b)) <= 8) e.path.shift()
+      }
+    } else e.path = null
+    // PathFinding frames_to_get_stuck:追了 1s 没挪窝 → 跳;2.5s → 放弃一会儿
+    if (e.state === 'chase' && e.dir) {
+      if (Math.abs(e.x - e.lastX) < 0.5) { e.stuckT += dt; if (e.stuckT > 1 && e.onGround) e.vy = e.jumpV; if (e.stuckT > 2.5) { e.state = 'idle'; e.stateT = 1.5; e.stuckT = 0 } }
+      else e.stuckT = 0
+    } else e.stuckT = 0
+    e.lastX = e.x
+  }
+
+  /**
+   * 粗网格寻路(8px 格,BFS):"能站的格" = 本格与上一格是空 / 下一格是实心;边 = 左右平走、跳(≤3 格高、水平 ≤2 格,目标格要空)、
+   * 掉(往下最多 10 格找到第一个能站的格)。范围 ±24×±16 格,最多展开 600 个节点,找不到返回 null。返回从起点到终点的格子列表 [[gx,gy],…](gy 是脚下那格的上一格)。
+   */
+  _findPath(e, pl) {
+    const S = 8
+    const solidG = (gx, gy) => this._solid(gx * S + 4, gy * S + 4)
+    const stand = (gx, gy) => !solidG(gx, gy) && !solidG(gx, gy - 1) && solidG(gx, gy + 1)
+    const sx = Math.floor(e.x / S), sy = Math.floor((e.y + e.box.b - 1) / S)
+    const tx = Math.floor(pl.x / S), ty = Math.floor((pl.y + 1) / S)
+    if (Math.abs(tx - sx) > 24 || Math.abs(ty - sy) > 16) return null
+    // 起点 / 终点落到最近的能站格(往下找 6 格)
+    let sy2 = sy; for (let k = 0; k < 6 && !stand(sx, sy2); k++) sy2++
+    let ty2 = ty; for (let k = 0; k < 6 && !stand(tx, ty2); k++) ty2++
+    if (!stand(sx, sy2)) return null
+    const key = (x, y) => (x + 4096) * 8192 + (y + 4096)
+    const prev = new Map([[key(sx, sy2), null]])
+    const q = [[sx, sy2]]
+    let found = null, n = 0
+    while (q.length && n++ < 600) {
+      const [x, y] = q.shift()
+      if (x === tx && Math.abs(y - ty2) <= 1) { found = [x, y]; break }
+      const push = (nx, ny) => { const k = key(nx, ny); if (prev.has(k)) return; prev.set(k, [x, y]); q.push([nx, ny]) }
+      for (const d of [-1, 1]) {
+        const nx = x + d
+        if (solidG(nx, y) || solidG(nx, y - 1)) {
+          // 前面是墙:试着跳上去(1~3 格高,墙顶要能站,起跳路径上方要空)
+          for (let j = 1; j <= 3; j++) { if (solidG(x, y - j - 1)) break; if (stand(nx, y - j) && !solidG(nx, y - j - 1)) { push(nx, y - j); break } }
+          continue
+        }
+        if (stand(nx, y)) { push(nx, y); continue }
+        // 前面是坑:掉下去(找第一个能站的),或者跳过去(隔 2 格)
+        for (let j = 1; j <= 10; j++) { if (solidG(nx, y + j - 1)) break; if (stand(nx, y + j)) { push(nx, y + j); break } }
+        const fx = x + d * 2
+        if (!solidG(fx, y) && !solidG(fx, y - 1) && stand(fx, y)) push(fx, y)
+        else for (let j = 1; j <= 2; j++) if (!solidG(fx, y - j) && !solidG(fx, y - j - 1) && stand(fx, y - j)) { push(fx, y - j); break }
+      }
+      // 原地起跳到上面的台子(头顶 2~3 格是空、再上去能站)
+      for (let j = 2; j <= 3; j++) { if (solidG(x, y - j)) break; if (stand(x, y - j)) { push(x, y - j); break } }
+    }
+    if (!found) return null
+    const path = []
+    for (let k = key(found[0], found[1]), cur = found; cur; cur = prev.get(k), k = cur ? key(cur[0], cur[1]) : 0) path.push(cur)
+    return path.reverse()
+  }
+
+  /**
+   * 飞行体的粗网格寻路(8px 格 BFS,四邻):"能飞的格" = 格心与身高覆盖的上格都不是实心;范围 ±32×±20 格、最多 900 节点;
+   * 起点 / 终点落到最近的能飞格(周围 1 格内找)。返回 [[gx,gy],…] 或 null。
+   */
+  _findFlyPath(e, pl) {
+    const S = 8
+    // "能飞的格" = 身体整个碰撞盒放在这格(脚在格心)不撞(和真正移动用同一套 _blocked,45° 斜顶下不会误判)
+    const free = (gx, gy) => !this._blocked(e, gx * S + 4, gy * S + 4 - e.box.b)
+    const snap = (gx, gy) => { for (let r = 0; r <= 2; r++) for (let oy = -r; oy <= r; oy++) for (let ox = -r; ox <= r; ox++) if ((Math.abs(ox) === r || Math.abs(oy) === r) && free(gx + ox, gy + oy)) return [gx + ox, gy + oy]; return null }
+    const s0 = snap(Math.floor(e.x / S), Math.floor((e.y + e.box.b - 1) / S)), t0 = snap(Math.floor(pl.x / S), Math.floor((pl.y - 4) / S))
+    if (!s0 || !t0 || Math.abs(t0[0] - s0[0]) > 32 || Math.abs(t0[1] - s0[1]) > 20) return null
+    const key = (x, y) => (x + 4096) * 8192 + (y + 4096)
+    const prev = new Map([[key(s0[0], s0[1]), null]])
+    const q = [s0]
+    let found = null, n = 0
+    while (q.length && n++ < 900) {
+      const [x, y] = q.shift()
+      if (Math.abs(x - t0[0]) <= 1 && Math.abs(y - t0[1]) <= 1) { found = [x, y]; break }
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, -1], [0, 1]]) {
+        const nx = x + dx, ny = y + dy, k = key(nx, ny)
+        if (prev.has(k) || Math.abs(nx - s0[0]) > 32 || Math.abs(ny - s0[1]) > 20 || !free(nx, ny)) continue
+        prev.set(k, [x, y]); q.push([nx, ny])
+      }
+    }
+    if (!found) return null
+    const path = []
+    for (let k = key(found[0], found[1]), cur = found; cur; cur = prev.get(k), k = cur ? key(cur[0], cur[1]) : 0) path.push(cur)
+    return path.reverse()
+  }
+
+  /** 飞行(can_fly):没有重力,朝目标点加速,追人时悬在人斜上方,闲逛在附近飘 */
+  _flyStep(e, dt, dx, dy) {
+    e.onGround = false
+    let tx, ty
+    const pl = this.player
+    if (e.state === 'chase' || e.state === 'shoot' || e.state === 'attack') {
+      // 近战的直接扑;远程的悬在人斜上方
+      const stand = e.ranged && !e.melee || (e.ranged && Math.hypot(dx, dy) > e.meleeDist * 2)
+      tx = pl.x + (stand ? e.flySide * 40 : 0); ty = pl.y + (stand ? e.flyHover : -6)
+      if (e.state === 'shoot' || e.state === 'attack') { tx = e.x; ty = e.y }
+    } else if (e.state === 'flee') { tx = e.x - Math.sign(dx) * 80; ty = e.y - 30 }
+    else {
+      if (!e.wanderTo || e.stateT <= 0.2) { e.wanderTo = [e.x + (Math.random() - 0.5) * 120, e.y + (Math.random() - 0.5) * 60] }
+      tx = e.wanderTo[0]; ty = e.wanderTo[1]
+    }
+    // 飞行寻路(PathFinding can_fly 的替身):追人时看不见人 / 撞了墙 → 每 0.4s 在 8px 空气格上 BFS 一条路,朝下一个路点飞(圣山里 Stevari 绕内墙、蝙蝠绕柱子)
+    if (e.state === 'chase' && (e.flyBlockT > 0 || !this._sees(e, pl))) {
+      e.pathT = (e.pathT || 0) - dt
+      if (e.pathT <= 0) { e.pathT = 0.4; e.path = this._findFlyPath(e, pl) }
+      const wp = e.path && e.path[1]
+      if (wp) {
+        tx = wp[0] * 8 + 4; ty = wp[1] * 8 + 4 - e.box.b // 路点是脚下那格
+        if (Math.abs(tx - e.x) < 5 && Math.abs(ty - e.y) < 5) e.path.shift()
+      }
+    } else e.path = null
+    if (e.flyBlockT > 0) e.flyBlockT -= dt
+    const ddx = tx - e.x, ddy = ty - e.y, l = Math.hypot(ddx, ddy)
+    const sp = e.flySpeed * (e.state === 'chase' ? 1 : 0.5)
+    // lukki(PhysicsAI target_vec_max_len):到了腿够得着的距离就停下,靠攻击腿打人
+    const stop = e.keepDist && e.state === 'chase' && l < e.keepDist
+    const wvx = l > 4 && !stop ? (ddx / l) * sp : 0, wvy = l > 4 && !stop ? (ddy / l) * sp : 0
+    e.vx += (wvx - e.vx) * Math.min(1, 4 * dt); e.vy += (wvy - e.vy) * Math.min(1, 4 * dt)
+    // 一点上下浮动
+    e.vy += Math.sin(this.time * 5 + e.x) * 12 * dt
+    if (Math.abs(e.vx) > 2) e.face = Math.sign(e.vx)
+    if (e.d.ghost) { e.x += e.vx * dt; e.y += e.vy * dt; return } // 幽灵(GhostComponent):穿墙
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(e.vx), Math.abs(e.vy)) * dt / 2))
+    // CellEaterComponent(lukki / lukki_tiny):挡住了就把前方 radius 内的格吃掉再过去(原作是一直吃身边 radius 内的格;这里只在被挡时吃,少挖些)。wiki:"要先在动才挖得动"
+    const eat = e.eatR > 0 && Math.hypot(e.vx, e.vy) > 8 && e.state !== 'idle'
+    for (let s = 0; s < steps; s++) {
+      const nx = e.x + (e.vx * dt) / steps
+      if (!this._blocked(e, nx, e.y)) e.x = nx
+      else if (eat) { this._eatCells(nx, e.y, e.eatR); e.x = nx }
+      else {
+        // 斜坡 / 台阶:上下挪 ≤4px 能过就过(飞行体贴着 45° 斜顶滑),不行才弹回
+        let slid = false
+        for (let c = 1; c <= 4 && !slid; c++) { if (!this._blocked(e, nx, e.y - c)) { e.x = nx; e.y -= c; slid = true } else if (!this._blocked(e, nx, e.y + c)) { e.x = nx; e.y += c; slid = true } }
+        if (!slid) { e.vx = -e.vx * 0.3; e.wanderTo = null; e.flyBlockT = 1.5 }
+      }
+      const ny = e.y + (e.vy * dt) / steps
+      if (!this._blocked(e, e.x, ny)) e.y = ny
+      else if (eat) { this._eatCells(e.x, ny, e.eatR); e.y = ny }
+      else {
+        let slid = false
+        for (let c = 1; c <= 4 && !slid; c++) { if (!this._blocked(e, e.x - c, ny)) { e.y = ny; e.x -= c; slid = true } else if (!this._blocked(e, e.x + c, ny)) { e.y = ny; e.x += c; slid = true } }
+        if (!slid) { e.vy = -e.vy * 0.3; e.wanderTo = null; e.flyBlockT = 1.5 }
+      }
+    }
+    if (this._blocked(e, e.x, e.y)) { if (eat) this._eatCells(e.x, e.y, e.eatR); else for (let k = 0; k < 16 && this._blocked(e, e.x, e.y); k++) e.y -= 1 }
+  }
+
+  /** CellEater:圆内非 box2d 的格全变空气(虫 / lukki 共用) */
+  _eatCells(x, y, R) {
+    const sim = this.sim, cx = Math.floor(x), cy = Math.floor(y)
+    for (let yy = -R; yy <= R; yy++) for (let xx = -R; xx <= R; xx++) {
+      if (xx * xx + yy * yy > R * R) continue
+      const m = sim.get(cx + xx, cy + yy)
+      if (m > 0 && this.mats.kind[m] !== 'solid') sim.set(cx + xx, cy + yy, 0, 0)
+    }
+  }
+
+  /**
+   * lukki 的腿(IKLimbComponent length,两段式 IK):脚踩住 length 内的实心,身体走远(>0.97 len)/ 太近 / 踩的格没了就换脚:
+   * 沿腿的"本位角"(绕身体均分)±0.45 / ±0.9 rad 各射一条线,从体半径外到 0.92 len,第一格实心前的空格就是新落脚点;都没有就悬着晃(IKLimbsAnimator 的 wiggle)。
+   * 攻击腿(IKLimbAttackerComponent radius):idle → 人进 radius 抬腿 aim 0.45s(脚跟着人)→ jab 0.15s 刺到人 → 0.5 伤 + 击退 → recover → 1.4s 冷却。隐身也照打(wiki)。
+   */
+  _legsStep(e, dt) {
+    const pl = this.player, px = pl.x, py = pl.y - 4
+    const speed = Math.hypot(e.vx, e.vy)
+    for (let i = 0; i < e.legs.length; i++) {
+      const g = e.legs[i]
+      g.cool -= dt
+      if (g.L.attacker) { this._attackLeg(e, g, dt, px, py); continue }
+      if (g.planted) {
+        const d = Math.hypot(g.fx - e.x, g.fy - e.y)
+        if (d > g.len * 0.97 || d < g.len * 0.12 || !this._solidNear(g.fx, g.fy)) g.planted = false
+        else if (speed > 3 && d > g.len * 0.8 && (g.fx - e.x) * e.vx + (g.fy - e.y) * e.vy < 0) g.planted = false // 拖在身后快到极限的腿先换,免得全部腿同时跳
+      }
+      if (!g.planted && g.cool <= 0) {
+        const hit = this._legFindFoot(e, g)
+        if (hit) { g.tx = hit[0]; g.ty = hit[1]; g.planted = true; g.moving = 1; g.cool = 0.12 + (i % 3) * 0.04 }
+        else g.cool = 0.1
+      }
+      let tx, ty
+      if (g.planted) { tx = g.tx; ty = g.ty }
+      else { const a = g.home + Math.sin(this.time * 4 + i * 1.7) * 0.35; tx = e.x + Math.cos(a) * g.len * 0.7; ty = e.y + Math.sin(a) * g.len * 0.7 + g.len * 0.1 }
+      const k = g.planted ? Math.min(1, 22 * dt) : Math.min(1, 8 * dt)
+      g.fx += (tx - g.fx) * k; g.fy += (ty - g.fy) * k
+    }
+  }
+
+  _solidNear(x, y) {
+    const cx = Math.floor(x), cy = Math.floor(y)
+    return this._solid(cx, cy) || this._solid(cx + 1, cy) || this._solid(cx - 1, cy) || this._solid(cx, cy + 1) || this._solid(cx, cy - 1)
+  }
+
+  _legFindFoot(e, g) {
+    const speed = Math.hypot(e.vx, e.vy)
+    let base = g.home
+    if (speed > 3) { let da = Math.atan2(e.vy, e.vx) - g.home; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI; base += Math.max(-0.5, Math.min(0.5, da * 0.3)) }
+    const r0 = (e.bodyR || 8) + 2, r1 = g.len * 0.92
+    for (const off of [0, 0.45, -0.45, 0.9, -0.9]) {
+      const a = base + off, c = Math.cos(a), s = Math.sin(a)
+      let lx = e.x + c * r0, ly = e.y + s * r0
+      if (this._solid(Math.floor(lx), Math.floor(ly))) continue // 贴身就是实心(埋在土里):这条方向不用
+      for (let t = r0 + 2; t <= r1; t += 2) {
+        const x = e.x + c * t, y = e.y + s * t
+        if (this._solid(Math.floor(x), Math.floor(y))) return [lx, ly]
+        lx = x; ly = y
+      }
+    }
+    return null
+  }
+
+  _attackLeg(e, g, dt, px, py) {
+    const dx = px - e.x, dy = py - e.y, dist = Math.hypot(dx, dy) || 1
+    g.cd -= dt; g.t += dt
+    let tx, ty, k = 8
+    const idleTarget = () => {
+      if (dist < g.L.attacker * 1.5) { const r = Math.min(g.len * 0.6, dist * 0.5); tx = e.x + (dx / dist) * r; ty = e.y + (dy / dist) * r - 4 }
+      else { const a = g.home + Math.sin(this.time * 4 + 3.1) * 0.35; tx = e.x + Math.cos(a) * g.len * 0.7; ty = e.y + Math.sin(a) * g.len * 0.7 + g.len * 0.1 }
+    }
+    if (g.phase === 'idle') {
+      idleTarget()
+      if (dist < g.L.attacker + 6 && g.cd <= 0) { g.phase = 'aim'; g.t = 0 }
+    } else if (g.phase === 'aim') {
+      tx = px - (dx / dist) * 10; ty = py - (dy / dist) * 10 - 8; k = 12
+      if (g.t > 0.45) { g.phase = 'jab'; g.t = 0; g.hit = false; this.hooks.sfx?.('wind', { vol: 0.25, rate: 1.8, minGap: 100 }) }
+    } else if (g.phase === 'jab') {
+      tx = px; ty = py; k = 45
+      if (!g.hit && Math.hypot(g.fx - px, g.fy - py) < 7 && dist < g.len + 6) { g.hit = true; this.hooks.damagePlayer?.(0.5, Math.sign(dx || 1) * 120, -70, e); this.hooks.sfx?.('impact', { vol: 0.5, rate: 1.1, minGap: 80 }) }
+      if (g.t > 0.15) { g.phase = 'recover'; g.t = 0; g.cd = 1.4 }
+    } else { idleTarget(); k = 6; if (g.t > 0.3) g.phase = 'idle' }
+    // 脚够不到比腿长更远的地方
+    const ex = tx - e.x, ey = ty - e.y, l = Math.hypot(ex, ey)
+    if (l > g.len) { tx = e.x + (ex / l) * g.len; ty = e.y + (ey / l) * g.len }
+    const kk = Math.min(1, k * dt)
+    g.fx += (tx - g.fx) * kk; g.fy += (ty - g.fy) * kk
+  }
+
+  /** 画一条腿:根 → 膝 → 脚,两段各 len/2(limb_A / limb_B 图宽就是 len/2,offset_y 5 = 图的竖向中线在关节线上),膝盖图 8×8 盖在膝上;膝朝上 / 朝外弯 */
+  _drawLeg(ctx, e, g, ox, oy) {
+    const L = g.L, ia = L.a ? this._img(L.a.img) : null, ib = L.b ? this._img(L.b.img) : null
+    if (!ia?.image || !ib?.image) return
+    const rx = e.x, ry = e.y
+    let dx = g.fx - rx, dy = g.fy - ry, d = Math.hypot(dx, dy) || 0.01
+    const half = g.len / 2
+    if (d > g.len - 0.5) { const s = (g.len - 0.5) / d; dx *= s; dy *= s; d = g.len - 0.5 }
+    const h = Math.sqrt(Math.max(0, half * half - (d / 2) * (d / 2)))
+    let nx = -dy / d, ny = dx / d
+    if (nx * Math.sign(dx || 1) * 0.5 - ny < 0) { nx = -nx; ny = -ny } // 膝盖朝上偏外
+    const kx = rx + dx / 2 + nx * h, ky = ry + dy / 2 + ny * h
+    const seg = (img, x0, y0, x1, y1, oyy) => {
+      const a = Math.atan2(y1 - y0, x1 - x0), len = Math.hypot(x1 - x0, y1 - y0)
+      ctx.save(); ctx.translate(Math.round(x0 - ox), Math.round(y0 - oy)); ctx.rotate(a)
+      ctx.drawImage(img.image, 0, 0, img.width, img.height, 0, -oyy, Math.max(1, len), img.height)
+      ctx.restore()
+    }
+    seg(ia, rx, ry, kx, ky, L.a.oy)
+    seg(ib, kx, ky, g.fx, g.fy, L.b.oy)
+    const ik = L.knee ? this._img(L.knee.img) : null
+    if (ik?.image) ctx.drawImage(ik.image, Math.round(kx - ox - L.knee.ox), Math.round(ky - oy - L.knee.oy))
+  }
+
+  /**
+   * 爬墙(longleg):surf = 实心贴在哪一侧('d' 地 / 'u' 顶 / 'l' 左墙 / 'r' 右墙),沿切向朝目标爬,
+   * 撞到前方的墙就转上去,爬到边缘就绕过去,哪边都没有就掉。精灵按 surf 旋转(脚朝实心)。
+   */
+  _crawlStep(e, dt, dx, dy) {
+    const xl = Math.floor(e.x + e.box.l), xr = Math.floor(e.x + e.box.r - 0.01), yt = Math.floor(e.y + e.box.t), yb = Math.floor(e.y + e.box.b)
+    const ym = Math.floor((yt + yb) / 2), xm = Math.floor((xl + xr) / 2)
+    const has = { d: this._solid(xl, yb + 1) || this._solid(xm, yb + 1) || this._solid(xr, yb + 1), u: this._solid(xl, yt - 1) || this._solid(xm, yt - 1) || this._solid(xr, yt - 1), l: this._solid(xl - 1, yt) || this._solid(xl - 1, ym) || this._solid(xl - 1, yb), r: this._solid(xr + 1, yt) || this._solid(xr + 1, ym) || this._solid(xr + 1, yb) }
+    if (!e.surf || !has[e.surf]) e.surf = has.d ? 'd' : has.l ? 'l' : has.r ? 'r' : has.u ? 'u' : null
+    e.onGround = !!e.surf
+    if (!e.surf) {
+      // 掉
+      e.vy += e.gravity * dt; e.vx *= Math.pow(0.3, dt)
+      const steps = Math.max(1, Math.ceil(Math.abs(e.vy) * dt / 2))
+      for (let s = 0; s < steps; s++) { const ny = e.y + (e.vy * dt) / steps; if (!this._blocked(e, e.x, ny)) e.y = ny; else { e.vy = 0; break } const nx = e.x + (e.vx * dt) / steps; if (!this._blocked(e, nx, e.y)) e.x = nx }
+      return
+    }
+    // 切向:地/顶沿 x,墙沿 y;方向朝目标(追)/ 闲逛方向
+    const horiz = e.surf === 'd' || e.surf === 'u'
+    let want = 0
+    if (e.state === 'chase' || e.state === 'flee') {
+      // 地/顶上朝目标的 x 走;墙上朝目标的 y 爬,目标在同一高度被墙挡着就往上翻
+      want = horiz ? Math.sign(dx) : (Math.abs(dy) < 8 ? -1 : Math.sign(dy))
+      if (e.state === 'flee') want = -want
+    }
+    else if (e.state === 'wander') want = e.dir || 1
+    const sp = e.run
+    let mvx = horiz ? want * sp : 0, mvy = horiz ? 0 : want * sp
+    e.vx = mvx; e.vy = mvy
+    if (horiz && want) e.face = want
+    const stepN = Math.max(1, Math.ceil(sp * dt / 2))
+    for (let s = 0; s < stepN && want; s++) {
+      const nx = e.x + (mvx * dt) / stepN, ny = e.y + (mvy * dt) / stepN
+      if (!this._blocked(e, nx, ny)) {
+        e.x = nx; e.y = ny
+        // 走到边缘(贴着的那侧没了)→ 绕过拐角:往贴着的方向挪,surf 变成背向来路
+        const xl2 = Math.floor(e.x + e.box.l), xr2 = Math.floor(e.x + e.box.r - 0.01), yt2 = Math.floor(e.y + e.box.t), yb2 = Math.floor(e.y + e.box.b)
+        const adhere = () => {
+          const a = Math.floor(e.x + e.box.l), b2 = Math.floor(e.x + e.box.r - 0.01), t = Math.floor(e.y + e.box.t), bb = Math.floor(e.y + e.box.b), m = Math.floor((a + b2) / 2), mm = Math.floor((t + bb) / 2)
+          return e.surf === 'd' ? this._solid(a, bb + 1) || this._solid(m, bb + 1) || this._solid(b2, bb + 1) : e.surf === 'u' ? this._solid(a, t - 1) || this._solid(m, t - 1) || this._solid(b2, t - 1) : e.surf === 'l' ? this._solid(a - 1, t) || this._solid(a - 1, mm) || this._solid(a - 1, bb) : this._solid(b2 + 1, t) || this._solid(b2 + 1, mm) || this._solid(b2 + 1, bb)
+        }
+        if (!adhere()) {
+          // 贴着的那侧没了:先当下坡,往贴着的方向贴回去(≤4px);还贴不上才是真拐角 → 绕过去
+          const push = e.surf === 'd' ? [0, 1] : e.surf === 'u' ? [0, -1] : e.surf === 'l' ? [-1, 0] : [1, 0]
+          let ok = false
+          for (let k = 1; k <= 4 && !ok; k++) { const px = e.x + push[0], py = e.y + push[1]; if (this._blocked(e, px, py)) break; e.x = px; e.y = py; if (adhere()) ok = true }
+          if (!ok) {
+            let wrapped = false
+            for (let k = 1; k <= 3 && !wrapped; k++) { const px = e.x + push[0] * k, py = e.y + push[1] * k; if (!this._blocked(e, px, py)) { e.x = px; e.y = py; wrapped = true } }
+            e.surf = wrapped ? (horiz ? (want > 0 ? 'l' : 'r') : (want > 0 ? 'u' : 'd')) : null
+            break
+          }
+        }
+      } else {
+        // 小坎(≤4px)直接跨;真墙才转上去(新 surf = 前方)
+        let stepped = false
+        const back = e.surf === 'd' ? [0, -1] : e.surf === 'u' ? [0, 1] : e.surf === 'l' ? [1, 0] : [-1, 0]
+        for (let c = 1; c <= 4 && !stepped; c++) { const px = nx + back[0] * c, py = ny + back[1] * c; if (!this._blocked(e, px, py)) { e.x = px; e.y = py; stepped = true } }
+        if (stepped) continue
+        e.surf = horiz ? (want > 0 ? 'r' : 'l') : (want > 0 ? 'd' : 'u')
+        if (e.state === 'wander') e.dir = -e.dir
+        break
+      }
+    }
+    if (this._blocked(e, e.x, e.y)) { for (let k = 0; k < 12 && this._blocked(e, e.x, e.y); k++) { e.y -= 1 } }
+  }
+
+  /** 视线:从眼睛到目标每 4px 采一格,碰到实心就看不见(sense_creatures_through_walls 的除外) */
+  _sees(e, pl) {
+    if (e.d.ai?.sense_creatures_through_walls) return true
+    const x0 = e.x, y0 = e.y + (e.d.ai?.eye_offset_y ?? -8), x1 = pl.x, y1 = pl.y - 4
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 4))
+    for (let i = 1; i < n; i++) { const t = i / n; if (this._solid(Math.floor(x0 + (x1 - x0) * t), Math.floor(y0 + (y1 - y0) * t))) return false }
+    return true
+  }
+
+  /** 远程开火:attack_ranged_entity_file → e_<名>;count_min~max 发;predict 提前量;抛物弹(TNT/火球)抬一点角度 */
+  _shoot(e, pl) {
+    const d = this.projectiles?.defs?.[e.rangedProj]
+    if (!d) return
+    const sx = e.x + e.face * e.rangedOff[0], sy = e.y + e.rangedOff[1]
+    let tx = pl.x, ty = pl.y - 4
+    const dist = Math.hypot(tx - sx, ty - sy)
+    const spd = (d.speed[0] + d.speed[1]) / 2 || 200
+    if (e.rangedPredict) { const t = dist / spd; tx += pl.vx * t; ty += pl.vy * t }
+    let ang = Math.atan2(ty - sy, tx - sx)
+    // 有重力的弹(TNT g=0? 但是刚体抛物 / 火球 g=100)抬角补落差
+    const g = d.type === 'PHYSICS' ? 350 : (d.gravity || 0)
+    if (g > 0) ang -= Math.min(0.6, (g * dist) / (2 * spd * spd))
+    const n = e.rangedCount[0] + Math.floor(Math.random() * (e.rangedCount[1] - e.rangedCount[0] + 1))
+    for (let i = 0; i < n; i++) this.projectiles.spawn(e.rangedProj, sx, sy, ang, { owner: 'enemy', spreadRad: n > 1 ? 0.25 : 0.04 })
+    this.hooks.sfx?.(d.type === 'PHYSICS' ? 'clash' : 'electric', { vol: 0.3, rate: 0.9 + Math.random() * 0.3, minGap: 50 })
+  }
+
+  _setAnim(e, name, lock) {
+    const anims = e.d.sprite.anims
+    if (!anims[name]) { if (name === 'run' && anims.walk) name = 'walk'; else if (name.startsWith('swim') && anims.walk) name = 'walk'; else if (name.startsWith('jump') && anims.stand) name = 'stand'; else if (!anims[name]) return }
+    if (e.anim === name) return
+    e.anim = name; e.frame = 0; e.ft = 0; e.animLock = lock ? 1 : 0
+  }
+
+  /** 弹丸子步进命中测试:返回被打到的实体 */
+  hitTest(x, y) {
+    for (const e of this.list) {
+      if (e.dead) continue
+      if (x >= e.x + e.hit.l && x <= e.x + e.hit.r && y >= e.y + e.hit.t && y <= e.y + e.hit.b) return e
+    }
+    const w = this._hitWorm(x, y); if (w) return w
+    for (const b of this.bodies) if (!b.dead && b.contains(x, y)) return b
+    return null
+  }
+  /** 只测刚体(敌人的弹不打自己人) */
+  hitTestBodies(x, y) {
+    for (const b of this.bodies) if (!b.dead && b.contains(x, y)) return b
+    return null
+  }
+
+  /** 掉血:喷 blood_spray_material(真材质碎屑),hp≤0 死亡 → 洒 blood_material;刚体走 _bodyDamaged */
+  hurt(e, dmg, ix = 0, iy = 0, src = 'proj', hx = e.x, hy = e.y) {
+    if (e.dead || dmg <= 0) return
+    if (e.isBody) {
+      if (e.asleep && (Math.abs(ix) + Math.abs(iy) > 40 || src === 'explosion')) e.wake(this.sim)
+      if (!e.asleep) { e.vx += ix * (10 / Math.max(10, e.m)); e.vy += iy * (10 / Math.max(10, e.m)); e.restT = 0 }
+      this._bodyDamaged(e, dmg, 0, hx, hy)
+      if (src === 'proj') this.hooks.sfx?.('impact', { vol: 0.3, rate: 0.9, minGap: 60 })
+      return
+    }
+    if (e.d.invulnerable) return // 幽灵:damage_multipliers 全 0,只能打碎它的水晶
+    // DamageModel damage_multipliers(lukki:projectile 0.2 / explosion 0.8 / fire 1.2 / melee 2.0)
+    const mul = e.d.damage?.multipliers
+    if (mul) { const key = src === 'proj' ? 'projectile' : src; if (mul[key] !== undefined) dmg *= mul[key] }
+    e.hp -= dmg
+    e.vx += ix; e.vy += iy
+    // lukki_eggs.lua damage_received:伤 >0.1 且(致死 或 10%)→ 出一只小蜘蛛
+    if (e.d.eggs && dmg > 0.1 && (e.hp <= 0 || Math.random() < 0.1)) { this.spawnCreature(e.d.eggs, e.x + (Math.random() - 0.5) * 6, e.y); this.hooks.sfx?.('clash', { vol: 0.4, rate: 1.6, minGap: 100 }) }
+    if (src === 'proj' || src === 'explosion') {
+      e.hurtT = 0.25
+      if (e.state !== 'attack' && !e.helpless) { e.state = 'chase'; e.stateT = 4 }
+      if (e.helpless || (e.escapeP && Math.random() * 100 < e.escapeP)) { e.state = 'flee'; e.stateT = 2 } // escape_if_damaged_probability
+      const spray = this.mats.byName.get(e.d.damage?.blood_spray_material || e.d.damage?.blood_material || '')
+      if (spray > 0) { const n = Math.min(12, 3 + Math.round(dmg * 30)); for (let i = 0; i < n; i++) this.hooks.debris?.(e.x + (Math.random() - 0.5) * 4, e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t), ix * 0.6 + (Math.random() - 0.5) * 80, iy * 0.6 - Math.random() * 60, spray, this.mats.color[spray]) }
+      this.hooks.sfx?.('impact', { vol: 0.35, rate: 1.4 + Math.random() * 0.3, minGap: 60 })
+    }
+    if (e.hp <= 0) this._die(e, ix, iy)
+  }
+
+  _die(e, ix = 0, iy = 0) {
+    e.dead = true
+    this.stats.killed++
+    // ExplosionComponent trigger=ON_DEATH(地雷 mine_scavenger:r30 伤 4 起火 80%)
+    if (e.d.explosionOnDeath) this.explodeConfig(e.x, e.y, e.d.explosionOnDeath)
+    // 法杖幽灵死了 → 手里的法杖掉在地上(原作是 ItemPickUpper 背包里的物品掉落)
+    if (e.held?.wand) this.hooks.dropWand?.(e.held.wand, e.x, e.y)
+    // 幽灵水晶碎了 → 附近的幽灵一起散掉(ghost_crystal.lua)
+    if (e.name === 'ghost_crystal') for (const g of this.list) if (!g.dead && g.d.ghost && Math.hypot(g.x - e.x, g.y - e.y) < 500) { g.dead = true; this.hooks.spark?.(g.x, g.y, 0, -30, '#a0c0ff', 0.6) }
+    const blood = this.mats.byName.get(e.d.damage?.blood_material || '')
+    if (blood > 0) { const n = 18 + Math.round(Math.random() * 14); for (let i = 0; i < n; i++) this.hooks.debris?.(e.x + (Math.random() - 0.5) * 6, e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t), (Math.random() - 0.5) * 120, -20 - Math.random() * 90, blood, this.mats.color[blood]) }
+    this.hooks.sfx?.('clash', { vol: 0.4, rate: 0.7, minGap: 80 })
+    // 布娃娃(DamageModel ragdoll_filenames_file):每张 png 一块像素刚体,材质 ragdoll_material(meat),摔在地上就是尸块,睡了变肉像素
+    const rag = e.d.ragdoll
+    const ragMat = this.mats.byName.get(e.d.damage?.ragdoll_material || 'meat')
+    if (rag?.length && ragMat > 0) {
+      const oy = e.d.damage?.ragdoll_offset_y ?? -6
+      rag.slice(0, 12).forEach((img, i) => {
+        this._img(img)
+        this.pendingProps.push({ name: 'ragdoll', d: { kind: 'prop', shape: { image: img, material: e.d.damage?.ragdoll_material || 'meat' }, body: { friction: 0.6, restitution: 0.1, linear_damping: 0.3, angular_damping: 0.5 } }, x: e.x + (Math.random() - 0.5) * 6, y: e.y + oy + (i - rag.length / 2) * 1.2, vx: ix * 0.4 + (Math.random() - 0.5) * 70, vy: iy * 0.4 - 30 - Math.random() * 60, w: (Math.random() - 0.5) * 12, ragdoll: true })
+      })
+    }
+    // ragdollify_child_entity_sprites(lukki):每条腿的两段图各变一块肉刚体,从膝 / 脚的位置摔下去;身体没有布娃娃图,就洒血
+    if (e.legs && ragMat > 0) {
+      const mat = e.d.damage?.ragdoll_material || 'meat'
+      for (const g of e.legs) {
+        for (const [img, x, y] of [[g.L.a?.img, (e.x + g.fx) / 2, (e.y + g.fy) / 2], [g.L.b?.img, g.fx, g.fy]]) {
+          if (!img) continue
+          this.pendingProps.push({ name: 'ragdoll', d: { kind: 'prop', shape: { image: img, material: mat }, body: { friction: 0.6, restitution: 0.1, linear_damping: 0.3, angular_damping: 0.5 } }, x, y, vx: ix * 0.3 + (Math.random() - 0.5) * 60, vy: iy * 0.3 - 20 - Math.random() * 40, w: (Math.random() - 0.5) * 10, ragdoll: true })
+        }
+      }
+    }
+    // 掉金(drop_money.lua):money = 10 × max(1, floor(max_hp));先掷 10 面值(最多 5 个),再 1000/200/50/10
+    if (e.d.scripts?.some((s) => s.endsWith('drop_money')) || e.d.chest) {
+      let money = 10 * Math.max(1, Math.floor(e.maxHp))
+      const drop = (name, v) => { this._img(this.defs[name].shape.image); this.pendingProps.push({ name, d: this.defs[name], x: e.x + (Math.random() - 0.5) * 4, y: e.y - 8, vx: (Math.random() - 0.5) * 60, vy: -40 - Math.random() * 50, item: true, gold: v }) }
+      for (let k = 0; k < 5 && money >= 10; k++) { drop('goldnugget_10', 10); money -= 10 }
+      for (const [v, n] of [[1000, 'goldnugget_1000'], [200, 'goldnugget_200'], [50, 'goldnugget_50'], [10, 'goldnugget_10']]) while (money >= v) { drop(n, v); money -= v }
+    }
+    this.hooks.onDeath?.(e)
+  }
+
+  /** 点着(fire_probability_of_ignition):烧 4s,期间 fire_damage_amount / 0.5s,身上往外冒火(会点燃旁边的油/木) */
+  ignite(e) {
+    if (e.dead || e.fireT > 0) return
+    if ((e.d.damage?.fire_probability_of_ignition ?? 0) <= 0) return
+    e.fireT = 4; e.fireTick = 0
+  }
+  _burn(e, dt) {
+    if (!(e.fireT > 0)) return
+    e.fireT -= dt
+    if (e.inLiq) { e.fireT = 0; return } // 进水灭
+    e.fireTick += dt
+    if (e.fireTick >= 0.5) { e.fireTick = 0; this.hurt(e, e.d.damage?.fire_damage_amount ?? 0.2, 0, 0, 'fire') }
+    // 身上冒火:随机往身体周围的空气格放火(玩家 / 怪着火在原作里就是行走的火源)
+    if (Math.random() < 0.5) {
+      const x = Math.floor(e.x + (Math.random() - 0.5) * (e.hit.r - e.hit.l)), y = Math.floor(e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t))
+      if (this.sim.get(x, y) === 0) this.sim.set(x, y, this.sim.M_FIRE, 0)
+    }
+    for (let k = 0; k < 2; k++) this.hooks.spark?.(e.x + (Math.random() - 0.5) * 6, e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t), (Math.random() - 0.5) * 24, -50 - Math.random() * 70, Math.random() < 0.5 ? '#ffb040' : '#ff6a20', 0.3 + Math.random() * 0.2)
+  }
+
+  /** 爆炸:范围内实体按距离衰减掉血 + 冲量 */
+  explosion(x, y, r, dmg) {
+    for (const e of this.list) {
+      if (e.dead) continue
+      const dx = e.x - x, dy = (e.y + (e.hit.t + e.hit.b) / 2) - y, d = Math.hypot(dx, dy)
+      if (d > r + 6) continue
+      const k = 1 - Math.max(0, d - 4) / (r + 2)
+      const n = Math.max(1, d)
+      this.hurt(e, dmg * Math.max(0.35, k), (dx / n) * 120 * k, (dy / n) * 120 * k - 60 * k, 'explosion')
+    }
+    for (const w of this.worms) {
+      if (w.dead) continue
+      let best = Infinity; for (const s of w.segs) best = Math.min(best, Math.hypot(s.x - x, s.y - y))
+      if (best <= r + w.r) this.hurt(w, dmg * Math.max(0.3, 1 - best / (r + w.r)), 0, 0, 'explosion')
+    }
+    // 刚体:physics_throw —— 范围内的(含睡着的)醒过来被抛飞,再吃伤害
+    for (const b of this.bodies) {
+      if (b.dead) continue
+      const dx = b.x - x, dy = b.y - y, d = Math.hypot(dx, dy)
+      if (d > r + b.r) continue
+      const k = 1 - Math.max(0, d - 4) / (r + b.r)
+      const n = Math.max(1, d)
+      if (b.asleep) b.wake(this.sim)
+      const imp = 220 * k * (30 / Math.max(30, b.m))
+      b.vx += (dx / n) * imp; b.vy += (dy / n) * imp - imp * 0.5; b.w += (Math.random() - 0.5) * 6 * k; b.restT = 0
+      this._bodyDamaged(b, dmg * Math.max(0.3, k), 0, b.x, b.y)
+    }
+  }
+
+  /** 醒着刚体的光(矿灯 LightComponent);睡着的也发光 */
+  lights(cb, ox, oy) {
+    for (const b of this.bodies) if (!b.dead && b.light) cb(b.x - ox, b.y - oy, Math.min(120, b.light.radius * 0.5), `${b.light.r ?? 255},${b.light.g ?? 200},${b.light.b ?? 120}`, 0.8)
+    // lukki 的 LightComponent(r32 暖橘光,眼睛发光)
+    for (const e of this.list) if (!e.dead && e.legs && e.d.light) cb(e.x - ox, e.y - oy, e.d.light.radius * 1.25, `${e.d.light.r ?? 120},${e.d.light.g ?? 60},${e.d.light.b ?? 10}`, 0.35)
+  }
+
+  render(ctx, ox, oy) {
+    ctx.imageSmoothingEnabled = false
+    // 链(chain_vertical_16 那种铁链,这里画成一节节的暗色链环):从顶上的锚点到刚体上的挂点
+    for (const b of this.bodies) {
+      if (b.dead || !b.ropes) continue
+      const c = Math.cos(b.rot), s = Math.sin(b.rot)
+      for (const r of b.ropes) {
+        if (r.broken || r.len === 0) continue
+        const px = b.x + r.lx * c - r.ly * s, py = b.y + r.lx * s + r.ly * c
+        const n = Math.max(1, Math.round(r.len / 4))
+        for (let k = 0; k <= n; k++) {
+          const t = k / n, x = Math.round(r.ax + (px - r.ax) * t - ox), y = Math.round(r.ay + (py - r.ay) * t - oy)
+          ctx.fillStyle = k & 1 ? '#3a3a40' : '#5a5a62'; ctx.fillRect(x - 1, y, 2, 4)
+        }
+      }
+    }
+    // 睡着的也画:世界里那些格子只是"材质",画上去才是箱子的图(原作物理像素带自己的颜色);被挖掉的像素由 audit 抠掉
+    for (const b of this.bodies) if (!b.dead && b.x > ox - 40 && b.x < ox + ctx.canvas.width + 40 && b.y > oy - 40 && b.y < oy + ctx.canvas.height + 40) b.draw(ctx, ox, oy)
+    // 商店标价(generate_shop_item.lua:font_pixel_white 文字挂在物品下方 25px;打折的画 sale_indicator)
+    ctx.font = '7px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+    for (const b of this.bodies) {
+      if (b.dead || !b.shop || b.x < ox - 40 || b.x > ox + ctx.canvas.width + 40 || b.y < oy - 40 || b.y > oy + ctx.canvas.height + 40) continue
+      const px = Math.round(b.x - ox), py = Math.round(b.y - oy) + 10
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(px - 12, py - 1, 24, 8)
+      ctx.fillStyle = b.shop.sale ? '#ffd050' : '#e8e8e8'
+      ctx.fillText(String(b.shop.cost), px, py)
+      if (b.shop.sale) { ctx.fillStyle = '#ffd050'; ctx.fillText('SALE', px, py - 22) }
+    }
+    ctx.textAlign = 'left'
+    for (const w of this.worms) if (!w.dead) this._renderWorm(ctx, w, ox, oy)
+    // 激光门的光束(粉红,beam_radius 1.5 → 3px 芯 + 淡晕)
+    for (const e of this.list) {
+      if (e.dead || !e.d.lasergate || !e.laserOn || !(e.laserLen > 0)) continue
+      const LZ = e.d.lasergate, x1 = e.x + Math.cos(LZ.angle) * e.laserLen, y1 = e.y + Math.sin(LZ.angle) * e.laserLen
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'
+      ctx.strokeStyle = 'rgba(255,80,180,0.35)'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(e.x - ox, e.y - oy); ctx.lineTo(x1 - ox, y1 - oy); ctx.stroke()
+      ctx.strokeStyle = '#ffc0e8'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(e.x - ox, e.y - oy); ctx.lineTo(x1 - ox, y1 - oy); ctx.stroke()
+      ctx.restore()
+    }
+    for (const e of this.list) {
+      if (e.dead) continue
+      // 法杖幽灵:只画手里那根法杖,杖尖朝着人(幽灵本体原作也是看不见的)
+      if (e.held) {
+        const wi = this._img(e.held.image)
+        if (wi?.image) {
+          const pl = this.player, ang = Math.atan2(pl.y - 4 - e.y, pl.x - e.x)
+          ctx.save(); ctx.translate(Math.round(e.x - ox), Math.round(e.y - oy)); ctx.rotate(ang)
+          if (Math.cos(ang) < 0) ctx.scale(1, -1)
+          if (e.hurtT > 0) ctx.globalAlpha = 0.75
+          ctx.drawImage(wi.image, -Math.round(wi.width * 0.3), -Math.round(wi.height / 2)); ctx.restore(); ctx.globalAlpha = 1
+        }
+        continue
+      }
+      const img = this._img(e.d.sprite.image)
+      if (!img?.image) continue
+      const S = e.d.sprite, a = S.anims[e.anim] || S.anims[S.def]
+      if (!a) continue
+      const fx = a.x + (e.frame % a.perRow) * a.fw, fy = a.y + Math.floor(e.frame / a.perRow) * a.fh
+      const px = Math.round(e.x - ox), py = Math.round(e.y - oy)
+      if (e.hurtT > 0) ctx.globalAlpha = 0.75
+      if (e.legs) for (const g of e.legs) this._drawLeg(ctx, e, g, ox, oy) // 腿 z_index 1.1:在身体后面
+      ctx.save()
+      ctx.translate(px, py)
+      // 爬墙的:脚朝实心那侧转过去(d 0 / r −90° / l +90° / u 180°)
+      if (e.crawler && e.surf && e.surf !== 'd') { ctx.rotate(e.surf === 'r' ? -Math.PI / 2 : e.surf === 'l' ? Math.PI / 2 : Math.PI); ctx.translate(0, e.surf === 'u' ? 0 : 3) }
+      ctx.scale(e.face, 1)
+      // PhysicsAI 飞行体(无人机 / 水晶):本体是 PhysicsImageShape 那张图,Sprite 只是发光的眼 → 先画本体再叠精灵
+      if (e.d.bodyImage) { const bi = this._img(e.d.bodyImage); if (bi?.image) ctx.drawImage(bi.image, Math.round(-bi.width / 2), Math.round(-bi.height / 2)) }
+      ctx.drawImage(img.image, fx, fy, a.fw, a.fh, Math.round(-S.offX - S.compOffX), Math.round(-S.offY - S.compOffY), a.fw, a.fh)
+      // 叠层精灵(lukki_wiggle 4 帧抖动、emissive 发光眼 additive)
+      if (e.d.overlays) for (const o of e.d.overlays) {
+        const oi = this._img(o.image), oa = o.anims[o.def] || Object.values(o.anims)[0]
+        if (!oi?.image || !oa) continue
+        const f = Math.floor(this.time / Math.max(0.02, oa.wait)) % Math.max(1, oa.frames)
+        if (o.emissive) ctx.globalCompositeOperation = 'lighter'
+        ctx.drawImage(oi.image, oa.x + (f % oa.perRow) * oa.fw, oa.y + Math.floor(f / oa.perRow) * oa.fh, oa.fw, oa.fh, Math.round(-o.offX - o.compOffX), Math.round(-o.offY - o.compOffY), oa.fw, oa.fh)
+        if (o.emissive) ctx.globalCompositeOperation = 'source-over'
+      }
+      ctx.restore()
+      ctx.globalAlpha = 1
+    }
+    ctx.globalAlpha = 1
+  }
+}

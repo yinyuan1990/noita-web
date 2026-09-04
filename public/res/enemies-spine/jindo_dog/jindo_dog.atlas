@@ -1,0 +1,48 @@
+
+jindo_dog.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 71, 40
+  size: 17, 16
+  orig: 17, 16
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 48, 33
+  size: 21, 23
+  orig: 21, 23
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 44, 58
+  size: 30, 34
+  orig: 30, 34
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 44
+  size: 40, 44
+  orig: 40, 44
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 2, 2
+  size: 40, 44
+  orig: 40, 44
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 48, 13
+  size: 18, 25
+  orig: 18, 25
+  offset: 0, 0
+  index: -1

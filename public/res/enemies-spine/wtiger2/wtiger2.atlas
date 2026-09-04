@@ -1,0 +1,83 @@
+
+wtiger2.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+wt2_arm1
+  rotate: true
+  xy: 56, 105
+  size: 21, 44
+  orig: 21, 44
+  offset: 0, 0
+  index: -1
+wt2_arm2
+  rotate: false
+  xy: 2, 9
+  size: 22, 43
+  orig: 22, 43
+  offset: 0, 0
+  index: -1
+wt2_body
+  rotate: false
+  xy: 2, 96
+  size: 52, 30
+  orig: 52, 30
+  offset: 0, 0
+  index: -1
+wt2_body2
+  rotate: false
+  xy: 62, 73
+  size: 30, 30
+  orig: 30, 30
+  offset: 0, 0
+  index: -1
+wt2_ear1
+  rotate: false
+  xy: 49, 2
+  size: 12, 11
+  orig: 14, 13
+  offset: 1, 1
+  index: -1
+wt2_ear2
+  rotate: false
+  xy: 63, 2
+  size: 11, 11
+  orig: 13, 13
+  offset: 1, 1
+  index: -1
+wt2_face1
+  rotate: false
+  xy: 62, 44
+  size: 30, 27
+  orig: 32, 29
+  offset: 1, 1
+  index: -1
+wt2_face2
+  rotate: false
+  xy: 49, 15
+  size: 30, 27
+  orig: 32, 29
+  offset: 1, 1
+  index: -1
+wt2_leg1
+  rotate: false
+  xy: 26, 9
+  size: 21, 43
+  orig: 21, 43
+  offset: 0, 0
+  index: -1
+wt2_leg2
+  rotate: false
+  xy: 43, 54
+  size: 17, 40
+  orig: 17, 40
+  offset: 0, 0
+  index: -1
+wt2_tail
+  rotate: false
+  xy: 2, 54
+  size: 39, 40
+  orig: 39, 40
+  offset: 0, 0
+  index: -1

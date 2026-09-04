@@ -1,0 +1,97 @@
+
+moon_rabbit.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 133, 197
+  size: 53, 58
+  orig: 53, 58
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 72, 159
+  size: 41, 56
+  orig: 41, 56
+  offset: 0, 0
+  index: -1
+back_hair
+  rotate: true
+  xy: 193, 179
+  size: 36, 47
+  orig: 36, 47
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 128
+  size: 29, 28
+  orig: 29, 28
+  offset: 0, 0
+  index: -1
+body_ribon
+  rotate: true
+  xy: 130, 158
+  size: 37, 42
+  orig: 37, 42
+  offset: 0, 0
+  index: -1
+cloud
+  rotate: true
+  xy: 230, 144
+  size: 33, 20
+  orig: 33, 20
+  offset: 0, 0
+  index: -1
+ear
+  rotate: false
+  xy: 192, 152
+  size: 36, 25
+  orig: 36, 25
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 2, 158
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 38, 155
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+front_hair
+  rotate: false
+  xy: 174, 163
+  size: 16, 32
+  orig: 16, 32
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 2, 191
+  size: 68, 59
+  orig: 68, 59
+  offset: 0, 0
+  index: -1
+hair_acc
+  rotate: false
+  xy: 193, 217
+  size: 50, 33
+  orig: 50, 33
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: false
+  xy: 72, 202
+  size: 59, 48
+  orig: 59, 48
+  offset: 0, 0
+  index: -1

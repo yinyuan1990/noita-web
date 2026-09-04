@@ -1,0 +1,188 @@
+
+hojosa.png
+size: 219,219
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 142, 81
+  size: 27, 55
+  orig: 27, 55
+  offset: 0, 0
+  index: -1
+arm1_1
+  rotate: false
+  xy: 101, 29
+  size: 26, 26
+  orig: 26, 26
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 66, 164
+  size: 47, 53
+  orig: 47, 53
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 171, 165
+  size: 36, 52
+  orig: 36, 52
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 171, 89
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 171, 56
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+front_hair_L
+  rotate: false
+  xy: 78, 22
+  size: 21, 33
+  orig: 21, 33
+  offset: 0, 0
+  index: -1
+front_hair_R
+  rotate: true
+  xy: 128, 57
+  size: 22, 35
+  orig: 22, 35
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 171, 122
+  size: 43, 41
+  orig: 43, 41
+  offset: 0, 0
+  index: -1
+hair2
+  rotate: true
+  xy: 108, 89
+  size: 38, 32
+  orig: 38, 32
+  offset: 0, 0
+  index: -1
+hairbun
+  rotate: false
+  xy: 70, 57
+  size: 56, 22
+  orig: 56, 22
+  offset: 0, 0
+  index: -1
+hairear_L
+  rotate: false
+  xy: 142, 138
+  size: 16, 26
+  orig: 16, 26
+  offset: 0, 0
+  index: -1
+hairear_R
+  rotate: true
+  xy: 78, 4
+  size: 16, 25
+  orig: 16, 25
+  offset: 0, 0
+  index: -1
+hairpinL
+  rotate: true
+  xy: 138, 166
+  size: 11, 20
+  orig: 11, 20
+  offset: 0, 0
+  index: -1
+hairpinR
+  rotate: true
+  xy: 115, 166
+  size: 11, 21
+  orig: 11, 21
+  offset: 0, 0
+  index: -1
+hairpin_L
+  rotate: true
+  xy: 129, 32
+  size: 23, 26
+  orig: 23, 26
+  offset: 0, 0
+  index: -1
+hairpin_R
+  rotate: false
+  xy: 129, 6
+  size: 21, 24
+  orig: 21, 24
+  offset: 0, 0
+  index: -1
+hairpin_backL
+  rotate: false
+  xy: 160, 149
+  size: 9, 13
+  orig: 9, 13
+  offset: 0, 0
+  index: -1
+hairpin_backR
+  rotate: false
+  xy: 160, 164
+  size: 9, 13
+  orig: 9, 13
+  offset: 0, 0
+  index: -1
+legL
+  rotate: true
+  xy: 115, 179
+  size: 38, 54
+  orig: 38, 54
+  offset: 0, 0
+  index: -1
+legR
+  rotate: true
+  xy: 70, 83
+  size: 44, 36
+  orig: 44, 36
+  offset: 0, 0
+  index: -1
+leg_acc
+  rotate: false
+  xy: 105, 8
+  size: 22, 19
+  orig: 22, 19
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: false
+  xy: 2, 2
+  size: 74, 43
+  orig: 74, 43
+  offset: 0, 0
+  index: -1
+skirt2
+  rotate: false
+  xy: 66, 129
+  size: 74, 33
+  orig: 74, 33
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 2, 126
+  size: 62, 91
+  orig: 62, 91
+  offset: 0, 0
+  index: -1
+tail_2
+  rotate: false
+  xy: 2, 47
+  size: 66, 77
+  orig: 66, 77
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,83 @@
+
+red_bug.png
+size: 512,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: true
+  xy: 2, 97
+  size: 155, 144
+  orig: 155, 144
+  offset: 0, 0
+  index: -1
+eye
+  rotate: false
+  xy: 120, 52
+  size: 116, 43
+  orig: 116, 43
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 2, 2
+  size: 116, 93
+  orig: 116, 93
+  offset: 0, 0
+  index: -1
+leg1_L
+  rotate: true
+  xy: 214, 104
+  size: 34, 47
+  orig: 34, 47
+  offset: 0, 0
+  index: -1
+leg1_R
+  rotate: false
+  xy: 238, 55
+  size: 34, 47
+  orig: 34, 47
+  offset: 0, 0
+  index: -1
+leg2_L
+  rotate: false
+  xy: 214, 197
+  size: 39, 55
+  orig: 39, 55
+  offset: 0, 0
+  index: -1
+leg2_R
+  rotate: false
+  xy: 214, 140
+  size: 39, 55
+  orig: 39, 55
+  offset: 0, 0
+  index: -1
+wing1_L
+  rotate: false
+  xy: 148, 179
+  size: 64, 73
+  orig: 64, 73
+  offset: 0, 0
+  index: -1
+wing1_R
+  rotate: false
+  xy: 148, 104
+  size: 64, 73
+  orig: 64, 73
+  offset: 0, 0
+  index: -1
+wing2_L
+  rotate: false
+  xy: 120, 10
+  size: 94, 40
+  orig: 94, 40
+  offset: 0, 0
+  index: -1
+wing2_R
+  rotate: false
+  xy: 216, 10
+  size: 94, 40
+  orig: 94, 40
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,4 @@
+docker exec ai-device-nginx cat /etc/nginx/conf.d/default.conf
+docker inspect ai-device-nginx --format '{{json .Mounts}}' | python3 -c "import sys,json;[print(m['Source'],'->',m['Destination']) for m in json.load(sys.stdin)]"
+docker inspect ai-device-nginx --format '{{range .NetworkSettings.Networks}}{{.Gateway}} {{.IPAddress}}{{end}}'
+ls /opt/yql/www/soft; df -h /opt | tail -1

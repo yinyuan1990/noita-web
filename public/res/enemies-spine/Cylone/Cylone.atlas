@@ -1,0 +1,76 @@
+
+Cylone.png
+size: 1024,512
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Fire
+  rotate: false
+  xy: 260, 293
+  size: 56, 200
+  orig: 56, 200
+  offset: 0, 0
+  index: -1
+body0
+  rotate: false
+  xy: 2, 226
+  size: 256, 267
+  orig: 256, 267
+  offset: 0, 0
+  index: -1
+body1
+  rotate: false
+  xy: 186, 23
+  size: 142, 201
+  orig: 142, 201
+  offset: 0, 0
+  index: -1
+body2
+  rotate: false
+  xy: 509, 121
+  size: 42, 104
+  orig: 42, 104
+  offset: 0, 0
+  index: -1
+gun
+  rotate: true
+  xy: 2, 2
+  size: 222, 182
+  orig: 222, 182
+  offset: 0, 0
+  index: -1
+head
+  rotate: true
+  xy: 260, 227
+  size: 64, 94
+  orig: 64, 94
+  offset: 0, 0
+  index: -1
+wingL
+  rotate: true
+  xy: 318, 295
+  size: 198, 177
+  orig: 198, 177
+  offset: 0, 0
+  index: -1
+wingL1
+  rotate: true
+  xy: 356, 227
+  size: 66, 171
+  orig: 66, 171
+  offset: 0, 0
+  index: -1
+wingR
+  rotate: true
+  xy: 330, 27
+  size: 198, 177
+  orig: 198, 177
+  offset: 0, 0
+  index: -1
+wingR2
+  rotate: false
+  xy: 497, 322
+  size: 66, 171
+  orig: 66, 171
+  offset: 0, 0
+  index: -1

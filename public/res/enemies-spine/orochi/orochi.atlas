@@ -1,0 +1,76 @@
+
+orochi.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+accb
+  rotate: true
+  xy: 60, 152
+  size: 38, 40
+  orig: 38, 40
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: true
+  xy: 28, 193
+  size: 30, 66
+  orig: 30, 66
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 161, 189
+  size: 34, 62
+  orig: 34, 62
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 2, 101
+  size: 49, 98
+  orig: 49, 98
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 164, 134
+  size: 59, 53
+  orig: 59, 53
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 102, 86
+  size: 59, 53
+  orig: 59, 53
+  offset: 0, 0
+  index: -1
+kid1
+  rotate: true
+  xy: 2, 157
+  size: 34, 56
+  orig: 34, 56
+  offset: 0, 0
+  index: -1
+kid1-2
+  rotate: false
+  xy: 2, 200
+  size: 24, 23
+  orig: 24, 23
+  offset: 0, 0
+  index: -1
+kid2
+  rotate: false
+  xy: 96, 192
+  size: 63, 31
+  orig: 63, 31
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 102, 141
+  size: 60, 46
+  orig: 60, 46
+  offset: 0, 0
+  index: -1

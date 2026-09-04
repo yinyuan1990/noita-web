@@ -1,0 +1,48 @@
+
+BigBoy.png
+size: 512,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: false
+  xy: 25, 13
+  size: 127, 105
+  orig: 127, 105
+  offset: 0, 0
+  index: -1
+eyes
+  rotate: true
+  xy: 2, 2
+  size: 116, 21
+  orig: 116, 21
+  offset: 0, 0
+  index: -1
+heart
+  rotate: true
+  xy: 154, 43
+  size: 75, 55
+  orig: 75, 55
+  offset: 0, 0
+  index: -1
+shield
+  rotate: false
+  xy: 154, 11
+  size: 128, 30
+  orig: 128, 30
+  offset: 0, 0
+  index: -1
+wingL
+  rotate: false
+  xy: 211, 47
+  size: 63, 71
+  orig: 63, 71
+  offset: 0, 0
+  index: -1
+wingR
+  rotate: false
+  xy: 276, 47
+  size: 63, 71
+  orig: 63, 71
+  offset: 0, 0
+  index: -1

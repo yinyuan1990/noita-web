@@ -1,0 +1,48 @@
+
+8bhhh.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 73, 28
+  size: 13, 21
+  orig: 13, 21
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 43, 34
+  size: 11, 20
+  orig: 11, 20
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 12
+  size: 39, 42
+  orig: 39, 44
+  offset: 0, 1
+  index: -1
+face1
+  rotate: false
+  xy: 2, 56
+  size: 52, 47
+  orig: 52, 47
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 56, 51
+  size: 52, 47
+  orig: 52, 47
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 56, 26
+  size: 15, 23
+  orig: 15, 23
+  offset: 0, 0
+  index: -1

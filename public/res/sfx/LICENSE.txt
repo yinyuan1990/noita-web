@@ -1,0 +1,20 @@
+Combat SFX — CC0 sources
+========================
+
+All files in this folder are Creative Commons Zero (CC0) / public domain.
+
+| file           | source pack                                      |
+|----------------|--------------------------------------------------|
+| thunder.ogg    | 100 CC0 SFX #2 (OpenGameArt / cc0-sounds)        |
+| rain.ogg       | 30 CC0 SFX loops                                 |
+| water.ogg      | 40 CC0 water / splash / slime SFX                |
+| fire.ogg       | 50 CC0 Sci-Fi SFX (rocket)                       |
+| explosion.ogg  | 100 CC0 SFX                                      |
+| electric.ogg   | 50 CC0 Sci-Fi SFX (retro laser)                  |
+| magic.ogg      | 50 CC0 Sci-Fi SFX (teleport)                     |
+| wind.ogg       | 30 CC0 SFX loops (noise)                         |
+| clash.ogg      | 100 CC0 SFX (metal)                              |
+| impact.ogg     | 100 CC0 SFX (hit)                                |
+
+Mirrors used: https://cc0-sounds.exi.software/
+Original packs also on OpenGameArt.org (CC0).

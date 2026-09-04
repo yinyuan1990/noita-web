@@ -1,0 +1,90 @@
+
+masco.png
+size: 133,133
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: false
+  xy: 2, 93
+  size: 57, 38
+  orig: 57, 38
+  offset: 0, 0
+  index: -1
+body2
+  rotate: false
+  xy: 61, 92
+  size: 49, 39
+  orig: 49, 39
+  offset: 0, 0
+  index: -1
+feeler_back
+  rotate: true
+  xy: 99, 63
+  size: 27, 32
+  orig: 27, 32
+  offset: 0, 0
+  index: -1
+feeler_front
+  rotate: false
+  xy: 51, 31
+  size: 41, 28
+  orig: 41, 28
+  offset: 0, 0
+  index: -1
+hair1
+  rotate: false
+  xy: 51, 10
+  size: 41, 19
+  orig: 41, 19
+  offset: 0, 0
+  index: -1
+hair2
+  rotate: false
+  xy: 51, 61
+  size: 46, 29
+  orig: 46, 29
+  offset: 0, 0
+  index: -1
+hair3
+  rotate: true
+  xy: 104, 27
+  size: 34, 17
+  orig: 34, 17
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 2, 49
+  size: 47, 42
+  orig: 49, 44
+  offset: 1, 1
+  index: -1
+head2
+  rotate: false
+  xy: 2, 5
+  size: 47, 42
+  orig: 49, 44
+  offset: 1, 1
+  index: -1
+necklace
+  rotate: true
+  xy: 112, 94
+  size: 37, 16
+  orig: 37, 16
+  offset: 0, 0
+  index: -1
+necklace2
+  rotate: true
+  xy: 94, 20
+  size: 39, 8
+  orig: 41, 10
+  offset: 1, 1
+  index: -1
+paper
+  rotate: false
+  xy: 104, 5
+  size: 17, 20
+  orig: 17, 20
+  offset: 0, 0
+  index: -1

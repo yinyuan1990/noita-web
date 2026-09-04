@@ -1,0 +1,48 @@
+
+5bw.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: false
+  xy: 88, 31
+  size: 14, 21
+  orig: 14, 21
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 88, 8
+  size: 12, 21
+  orig: 12, 21
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 44, 13
+  size: 39, 42
+  orig: 39, 42
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 56
+  size: 52, 50
+  orig: 52, 50
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 56, 54
+  size: 52, 50
+  orig: 52, 50
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 2, 10
+  size: 40, 44
+  orig: 42, 46
+  offset: 1, 1
+  index: -1

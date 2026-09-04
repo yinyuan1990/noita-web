@@ -1,0 +1,167 @@
+
+red_black_soldier_1.png
+size: 650,235
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+bobo222
+  rotate: true
+  xy: 532, 30
+  size: 47, 56
+  orig: 226, 226
+  offset: 77, 87
+  index: -1
+ch1_arm_left_1
+  rotate: true
+  xy: 458, 2
+  size: 28, 41
+  orig: 226, 226
+  offset: 107, 80
+  index: -1
+ch1_arm_left_2
+  rotate: false
+  xy: 458, 32
+  size: 43, 36
+  orig: 226, 226
+  offset: 106, 58
+  index: -1
+ch1_arm_left_3
+  rotate: false
+  xy: 587, 79
+  size: 17, 11
+  orig: 226, 226
+  offset: 103, 66
+  index: -1
+ch1_arm_right_1
+  rotate: false
+  xy: 503, 24
+  size: 26, 44
+  orig: 226, 226
+  offset: 67, 79
+  index: -1
+ch1_arm_right_1_ribon
+  rotate: false
+  xy: 501, 8
+  size: 22, 14
+  orig: 226, 226
+  offset: 64, 94
+  index: -1
+ch1_arm_right_2
+  rotate: false
+  xy: 604, 139
+  size: 37, 46
+  orig: 226, 226
+  offset: 66, 48
+  index: -1
+ch1_arm_right_3
+  rotate: false
+  xy: 458, 139
+  size: 81, 94
+  orig: 226, 226
+  offset: 88, 62
+  index: -1
+ch1_body3_ribon
+  rotate: false
+  xy: 2, 7
+  size: 226, 226
+  orig: 226, 226
+  offset: 0, 0
+  index: -1
+ch1_body_1
+  rotate: true
+  xy: 590, 52
+  size: 25, 24
+  orig: 226, 226
+  offset: 73, 63
+  index: -1
+ch1_body_2
+  rotate: false
+  xy: 600, 187
+  size: 46, 46
+  orig: 226, 226
+  offset: 76, 86
+  index: -1
+ch1_body_2_fur
+  rotate: true
+  xy: 541, 185
+  size: 48, 57
+  orig: 226, 226
+  offset: 77, 87
+  index: -1
+ch1_body_3
+  rotate: true
+  xy: 629, 20
+  size: 34, 19
+  orig: 226, 226
+  offset: 82, 80
+  index: -1
+ch1_body_4
+  rotate: false
+  xy: 532, 79
+  size: 53, 58
+  orig: 226, 226
+  offset: 70, 38
+  index: -1
+ch1_body_5
+  rotate: true
+  xy: 587, 92
+  size: 45, 51
+  orig: 226, 226
+  offset: 102, 46
+  index: -1
+ch1_body_6
+  rotate: true
+  xy: 458, 70
+  size: 67, 72
+  orig: 226, 226
+  offset: 71, 29
+  index: -1
+ch1_fur_top
+  rotate: false
+  xy: 230, 7
+  size: 226, 226
+  orig: 226, 226
+  offset: 0, 0
+  index: -1
+ch1_head_1
+  rotate: true
+  xy: 541, 139
+  size: 44, 61
+  orig: 226, 226
+  offset: 80, 121
+  index: -1
+ch1_leg_left_2
+  rotate: true
+  xy: 590, 31
+  size: 19, 37
+  orig: 226, 226
+  offset: 111, 33
+  index: -1
+ch1_leg_left_3
+  rotate: false
+  xy: 590, 16
+  size: 24, 13
+  orig: 226, 226
+  offset: 112, 28
+  index: -1
+ch1_leg_right_2
+  rotate: false
+  xy: 616, 56
+  size: 22, 34
+  orig: 226, 226
+  offset: 79, 25
+  index: -1
+ch1_leg_right_3
+  rotate: false
+  xy: 616, 3
+  size: 23, 15
+  orig: 226, 226
+  offset: 77, 17
+  index: -1
+foot222
+  rotate: false
+  xy: 531, 13
+  size: 23, 15
+  orig: 226, 226
+  offset: 75, 17
+  index: -1

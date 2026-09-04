@@ -1,0 +1,48 @@
+
+6bgg.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 25, 3
+  size: 9, 20
+  orig: 9, 20
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 2, 2
+  size: 10, 21
+  orig: 10, 21
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 58, 29
+  size: 39, 44
+  orig: 39, 44
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 2, 70
+  size: 54, 54
+  orig: 54, 54
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 2, 14
+  size: 54, 54
+  orig: 54, 54
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 58, 75
+  size: 49, 44
+  orig: 49, 44
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,111 @@
+
+ninetail_fox.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc
+  rotate: false
+  xy: 56, 9
+  size: 17, 41
+  orig: 17, 41
+  offset: 0, 0
+  index: -1
+acc2
+  rotate: true
+  xy: 87, 227
+  size: 27, 23
+  orig: 27, 23
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: false
+  xy: 53, 123
+  size: 32, 56
+  orig: 32, 56
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 57, 70
+  size: 34, 51
+  orig: 34, 51
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 54, 185
+  size: 28, 33
+  orig: 28, 33
+  offset: 0, 0
+  index: -1
+cloud
+  rotate: true
+  xy: 84, 185
+  size: 33, 20
+  orig: 33, 20
+  offset: 0, 0
+  index: -1
+ear
+  rotate: true
+  xy: 77, 54
+  size: 14, 25
+  orig: 14, 25
+  offset: 0, 0
+  index: -1
+ear_back
+  rotate: false
+  xy: 87, 163
+  size: 14, 20
+  orig: 14, 20
+  offset: 0, 0
+  index: -1
+face1
+  rotate: false
+  xy: 75, 17
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 54, 220
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 2, 2
+  size: 52, 48
+  orig: 52, 48
+  offset: 0, 0
+  index: -1
+hair_acc
+  rotate: true
+  xy: 57, 53
+  size: 15, 18
+  orig: 15, 18
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: true
+  xy: 2, 112
+  size: 67, 49
+  orig: 67, 49
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 2, 181
+  size: 50, 73
+  orig: 50, 73
+  offset: 0, 0
+  index: -1
+tail_2
+  rotate: false
+  xy: 2, 52
+  size: 53, 58
+  orig: 53, 58
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,62 @@
+
+Cruiser.png
+size: 512,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Lwing
+  rotate: false
+  xy: 186, 61
+  size: 37, 65
+  orig: 37, 65
+  offset: 0, 0
+  index: -1
+Rwing
+  rotate: false
+  xy: 225, 61
+  size: 37, 65
+  orig: 37, 65
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 88, 27
+  size: 99, 96
+  orig: 99, 96
+  offset: 0, 0
+  index: -1
+body0
+  rotate: true
+  xy: 2, 24
+  size: 102, 84
+  orig: 102, 84
+  offset: 0, 0
+  index: -1
+eyes
+  rotate: false
+  xy: 88, 2
+  size: 88, 23
+  orig: 88, 23
+  offset: 0, 0
+  index: -1
+head
+  rotate: true
+  xy: 232, 9
+  size: 50, 33
+  orig: 50, 33
+  offset: 0, 0
+  index: -1
+heart
+  rotate: true
+  xy: 186, 29
+  size: 30, 35
+  orig: 30, 35
+  offset: 0, 0
+  index: -1
+teeth
+  rotate: false
+  xy: 178, 3
+  size: 52, 22
+  orig: 52, 22
+  offset: 0, 0
+  index: -1

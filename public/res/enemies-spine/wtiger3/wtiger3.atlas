@@ -1,0 +1,104 @@
+
+wtiger3.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+wt3_arm1
+  rotate: true
+  xy: 93, 212
+  size: 40, 69
+  orig: 40, 69
+  offset: 0, 0
+  index: -1
+wt3_arm2
+  rotate: true
+  xy: 164, 215
+  size: 37, 66
+  orig: 37, 66
+  offset: 0, 0
+  index: -1
+wt3_body
+  rotate: false
+  xy: 2, 199
+  size: 89, 53
+  orig: 89, 53
+  offset: 0, 0
+  index: -1
+wt3_ear1
+  rotate: false
+  xy: 78, 183
+  size: 13, 14
+  orig: 13, 14
+  offset: 0, 0
+  index: -1
+wt3_ear2
+  rotate: false
+  xy: 78, 168
+  size: 13, 13
+  orig: 13, 13
+  offset: 0, 0
+  index: -1
+wt3_face1
+  rotate: false
+  xy: 40, 163
+  size: 36, 34
+  orig: 38, 36
+  offset: 1, 1
+  index: -1
+wt3_face2
+  rotate: false
+  xy: 2, 163
+  size: 36, 34
+  orig: 38, 36
+  offset: 1, 1
+  index: -1
+wt3_git1
+  rotate: false
+  xy: 231, 184
+  size: 18, 16
+  orig: 18, 16
+  offset: 0, 0
+  index: -1
+wt3_git2
+  rotate: false
+  xy: 78, 151
+  size: 9, 15
+  orig: 9, 15
+  offset: 0, 0
+  index: -1
+wt3_leg1
+  rotate: true
+  xy: 164, 185
+  size: 28, 65
+  orig: 28, 65
+  offset: 0, 0
+  index: -1
+wt3_leg2
+  rotate: true
+  xy: 93, 186
+  size: 24, 61
+  orig: 24, 61
+  offset: 0, 0
+  index: -1
+wt3_mou
+  rotate: true
+  xy: 129, 170
+  size: 14, 17
+  orig: 16, 19
+  offset: 1, 1
+  index: -1
+wt3_tail1
+  rotate: false
+  xy: 93, 154
+  size: 34, 30
+  orig: 34, 30
+  offset: 0, 0
+  index: -1
+wt3_tail2
+  rotate: false
+  xy: 232, 202
+  size: 20, 50
+  orig: 20, 50
+  offset: 0, 0
+  index: -1

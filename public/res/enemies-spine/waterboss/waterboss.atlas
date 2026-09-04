@@ -1,0 +1,237 @@
+
+waterboss.png
+size: 1024,1024
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+R_arm1
+  rotate: false
+  xy: 402, 616
+  size: 146, 126
+  orig: 146, 126
+  offset: 0, 0
+  index: -1
+R_arm2
+  rotate: false
+  xy: 380, 532
+  size: 84, 82
+  orig: 84, 82
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: false
+  xy: 466, 554
+  size: 94, 60
+  orig: 94, 60
+  offset: 0, 0
+  index: -1
+body1
+  rotate: false
+  xy: 402, 744
+  size: 174, 128
+  orig: 174, 128
+  offset: 0, 0
+  index: -1
+body1acc
+  rotate: false
+  xy: 550, 698
+  size: 24, 44
+  orig: 24, 44
+  offset: 0, 0
+  index: -1
+body2
+  rotate: true
+  xy: 268, 602
+  size: 92, 110
+  orig: 92, 110
+  offset: 0, 0
+  index: -1
+body2acc
+  rotate: true
+  xy: 50, 498
+  size: 34, 36
+  orig: 34, 36
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 576, 612
+  size: 124, 132
+  orig: 124, 132
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 710, 536
+  size: 124, 132
+  orig: 124, 132
+  offset: 0, 0
+  index: -1
+face3
+  rotate: true
+  xy: 2, 570
+  size: 124, 132
+  orig: 124, 132
+  offset: 0, 0
+  index: -1
+fbu
+  rotate: false
+  xy: 2, 536
+  size: 67, 32
+  orig: 96, 42
+  offset: 0, 10
+  index: -1
+fbu2
+  rotate: true
+  xy: 874, 528
+  size: 70, 34
+  orig: 70, 34
+  offset: 0, 0
+  index: -1
+fish1
+  rotate: false
+  xy: 198, 532
+  size: 56, 54
+  orig: 56, 54
+  offset: 0, 0
+  index: -1
+fish2
+  rotate: true
+  xy: 578, 738
+  size: 134, 154
+  orig: 134, 154
+  offset: 0, 0
+  index: -1
+fish3
+  rotate: true
+  xy: 2, 498
+  size: 36, 46
+  orig: 36, 46
+  offset: 0, 0
+  index: -1
+fish4
+  rotate: true
+  xy: 926, 714
+  size: 152, 92
+  orig: 152, 92
+  offset: 0, 0
+  index: -1
+hand1
+  rotate: true
+  xy: 876, 660
+  size: 58, 48
+  orig: 58, 48
+  offset: 0, 0
+  index: -1
+hand2
+  rotate: false
+  xy: 876, 720
+  size: 46, 68
+  orig: 46, 68
+  offset: 0, 0
+  index: -1
+jinju
+  rotate: true
+  xy: 844, 590
+  size: 70, 28
+  orig: 70, 28
+  offset: 0, 0
+  index: -1
+leg1
+  rotate: false
+  xy: 750, 790
+  size: 174, 76
+  orig: 174, 76
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: true
+  xy: 734, 662
+  size: 124, 140
+  orig: 124, 140
+  offset: 0, 0
+  index: -1
+mu1
+  rotate: false
+  xy: 71, 534
+  size: 62, 34
+  orig: 62, 34
+  offset: 0, 0
+  index: -1
+mu2
+  rotate: false
+  xy: 998, 672
+  size: 22, 40
+  orig: 22, 40
+  offset: 0, 0
+  index: -1
+sarmor
+  rotate: false
+  xy: 268, 528
+  size: 82, 72
+  orig: 82, 72
+  offset: 0, 0
+  index: -1
+tail
+  rotate: false
+  xy: 752, 868
+  size: 260, 154
+  orig: 260, 154
+  offset: 0, 0
+  index: -1
+water1
+  rotate: false
+  xy: 874, 600
+  size: 50, 58
+  orig: 50, 58
+  offset: 0, 0
+  index: -1
+water2
+  rotate: true
+  xy: 136, 532
+  size: 54, 60
+  orig: 54, 60
+  offset: 0, 0
+  index: -1
+water3
+  rotate: false
+  xy: 734, 788
+  size: 14, 84
+  orig: 14, 84
+  offset: 0, 0
+  index: -1
+wing
+  rotate: true
+  xy: 926, 524
+  size: 188, 70
+  orig: 188, 70
+  offset: 0, 0
+  index: -1
+wtail
+  rotate: true
+  xy: 136, 588
+  size: 106, 130
+  orig: 106, 130
+  offset: 0, 0
+  index: -1
+wweye
+  rotate: false
+  xy: 998, 658
+  size: 24, 12
+  orig: 26, 14
+  offset: 1, 1
+  index: -1
+wwface
+  rotate: false
+  xy: 2, 696
+  size: 398, 326
+  orig: 398, 326
+  offset: 0, 0
+  index: -1
+wwmouse
+  rotate: false
+  xy: 402, 874
+  size: 348, 148
+  orig: 348, 148
+  offset: 0, 0
+  index: -1

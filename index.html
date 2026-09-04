@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>小说动画</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #e8eef4;
+        --ink-dim: #8a9aab;
+        --panel: rgba(10, 14, 20, 0.78);
+        --line: rgba(120, 140, 160, 0.4);
+        --accent: #7ea0b8;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #07090c; }
+      body {
+        font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", Georgia, serif;
+        color: var(--ink);
+      }
+      #app {
+        width: 100%; height: 100%;
+        display: flex; align-items: center; justify-content: center;
+      }
+      #stage-host {
+        position: relative;
+        width: min(100vw, calc(100vh * 16 / 9));
+        height: min(100vh, calc(100vw * 9 / 16));
+        background: #0a0c12;
+        overflow: hidden;
+      }
+      #stage-host canvas { display: block; width: 100% !important; height: 100% !important; }
+      #hud {
+        position: absolute; top: 8px; right: 12px;
+        font-size: 10px; letter-spacing: .08em;
+        color: rgba(200, 214, 226, .28); pointer-events: none; z-index: 2;
+        text-align: right;
+        font-family: "Noto Serif SC", serif;
+      }
+
+      /* 旁白 / 人物气泡共用同一套面板样式与高度规则 */
+      .dialog-panel {
+        padding: 0.65rem 0.85rem 0.7rem;
+        background: rgba(10, 14, 20, 0.82);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        opacity: 0;
+        z-index: 4;
+        pointer-events: none;
+        box-sizing: border-box;
+      }
+      .dialog-panel.visible { opacity: 1; }
+      .dialog-panel .label {
+        font-size: 0.62rem;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        color: var(--accent);
+        margin-bottom: 0.3rem;
+      }
+      .dialog-panel.is-speaker .label {
+        color: #c5d6e4;
+        letter-spacing: 0.12em;
+      }
+      .dialog-panel .text {
+        font-size: 0.92rem;
+        font-weight: 400;
+        line-height: 1.65;
+        letter-spacing: 0.02em;
+        white-space: pre-wrap;
+        color: var(--ink);
+        word-break: break-all;
+      }
+      #narrate {
+        position: absolute;
+        top: 3.5%;
+        left: 50%;
+        max-width: min(56%, 560px);
+        width: max-content;
+        transform: translate(-50%, -4px);
+        transition: opacity .28s ease, transform .28s ease;
+        text-align: left;
+      }
+      #narrate.visible { transform: translate(-50%, 0); }
+      /* 人物气泡：样式同旁白，宽约 10 字，高度随内容自动撑开 */
+      #speech {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 11.2em;
+        max-width: min(42%, 220px);
+        transform: translate(-50%, calc(-100% - 10px));
+        transition: opacity .28s ease;
+        z-index: 5;
+      }
+
+      #fade {
+        position: absolute; inset: 0; z-index: 8;
+        background: #07090c;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .5s ease;
+      }
+      #fade.on { pointer-events: auto; }
+
+      #controls {
+        position: absolute;
+        left: 10px;
+        bottom: 10px;
+        z-index: 6;
+        display: none;
+        gap: 6px;
+        align-items: center;
+      }
+      #controls.show { display: flex; }
+      #controls button {
+        font-family: inherit;
+        font-size: 0.68rem;
+        letter-spacing: 0.06em;
+        color: var(--ink-dim);
+        background: rgba(10, 14, 20, 0.72);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.28rem 0.55rem;
+        cursor: pointer;
+        line-height: 1.2;
+      }
+      #controls button:hover { border-color: var(--accent); color: var(--ink); }
+      #pause-badge {
+        display: none;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 7;
+        padding: 0.4rem 0.85rem;
+        letter-spacing: 0.18em;
+        font-size: 0.78rem;
+        color: var(--accent);
+        background: rgba(8, 10, 14, 0.78);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        pointer-events: none;
+      }
+      #pause-badge.show { display: block; }
+
+      #menu {
+        position: absolute; inset: 0; z-index: 11;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 1rem;
+        background: #07090c;
+        text-align: center;
+      }
+      #menu.hide { display: none; }
+      #menu .brand {
+        font-size: 1.35rem;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        color: var(--ink);
+      }
+      #menu .sub {
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        color: var(--ink-dim);
+        margin-top: -0.45rem;
+        margin-bottom: 0.35rem;
+      }
+      #menu .choices {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        min-width: min(64%, 260px);
+      }
+      #menu button.choice {
+        font-family: inherit;
+        font-size: 0.86rem;
+        letter-spacing: 0.08em;
+        color: var(--ink);
+        background: rgba(14, 18, 24, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.55rem 0.85rem;
+        cursor: pointer;
+        transition: border-color .15s, background .15s;
+      }
+      #menu button.choice:hover {
+        border-color: var(--accent);
+        background: rgba(22, 30, 40, 0.95);
+      }
+      #menu button.choice small {
+        display: block;
+        margin-top: 0.2rem;
+        font-size: 0.62rem;
+        letter-spacing: 0.06em;
+        color: var(--ink-dim);
+      }
+      #menu .hint {
+        margin-top: 0.55rem;
+        font-size: 0.62rem;
+        letter-spacing: 0.1em;
+        color: rgba(138, 154, 171, 0.55);
+      }
+
+      #boot {
+        position: absolute; inset: 0; z-index: 10;
+        display: none; align-items: center; justify-content: center;
+        background: #050608; letter-spacing: .18em; color: rgba(232,224,212,.65);
+        text-align: center; white-space: pre-line; line-height: 1.8;
+        font-family: "Noto Serif SC", serif;
+      }
+      #boot.show { display: flex; }
+      #boot.error { color: #e07070; padding: 2rem; text-align: center; white-space: pre-wrap; letter-spacing: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage-host">
+        <div id="hud">
+          <div id="hud-chapter">—</div>
+          <div id="hud-map">STAGE —</div>
+          <div id="hud-camera">CAM —</div>
+          <div id="hud-script">SCRIPT IDLE</div>
+        </div>
+        <div id="narrate" class="dialog-panel">
+          <div class="label" id="narrate-label">旁白</div>
+          <div class="text" id="narrate-text"></div>
+        </div>
+        <div id="speech" class="dialog-panel is-speaker">
+          <div class="label" id="speech-label"></div>
+          <div class="text" id="speech-text"></div>
+        </div>
+        <div id="fade"></div>
+        <div id="pause-badge">暂停</div>
+        <div id="controls">
+          <button type="button" id="btn-pause">暂停</button>
+          <button type="button" id="btn-menu">选章</button>
+        </div>
+        <div id="menu">
+          <div class="brand">小说动画</div>
+          <div class="sub">剧本驱动 · 无人操作</div>
+          <div class="choices">
+            <button type="button" class="choice" data-start="1" data-continue="1">
+              第一章
+              <small>播完自动衔接第二章</small>
+            </button>
+            <button type="button" class="choice" data-start="2" data-continue="0">
+              第二章 · 被背叛
+              <small>从岔路口直接开演</small>
+            </button>
+          </div>
+          <div class="hint">空格 / P · 暂停　　Esc · 回选章</div>
+          <div class="hint" style="margin-top:0.35rem">
+            <a href="/rain-demo.html" style="color:var(--accent);text-decoration:none">雨天积水 Demo（俯角 2D）→</a>
+          </div>
+          <div class="hint" style="margin-top:0.35rem">
+            <a href="/cocos-fx-demo.html" style="color:var(--accent);text-decoration:none">Cocos 粒子移植 Demo →</a>
+            　
+            <a href="/cocos-fx-3d-demo.html" style="color:var(--accent);text-decoration:none">3D 版 →</a>
+          </div>
+          <div class="hint" style="margin-top:0.35rem">
+            <a href="/world-3d-demo.html" style="color:var(--accent);text-decoration:none">3D 混战世界 Demo（地形 + 载具 + 修仙者 AI）→</a>
+          </div>
+        </div>
+        <div id="boot">LOADING…</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+﻿/** auto-generated: seffect folders with json+atlas+png */
+export const SEFFECT_INDEX = ["seffect_100110111","seffect_100110112","seffect_100110113","seffect_100130111","seffect_100180111","seffect_1140730111","seffect_11512130111","seffect_11513130111","seffect_11514120111","seffect_12515100111","seffect_12515110111","seffect_12515130111","seffect_12515310111","seffect_12516120111","seffect_13303110111","seffect_13509110111","seffect_13509120111","seffect_14404110111","seffect_14406110111","seffect_14510110111","seffect_14510120111","seffect_1451113011","seffect_21202110111","seffect_21512130111","seffect_22101110111","seffect_22407110111","seffect_22513130111","seffect_22514100111","seffect_22514130111","seffect_22515100111","seffect_24406100111","seffect_24406110111","seffect_24510100111","seffect_24510110111","seffect_24510120111","seffect_24511110111","seffect_24511120111","seffect_24511130111","seffect_25131130111","seffect_31406130111","seffect_31510100111","seffect_32404120111","seffect_32515130111","seffect_33508110","seffect_33508111","seffect_41511120111","seffect_41511130111","seffect_41511130112","seffect_41512110101","seffect_41512120101","seffect_42402100111","seffect_42402110111","seffect_42402120111","seffect_42502100111","seffect_42502130111","seffect_42509100111","seffect_42510010","seffect_42510120111","seffect_42510310","seffect_43503010111","seffect_43503110111","seffect_44401010","seffect_4440110111","seffect_44401110","seffect_44403","seffect_44403010","seffect_44403110","seffect_44403110111","seffect_445061","seffect_44506100111","seffect_44506110111","seffect_44506120111","seffect_44506201111","seffect_44506201112","seffect_44506220111","seffect_44507130111","seffect_44508020111","seffect_44508100111","seffect_44508110111","seffect_44508120111","seffect_44508220111","seffect_44508320111","seffect_51301120111","seffect_51502150111","seffect_51507110111","seffect_51507120111","seffect_51508120111","seffect_51509110111","seffect_51509120111","seffect_51509130111","seffect_51509210111","seffect_51509220111","seffect_51512120111","seffect_524031","seffect_52403110111","seffect_525011","seffect_52501110111","seffect_52501120111","seffect_52510100111","seffect_52510110111","seffect_52510120111","seffect_52510130111","seffect_52511100111","seffect_52511110111","seffect_52511130111","seffect_52513100111","seffect_52513110111","seffect_52513120111","seffect_52513130111","seffect_52513140111","seffect_52513150111","seffect_52513160111","seffect_52513170111","seffect_52513200111","seffect_53402100111","seffect_53402120111","seffect_53505130111","seffect_54506100111","seffect_54506110111","seffect_54506120111","seffect_600001","seffect_600002","seffect_600003","seffect_600004","seffect_600005","seffect_600007","seffect_60001","seffect_60002","seffect_60003","seffect_60004","seffect_60005","seffect_60006","seffect_60007","seffect_700001","seffect_700002","seffect_700003","seffect_70001","seffect_70002"]
+
+export function seffectAt(i) {
+  const n = SEFFECT_INDEX.length
+  if (!n) return null
+  const idx = ((i % n) + n) % n
+  return SEFFECT_INDEX[idx]
+}
+
+export function seffectRandom(seed = Date.now()) {
+  const n = SEFFECT_INDEX.length
+  if (!n) return null
+  const idx = Math.abs(Math.imul(seed ^ 0x9e3779b9, 2654435761)) % n
+  return SEFFECT_INDEX[idx]
+}

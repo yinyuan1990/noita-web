@@ -1,0 +1,76 @@
+
+dokkaebi.png
+size: 512,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm_L
+  rotate: true
+  xy: 122, 2
+  size: 36, 44
+  orig: 38, 46
+  offset: 1, 1
+  index: -1
+arm_R
+  rotate: true
+  xy: 168, 8
+  size: 30, 46
+  orig: 36, 48
+  offset: 5, 1
+  index: -1
+body
+  rotate: true
+  xy: 94, 40
+  size: 86, 98
+  orig: 92, 102
+  offset: 3, 1
+  index: -1
+foot_R
+  rotate: true
+  xy: 250, 8
+  size: 32, 28
+  orig: 34, 30
+  offset: 1, 1
+  index: -1
+head
+  rotate: true
+  xy: 2, 32
+  size: 94, 90
+  orig: 100, 92
+  offset: 3, 1
+  index: -1
+knee_R
+  rotate: true
+  xy: 46, 2
+  size: 28, 36
+  orig: 30, 38
+  offset: 1, 1
+  index: -1
+leg_R
+  rotate: true
+  xy: 2, 6
+  size: 24, 42
+  orig: 26, 44
+  offset: 1, 1
+  index: -1
+shoulder_L
+  rotate: false
+  xy: 216, 2
+  size: 32, 38
+  orig: 34, 40
+  offset: 1, 1
+  index: -1
+shoulder_R
+  rotate: true
+  xy: 84, 2
+  size: 28, 36
+  orig: 30, 38
+  offset: 1, 1
+  index: -1
+sword
+  rotate: true
+  xy: 194, 42
+  size: 84, 62
+  orig: 90, 64
+  offset: 3, 1
+  index: -1

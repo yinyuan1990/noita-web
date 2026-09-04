@@ -1,0 +1,55 @@
+
+thundr.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc1
+  rotate: true
+  xy: 2, 227
+  size: 15, 27
+  orig: 15, 27
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: true
+  xy: 31, 214
+  size: 28, 51
+  orig: 28, 51
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 84, 211
+  size: 31, 44
+  orig: 31, 44
+  offset: 0, 0
+  index: -1
+body
+  rotate: true
+  xy: 2, 160
+  size: 49, 85
+  orig: 49, 85
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 186, 164
+  size: 78, 56
+  orig: 78, 56
+  offset: 0, 0
+  index: -1
+face2
+  rotate: false
+  xy: 89, 144
+  size: 78, 56
+  orig: 78, 56
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 130, 202
+  size: 40, 54
+  orig: 40, 54
+  offset: 0, 0
+  index: -1

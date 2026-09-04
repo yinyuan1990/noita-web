@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>音效试听</title>
+<style>
+  body { background:#0a0e14; color:#e8eef4; font-family:system-ui, sans-serif; margin:0; padding:16px; }
+  h1 { font-size:18px; color:#9ed48a; }
+  p { color:#8a9aab; font-size:13px; }
+  table { border-collapse:collapse; width:100%; max-width:720px; }
+  td, th { border-bottom:1px solid rgba(120,140,160,.25); padding:8px 10px; font-size:13px; text-align:left; }
+  th { color:#8a9aab; font-weight:600; }
+  button { background:#1c2836; color:#9ed48a; border:1px solid rgba(158,212,138,.5); border-radius:6px; padding:6px 16px; font-size:14px; cursor:pointer; }
+  button:active { filter:brightness(1.5); }
+  .file { font-family:Consolas, monospace; color:#ffd24a; }
+  .use { color:#8ab6d8; }
+  .unused { color:#556; }
+  tr.playing .file { color:#ff8844; }
+</style>
+</head>
+<body>
+<h1>音效试听（点「播放」逐个听，记下文件名）</h1>
+<p>「用途」是该文件当前在游戏里触发的场景；标「未使用」的文件游戏不会播。</p>
+<table id="t">
+  <tr><th></th><th>文件名</th><th>用途</th></tr>
+</table>
+<script>
+const FILES = [
+  ['res/sfx/clash.mp3', '机炮开火（每发都响，最高频）'],
+  ['res/sfx/gen/boom_vulcan.wav', '机炮命中敌机的爆点'],
+  ['res/sfx/gen/boom_flak.wav', '普通敌机被击毁'],
+  ['res/sfx/apk/explode_small.mp3', '敌机爆炸 / 导弹命中'],
+  ['res/sfx/apk/explode_elite.mp3', '大型机爆炸 / Boss 登场闪白'],
+  ['res/sfx/fire.mp3', '导弹发射'],
+  ['res/sfx/electric.mp3', '电浆炮发射'],
+  ['res/sfx/apk/thunder_throw.mp3', '电浆命中'],
+  ['res/sfx/apk/explode_skill.mp3', '集束炸弹爆炸'],
+  ['res/sfx/gen/boom_aurora.wav', '极光光束点燃'],
+  ['res/sfx/gen/boom_ground.wav', '（未使用）'],
+  ['res/sfx/apk/explode_captain.mp3', '地面防空炮被炸'],
+  ['res/sfx/apk/weapon_up.mp3', '捡道具 / 武器升级 / 机体升级'],
+  ['res/sfx/apk/protective_cover.mp3', '护盾展开'],
+  ['res/sfx/apk/baozou.mp3', '机体进化变身'],
+  ['res/sfx/wind.mp3', '氮气冲刺'],
+  ['res/sfx/apk/nuclearLaunch.mp3', '核弹发射'],
+  ['res/sfx/apk/nuclearExplode.mp3', '核弹爆炸'],
+  ['res/sfx/apk/boss_come.mp3', 'Boss 登场'],
+  ['res/sfx/apk/explode_boss.mp3', 'Boss 被击毁 / 炮舰殉爆'],
+  ['res/sfx/apk/battle_win.mp3', '过关'],
+  ['res/sfx/apk/battle_lose.mp3', '坠机'],
+  ['res/sfx/impact.mp3', '（未使用）'],
+  ['res/sfx/apk/missile_come.mp3', '（未使用）'],
+  ['res/sfx/bomb.wav', '（未使用）'],
+  ['res/sfx/gen/boom_fire.wav', '（未使用）'],
+  ['res/sfx/gen/boom_cluster.wav', '（未使用）'],
+  ['res/sfx/gen/boom_tesla.wav', '（未使用）'],
+  ['res/sfx/gen/boom_nuke.wav', '（未使用）'],
+  ['res/sfx/gen/boom_bossdie.wav', '（未使用）'],
+]
+const t = document.getElementById('t')
+let cur = null
+for (const [f, use] of FILES) {
+  const tr = document.createElement('tr')
+  const unused = use.includes('未使用')
+  tr.innerHTML = `<td><button>▶ 播放</button></td><td class="file">${f}</td><td class="${unused ? 'unused' : 'use'}">${use}</td>`
+  tr.querySelector('button').onclick = () => {
+    if (cur) { cur.pause(); cur = null }
+    document.querySelectorAll('tr.playing').forEach((x) => x.classList.remove('playing'))
+    tr.classList.add('playing')
+    cur = new Audio('/' + f)
+    cur.play()
+  }
+  t.appendChild(tr)
+}
+</script>
+</body>
+</html>

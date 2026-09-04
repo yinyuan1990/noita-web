@@ -1,0 +1,62 @@
+
+chung2.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+chu2_arm1
+  rotate: true
+  xy: 95, 51
+  size: 28, 31
+  orig: 28, 31
+  offset: 0, 0
+  index: -1
+chu2_arm2
+  rotate: true
+  xy: 100, 98
+  size: 28, 26
+  orig: 28, 26
+  offset: 0, 0
+  index: -1
+chu2_body1
+  rotate: false
+  xy: 2, 63
+  size: 53, 63
+  orig: 53, 63
+  offset: 0, 0
+  index: -1
+chu2_body2
+  rotate: false
+  xy: 2, 30
+  size: 70, 31
+  orig: 70, 31
+  offset: 0, 0
+  index: -1
+chu2_face1
+  rotate: true
+  xy: 57, 81
+  size: 45, 41
+  orig: 45, 41
+  offset: 0, 0
+  index: -1
+chu2_face2
+  rotate: true
+  xy: 74, 20
+  size: 29, 24
+  orig: 31, 26
+  offset: 1, 1
+  index: -1
+chu2_hair1
+  rotate: true
+  xy: 57, 63
+  size: 16, 36
+  orig: 16, 36
+  offset: 0, 0
+  index: -1
+chu2_tail
+  rotate: true
+  xy: 100, 83
+  size: 13, 19
+  orig: 13, 19
+  offset: 0, 0
+  index: -1

@@ -1,0 +1,729 @@
+[
+  {
+    "cmd": "fade",
+    "to": "black",
+    "ms": 200
+  },
+  {
+    "cmd": "setMap",
+    "map": "cave_fork",
+    "force": true
+  },
+  {
+    "cmd": "camera",
+    "action": "cut",
+    "x": "stageCenter",
+    "y": 540,
+    "zoom": 1
+  },
+  {
+    "cmd": "fade",
+    "to": "clear",
+    "ms": 700
+  },
+  {
+    "cmd": "wait",
+    "ms": 250
+  },
+  {
+    "cmd": "narrate",
+    "text": "终于一路无事的到了岔路口。巨大的通道在这里分为四个小通道——乐琳带着她们转向其中一个最小的。"
+  },
+  {
+    "cmd": "direct",
+    "action": "enterFormation",
+    "formation": "party_seven_narrow",
+    "enter": "fade",
+    "staggerMs": 50,
+    "zoom": 0.98
+  },
+  {
+    "cmd": "narrate",
+    "text": "小通道内石笋林立，七人穿行其间，很是不便。"
+  },
+  {
+    "cmd": "direct",
+    "action": "march",
+    "ids": [
+      "nvwei",
+      "lansika",
+      "kesijia",
+      "lelin",
+      "jiruifu",
+      "zhencha",
+      "zhanshi"
+    ],
+    "dir": "far",
+    "distance": 36,
+    "ms": 700,
+    "staggerMs": 35,
+    "cameraFollow": false
+  },
+  {
+    "cmd": "narrate",
+    "text": "突然，前方二十步外，一个身影从石笋后猛窜出来——竞技学院教官的标志！"
+  },
+  {
+    "cmd": "direct",
+    "action": "enter",
+    "id": "jakaluo",
+    "slot": "foe_f",
+    "face": "left",
+    "enter": "fade",
+    "camera": "focus",
+    "zoom": 1.02
+  },
+  {
+    "cmd": "direct",
+    "action": "holdFormation",
+    "formation": "ambush_faceoff",
+    "ms": 300,
+    "zoom": 0.98
+  },
+  {
+    "cmd": "anim",
+    "id": "jakaluo",
+    "anim": "idle"
+  },
+  {
+    "cmd": "camera",
+    "action": "lock",
+    "x": "stageCenter",
+    "y": 540,
+    "zoom": 0.98,
+    "ms": 300
+  },
+  {
+    "cmd": "say",
+    "who": "jakaluo",
+    "text": "怎么了？乐琳，你们这是去巡逻？怎么没有骑上那些蜥蜴坐骑？",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "不要废话，快杀了他！附近肯定还有其它人！",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "先别慌……也许可以蒙混过关……",
+    "faceTarget": "jakaluo"
+  },
+  {
+    "cmd": "say",
+    "who": "jakaluo",
+    "text": "不用试了！你们的事情我全都知道——",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "narrate",
+    "text": "话未说完——乐琳如黑色猎豹般猛窜而出。"
+  },
+  {
+    "cmd": "direct",
+    "action": "lunge",
+    "id": "lelin",
+    "target": "jakaluo",
+    "ms": 260,
+    "arc": true
+  },
+  {
+    "cmd": "fx",
+    "skill": "clash_sparks",
+    "from": "lelin",
+    "to": "jakaluo",
+    "mode": "mid",
+    "ms": 400,
+    "scale": 0.45
+  },
+  {
+    "cmd": "direct",
+    "action": "clash",
+    "a": "lelin",
+    "b": "jakaluo",
+    "hits": 3,
+    "ms": 200
+  },
+  {
+    "cmd": "narrate",
+    "text": "刀剑硬拼十余下。贾卡罗双刀变化被那一长一短两柄钢剑克制得死死的。"
+  },
+  {
+    "cmd": "direct",
+    "action": "knockback",
+    "id": "jakaluo",
+    "dir": "far",
+    "dist": 60,
+    "ms": 380,
+    "face": "left"
+  },
+  {
+    "cmd": "direct",
+    "action": "rest",
+    "hard": true,
+    "formation": "ambush_faceoff",
+    "ms": 280
+  },
+  {
+    "cmd": "anim",
+    "id": "jakaluo",
+    "anim": "idle"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "他发现我们的事了！大家一起上！",
+    "faceTarget": "jakaluo"
+  },
+  {
+    "cmd": "narrate",
+    "text": "恰在此时，一个冰冷而威严的女声从石笋后传来——"
+  },
+  {
+    "cmd": "direct",
+    "action": "enter",
+    "id": "motiya",
+    "slot": "foe_br",
+    "face": "left",
+    "enter": "fade"
+  },
+  {
+    "cmd": "direct",
+    "action": "holdFormation",
+    "formation": "ambush_priest",
+    "ms": 340,
+    "zoom": 0.98
+  },
+  {
+    "cmd": "anim",
+    "id": "motiya",
+    "anim": "idle"
+  },
+  {
+    "cmd": "say",
+    "who": "motiya",
+    "text": "背叛神后的卑贱之徒们！放干你们的鲜血，也不足以平息神后的怒火！",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "say",
+    "who": "motiya",
+    "text": "威严的神后啊！将你的怒火降临到这个叛徒身上吧！",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "fx",
+    "skill": "curse_hit",
+    "from": "motiya",
+    "to": "lelin",
+    "mode": "projectile",
+    "travelMs": 400,
+    "ms": 450,
+    "scale": 0.5
+  },
+  {
+    "cmd": "fx",
+    "skill": "curse_hit",
+    "at": "lelin",
+    "mode": "at",
+    "ms": 750,
+    "scale": 0.48,
+    "seed": 22
+  },
+  {
+    "cmd": "direct",
+    "action": "freeze",
+    "id": "lelin",
+    "ms": 650
+  },
+  {
+    "cmd": "narrate",
+    "text": "「降咒术」贯穿乐琳——剑势忽然凝滞，仿佛踏入泥潭。"
+  },
+  {
+    "cmd": "direct",
+    "action": "clash",
+    "a": "jakaluo",
+    "b": "lelin",
+    "hits": 2,
+    "ms": 180
+  },
+  {
+    "cmd": "direct",
+    "action": "stepBack",
+    "id": "lelin",
+    "dir": "near",
+    "dist": 50,
+    "ms": 280
+  },
+  {
+    "cmd": "direct",
+    "action": "rest",
+    "hard": true,
+    "formation": "ambush_priest",
+    "ms": 260
+  },
+  {
+    "cmd": "narrate",
+    "text": "兰丝卡瞳孔一缩——七彩光芒直照莫蒂亚！"
+  },
+  {
+    "cmd": "fx",
+    "skill": "color_ray",
+    "from": "lansika",
+    "to": "motiya",
+    "mode": "projectile",
+    "travelMs": 340,
+    "ms": 450,
+    "scale": 0.5
+  },
+  {
+    "cmd": "fx",
+    "skill": "stun_hold",
+    "at": "motiya",
+    "mode": "at",
+    "ms": 850,
+    "scale": 0.48
+  },
+  {
+    "cmd": "direct",
+    "action": "freeze",
+    "id": "motiya",
+    "ms": 900
+  },
+  {
+    "cmd": "fx",
+    "skill": "decay_ray",
+    "from": "lansika",
+    "to": "jakaluo",
+    "mode": "projectile",
+    "travelMs": 380,
+    "ms": 350,
+    "scale": 0.48
+  },
+  {
+    "cmd": "narrate",
+    "text": "衰竭射线撞上卓尔抗性，瞬间溃散！"
+  },
+  {
+    "cmd": "say",
+    "who": "jakaluo",
+    "text": "你竟学会了奥术？！",
+    "faceTarget": "lansika"
+  },
+  {
+    "cmd": "say",
+    "who": "motiya",
+    "text": "你这贱人！居然学会了奥术！",
+    "faceTarget": "lansika"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "当菲穆莉卡不再恩宠我的时候！还不快动手！",
+    "faceTarget": "motiya"
+  },
+  {
+    "cmd": "fx",
+    "skill": "magic_missile",
+    "from": "lansika",
+    "to": "jakaluo",
+    "mode": "projectile",
+    "travelMs": 400,
+    "ms": 480,
+    "scale": 0.46
+  },
+  {
+    "cmd": "fx",
+    "skill": "magic_missile",
+    "from": "lansika",
+    "to": "jakaluo",
+    "mode": "projectile",
+    "travelMs": 420,
+    "ms": 480,
+    "scale": 0.46,
+    "seed": 56
+  },
+  {
+    "cmd": "direct",
+    "action": "rush",
+    "ids": [
+      "nvwei",
+      "zhanshi",
+      "kesijia"
+    ],
+    "target": "jakaluo",
+    "ms": 440,
+    "staggerMs": 60
+  },
+  {
+    "cmd": "direct",
+    "action": "rest",
+    "hard": true,
+    "formation": "ambush_priest",
+    "ms": 280
+  },
+  {
+    "cmd": "say",
+    "who": "motiya",
+    "text": "神后的威能！",
+    "faceTarget": "jakaluo"
+  },
+  {
+    "cmd": "fx",
+    "skill": "buff_bull",
+    "from": "motiya",
+    "to": "jakaluo",
+    "mode": "projectile",
+    "travelMs": 280,
+    "ms": 200,
+    "scale": 0.45
+  },
+  {
+    "cmd": "fx",
+    "skill": "buff_bull",
+    "at": "jakaluo",
+    "mode": "at",
+    "ms": 650,
+    "scale": 0.5
+  },
+  {
+    "cmd": "direct",
+    "action": "buffScale",
+    "id": "jakaluo",
+    "scale": 1.12,
+    "ms": 260
+  },
+  {
+    "cmd": "fx",
+    "skill": "impact",
+    "from": "jakaluo",
+    "to": "lelin",
+    "mode": "mid",
+    "ms": 420,
+    "scale": 0.5
+  },
+  {
+    "cmd": "direct",
+    "action": "knockback",
+    "id": "lelin",
+    "dir": "near",
+    "dist": 70,
+    "ms": 360
+  },
+  {
+    "cmd": "direct",
+    "action": "rest",
+    "hard": true,
+    "formation": "ambush_priest",
+    "ms": 260
+  },
+  {
+    "cmd": "fx",
+    "skill": "buff_bear",
+    "at": "jakaluo",
+    "mode": "at",
+    "ms": 600,
+    "scale": 0.48
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "不要都攻贾卡罗，快去杀掉莫蒂亚！",
+    "faceTarget": "zhanshi"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "都是没种的窝囊废！",
+    "faceTarget": "kesijia"
+  },
+  {
+    "cmd": "say",
+    "who": "lelin",
+    "text": "截住贾卡罗，我去对付莫蒂亚！",
+    "faceTarget": "jakaluo"
+  },
+  {
+    "cmd": "direct",
+    "action": "dashThrough",
+    "id": "lelin",
+    "target": "jakaluo",
+    "past": 120,
+    "ms": 380,
+    "faceTarget": "motiya",
+    "commit": false
+  },
+  {
+    "cmd": "direct",
+    "action": "holdFormation",
+    "formation": "ambush_snake",
+    "ms": 300,
+    "zoom": 0.96
+  },
+  {
+    "cmd": "direct",
+    "action": "lunge",
+    "id": "lelin",
+    "target": "motiya",
+    "ms": 280,
+    "arc": true
+  },
+  {
+    "cmd": "say",
+    "who": "motiya",
+    "text": "神后庇佑！",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "fx",
+    "skill": "sanctuary",
+    "at": "motiya",
+    "mode": "at",
+    "ms": 1000,
+    "scale": 0.55
+  },
+  {
+    "cmd": "direct",
+    "action": "freeze",
+    "id": "lelin",
+    "ms": 1000
+  },
+  {
+    "cmd": "say",
+    "who": "motiya",
+    "text": "神域术前，连你的身体都背叛了你！",
+    "faceTarget": "lelin"
+  },
+  {
+    "cmd": "fx",
+    "skill": "summon_red",
+    "at": "motiya",
+    "mode": "at",
+    "ms": 650,
+    "scale": 0.5
+  },
+  {
+    "cmd": "direct",
+    "action": "enter",
+    "id": "hellsnake",
+    "slot": "foe_fl",
+    "face": "left",
+    "enter": "fade"
+  },
+  {
+    "cmd": "direct",
+    "action": "holdFormation",
+    "formation": "ambush_snake",
+    "ms": 280,
+    "zoom": 0.96
+  },
+  {
+    "cmd": "direct",
+    "action": "lunge",
+    "id": "hellsnake",
+    "target": "lelin",
+    "ms": 360
+  },
+  {
+    "cmd": "narrate",
+    "text": "炼狱大毒蛇被召唤而出。乐琳无法刺向莫蒂亚，剑光尽数倾泻到毒蛇身上！"
+  },
+  {
+    "cmd": "direct",
+    "action": "clash",
+    "a": "lelin",
+    "b": "hellsnake",
+    "hits": 2,
+    "ms": 180
+  },
+  {
+    "cmd": "direct",
+    "action": "rest",
+    "hard": true,
+    "formation": "ambush_snake",
+    "ms": 240
+  },
+  {
+    "cmd": "narrate",
+    "text": "莫蒂亚哨子一吹——「音鸣暴」！"
+  },
+  {
+    "cmd": "fx",
+    "skill": "sonic_blast",
+    "at": "motiya",
+    "mode": "at",
+    "ms": 850,
+    "scale": 0.62
+  },
+  {
+    "cmd": "camera",
+    "action": "shake",
+    "amount": 6,
+    "ms": 260,
+    "force": true
+  },
+  {
+    "cmd": "direct",
+    "action": "knockback",
+    "id": "lelin",
+    "dir": "near",
+    "dist": 55,
+    "ms": 320
+  },
+  {
+    "cmd": "direct",
+    "action": "knockback",
+    "id": "hellsnake",
+    "dir": "far",
+    "dist": 40,
+    "ms": 280,
+    "arc": false
+  },
+  {
+    "cmd": "direct",
+    "action": "rest",
+    "hard": true,
+    "formation": "ambush_snake",
+    "ms": 280
+  },
+  {
+    "cmd": "fx",
+    "skill": "flail_orbit",
+    "at": "lelin",
+    "mode": "at",
+    "ms": 900,
+    "scale": 0.5
+  },
+  {
+    "cmd": "fx",
+    "skill": "heal_tick",
+    "at": "hellsnake",
+    "mode": "at",
+    "ms": 550,
+    "scale": 0.42
+  },
+  {
+    "cmd": "narrate",
+    "text": "虔心链枷飞扑，治疗术唤醒毒蛇。兰丝卡魔法弹打歪链枷、正中毒蛇——"
+  },
+  {
+    "cmd": "fx",
+    "skill": "magic_missile",
+    "from": "lansika",
+    "to": "hellsnake",
+    "mode": "projectile",
+    "travelMs": 380,
+    "ms": 500,
+    "scale": 0.46,
+    "seed": 58
+  },
+  {
+    "cmd": "direct",
+    "action": "lunge",
+    "id": "lelin",
+    "target": "hellsnake",
+    "ms": 260,
+    "arc": true
+  },
+  {
+    "cmd": "direct",
+    "action": "rest",
+    "hard": true,
+    "formation": "ambush_snake",
+    "ms": 240
+  },
+  {
+    "cmd": "narrate",
+    "text": "异变突生——围攻贾卡罗的几人忽然惨叫软倒！"
+  },
+  {
+    "cmd": "direct",
+    "action": "knockdown",
+    "ids": [
+      "nvwei",
+      "zhanshi",
+      "zhencha",
+      "jiruifu"
+    ],
+    "staggerMs": 80,
+    "ms": 400,
+    "dir": "near"
+  },
+  {
+    "cmd": "fx",
+    "skill": "blood_flash",
+    "at": "kesijia",
+    "mode": "at",
+    "ms": 450,
+    "scale": 0.4
+  },
+  {
+    "cmd": "direct",
+    "action": "holdFormation",
+    "formation": "betrayal",
+    "ms": 320,
+    "zoom": 0.96
+  },
+  {
+    "cmd": "face",
+    "id": "kesijia",
+    "target": "lansika"
+  },
+  {
+    "cmd": "face",
+    "id": "jakaluo",
+    "target": "lansika"
+  },
+  {
+    "cmd": "camera",
+    "action": "focusGroup",
+    "ids": [
+      "kesijia",
+      "jakaluo",
+      "lansika"
+    ],
+    "zoom": 0.96,
+    "ms": 450
+  },
+  {
+    "cmd": "camera",
+    "action": "lock"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "克斯迦！你疯了？贾卡罗！你也会惑控法术？",
+    "faceTarget": "kesijia"
+  },
+  {
+    "cmd": "say",
+    "who": "kesijia",
+    "text": "他当然不会。",
+    "faceTarget": "lansika"
+  },
+  {
+    "cmd": "say",
+    "who": "lansika",
+    "text": "克斯迦，你为什么又要背叛我们？",
+    "faceTarget": "kesijia"
+  },
+  {
+    "cmd": "narrate",
+    "text": "绝望充塞兰丝卡的胸膛。石笋战场上，背叛的刀光比魔网更冷。"
+  },
+  {
+    "cmd": "wait",
+    "ms": 400
+  },
+  {
+    "cmd": "narrate",
+    "text": "——第二章 · 被背叛 · 完——"
+  },
+  {
+    "cmd": "wait",
+    "ms": 1200
+  }
+]

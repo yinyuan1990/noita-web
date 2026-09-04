@@ -1,0 +1,97 @@
+
+wing_dragon.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+arm1
+  rotate: true
+  xy: 196, 208
+  size: 43, 47
+  orig: 43, 47
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 146, 211
+  size: 40, 48
+  orig: 40, 48
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 193, 135
+  size: 37, 34
+  orig: 37, 34
+  offset: 0, 0
+  index: -1
+body_acc
+  rotate: false
+  xy: 232, 138
+  size: 19, 31
+  orig: 19, 31
+  offset: 0, 0
+  index: -1
+cloud
+  rotate: false
+  xy: 2, 151
+  size: 57, 52
+  orig: 57, 52
+  offset: 0, 0
+  index: -1
+earing
+  rotate: true
+  xy: 61, 197
+  size: 6, 15
+  orig: 6, 15
+  offset: 0, 0
+  index: -1
+face1
+  rotate: true
+  xy: 61, 137
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+face2
+  rotate: true
+  xy: 97, 137
+  size: 31, 34
+  orig: 31, 34
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 146, 167
+  size: 45, 42
+  orig: 45, 42
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: false
+  xy: 2, 205
+  size: 76, 46
+  orig: 76, 46
+  offset: 0, 0
+  index: -1
+tail
+  rotate: true
+  xy: 80, 200
+  size: 51, 64
+  orig: 51, 64
+  offset: 0, 0
+  index: -1
+wing1
+  rotate: false
+  xy: 193, 171
+  size: 45, 35
+  orig: 45, 35
+  offset: 0, 0
+  index: -1
+wing2
+  rotate: false
+  xy: 78, 170
+  size: 36, 28
+  orig: 36, 28
+  offset: 0, 0
+  index: -1

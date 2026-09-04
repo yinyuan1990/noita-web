@@ -1,0 +1,153 @@
+
+kma1.png
+size: 256,256
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+ch1_arm_left_1
+  rotate: false
+  xy: 97, 18
+  size: 19, 24
+  orig: 226, 226
+  offset: 119, 84
+  index: -1
+ch1_arm_left_2
+  rotate: false
+  xy: 42, 9
+  size: 31, 32
+  orig: 226, 226
+  offset: 122, 62
+  index: -1
+ch1_arm_left_2_2
+  rotate: false
+  xy: 85, 133
+  size: 21, 11
+  orig: 226, 226
+  offset: 124, 61
+  index: -1
+ch1_arm_left_3
+  rotate: false
+  xy: 83, 86
+  size: 14, 15
+  orig: 226, 226
+  offset: 124, 54
+  index: -1
+ch1_arm_right_1
+  rotate: true
+  xy: 97, 2
+  size: 14, 22
+  orig: 226, 226
+  offset: 94, 86
+  index: -1
+ch1_arm_right_2
+  rotate: true
+  xy: 64, 187
+  size: 27, 30
+  orig: 226, 226
+  offset: 84, 64
+  index: -1
+ch1_arm_right_3
+  rotate: false
+  xy: 99, 85
+  size: 13, 16
+  orig: 226, 226
+  offset: 85, 56
+  index: -1
+ch1_body_2
+  rotate: false
+  xy: 42, 83
+  size: 39, 42
+  orig: 226, 226
+  offset: 89, 76
+  index: -1
+ch1_body_3
+  rotate: false
+  xy: 2, 186
+  size: 60, 68
+  orig: 226, 226
+  offset: 92, 20
+  index: -1
+ch1_body_4
+  rotate: false
+  xy: 2, 68
+  size: 38, 57
+  orig: 226, 226
+  offset: 74, 27
+  index: -1
+ch1_body_back
+  rotate: true
+  xy: 2, 10
+  size: 56, 38
+  orig: 226, 226
+  offset: 84, 38
+  index: -1
+ch1_hair
+  rotate: true
+  xy: 2, 127
+  size: 57, 54
+  orig: 226, 226
+  offset: 84, 107
+  index: -1
+ch1_head_1
+  rotate: false
+  xy: 58, 146
+  size: 35, 38
+  orig: 226, 226
+  offset: 95, 113
+  index: -1
+ch1_head_2
+  rotate: false
+  xy: 64, 216
+  size: 35, 38
+  orig: 226, 226
+  offset: 95, 113
+  index: -1
+ch1_head_3
+  rotate: false
+  xy: 42, 43
+  size: 35, 38
+  orig: 226, 226
+  offset: 95, 113
+  index: -1
+ch1_leg_left_1
+  rotate: false
+  xy: 75, 2
+  size: 20, 39
+  orig: 226, 226
+  offset: 105, 43
+  index: -1
+ch1_leg_left_2
+  rotate: true
+  xy: 58, 127
+  size: 17, 25
+  orig: 226, 226
+  offset: 113, 27
+  index: -1
+ch1_leg_left_3
+  rotate: false
+  xy: 100, 104
+  size: 13, 8
+  orig: 226, 226
+  offset: 118, 22
+  index: -1
+ch1_leg_right_1
+  rotate: false
+  xy: 79, 44
+  size: 21, 37
+  orig: 226, 226
+  offset: 91, 45
+  index: -1
+ch1_leg_right_2
+  rotate: false
+  xy: 83, 103
+  size: 15, 22
+  orig: 226, 226
+  offset: 92, 30
+  index: -1
+ch1_leg_right_3
+  rotate: true
+  xy: 100, 114
+  size: 17, 7
+  orig: 226, 226
+  offset: 87, 25
+  index: -1

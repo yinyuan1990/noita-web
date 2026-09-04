@@ -1,0 +1,27 @@
+
+Bomber.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Lwing
+  rotate: false
+  xy: 34, 2
+  size: 29, 49
+  orig: 29, 49
+  offset: 0, 0
+  index: -1
+Rwing
+  rotate: false
+  xy: 2, 2
+  size: 30, 49
+  orig: 30, 49
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 53
+  size: 67, 70
+  orig: 67, 70
+  offset: 0, 0
+  index: -1

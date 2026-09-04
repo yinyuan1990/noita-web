@@ -1,0 +1,83 @@
+
+kangsi.png
+size: 128,128
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+acc
+  rotate: false
+  xy: 111, 51
+  size: 12, 26
+  orig: 12, 26
+  offset: 0, 0
+  index: -1
+arm1
+  rotate: false
+  xy: 43, 85
+  size: 49, 41
+  orig: 49, 41
+  offset: 0, 0
+  index: -1
+arm2
+  rotate: true
+  xy: 2, 26
+  size: 46, 36
+  orig: 46, 36
+  offset: 0, 0
+  index: -1
+bj
+  rotate: false
+  xy: 50, 4
+  size: 24, 20
+  orig: 24, 20
+  offset: 0, 0
+  index: -1
+body
+  rotate: false
+  xy: 2, 74
+  size: 39, 52
+  orig: 39, 52
+  offset: 0, 0
+  index: -1
+hair
+  rotate: false
+  xy: 2, 5
+  size: 46, 19
+  orig: 46, 19
+  offset: 0, 0
+  index: -1
+head
+  rotate: false
+  xy: 67, 34
+  size: 42, 43
+  orig: 44, 45
+  offset: 1, 1
+  index: -1
+leg1
+  rotate: false
+  xy: 40, 26
+  size: 25, 46
+  orig: 25, 46
+  offset: 0, 0
+  index: -1
+leg2
+  rotate: false
+  xy: 94, 79
+  size: 26, 47
+  orig: 26, 47
+  offset: 0, 0
+  index: -1
+sb
+  rotate: false
+  xy: 76, 9
+  size: 27, 23
+  orig: 27, 23
+  offset: 0, 0
+  index: -1
+skirt
+  rotate: true
+  xy: 105, 21
+  size: 11, 21
+  orig: 11, 21
+  offset: 0, 0
+  index: -1

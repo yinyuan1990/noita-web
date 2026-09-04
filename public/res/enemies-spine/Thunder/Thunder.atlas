@@ -1,0 +1,55 @@
+
+Thunder.png
+size: 512,512
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+body
+  rotate: false
+  xy: 2, 177
+  size: 329, 319
+  orig: 329, 319
+  offset: 0, 0
+  index: -1
+eyes
+  rotate: true
+  xy: 455, 335
+  size: 161, 36
+  orig: 161, 36
+  offset: 0, 0
+  index: -1
+forelegL
+  rotate: true
+  xy: 333, 305
+  size: 191, 120
+  orig: 191, 120
+  offset: 0, 0
+  index: -1
+forelegR
+  rotate: true
+  xy: 333, 112
+  size: 191, 120
+  orig: 191, 120
+  offset: 0, 0
+  index: -1
+head
+  rotate: true
+  xy: 2, 2
+  size: 173, 221
+  orig: 173, 221
+  offset: 0, 0
+  index: -1
+hindlegL
+  rotate: false
+  xy: 225, 44
+  size: 105, 131
+  orig: 105, 131
+  offset: 0, 0
+  index: -1
+hindlegR
+  rotate: true
+  xy: 332, 5
+  size: 105, 131
+  orig: 105, 131
+  offset: 0, 0
+  index: -1
