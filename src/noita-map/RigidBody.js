@@ -90,7 +90,7 @@ export class RigidBody {
       this.vy -= gravity * buoy * wetF * dt
       this.vx *= Math.pow(0.35, dt * wetF); this.vy *= Math.pow(0.35, dt * wetF); this.w *= Math.pow(0.3, dt * wetF)
     }
-    this.vy += gravity * dt
+    this.vy += gravity * (this.gravScale || 1) * dt
     if (this.linDamp) { const f = Math.exp(-this.linDamp * dt); this.vx *= f; this.vy *= f }
     if (this.angDamp) this.w *= Math.exp(-this.angDamp * dt)
     this.w *= Math.exp(-0.4 * dt) // 一点空气阻尼,别转个没完

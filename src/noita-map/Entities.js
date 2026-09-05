@@ -332,6 +332,7 @@ export class Entities {
     const b = new RigidBody(p.d, png, p.x, p.y, matId)
     b.name = p.name; b.isBody = true
     b.density = this.mats.list[matId]?.density ?? 6
+    b.gravScale = this.mats.list[matId]?.solidGravityScale || 1 // materials.xml solid_gravity_scale(glass_box2d 1.3:灯笼掉得比木箱快,砸地更容易过 120 的碎裂阈值)
     if (this.mats.list[matId]?.normalMapped) b.baseColor = this.mats.color[matId] // 金块 / 宝石:png 是法线图,按材质色打光
     b.vx = p.vx || 0; b.vy = p.vy || 0; b.w = p.w || 0
     b.isItem = !!p.item; b.gold = p.gold || 0; b.isRagdoll = !!p.ragdoll; b.wand = p.wand || null; b.shop = p.shop || null; b.spell = p.spell || null
@@ -502,6 +503,16 @@ export class Entities {
       }
       // 链的锚点被挖掉 / 炸掉 → 断链(醒着睡着都查,便宜)
       if (b.ropes) for (const r of b.ropes) if (!r.broken && !this._solid(Math.floor(r.ax), Math.floor(r.ay) - (r.attach ? 0 : 1))) { r.broken = true; if (b.asleep) b.wake(sim) }
+      // 被打中的灯笼是移动的火源(fire.xml 的 set_fire):每帧往边缘像素旁的空气格放火,漏出来的油 / 落点的油跟着烧
+      if (b.fireT > 0) {
+        b.fireT -= dt
+        const P = [0, 0], F = sim.M_FIRE
+        for (let k = 0; k < 3; k++) {
+          b.worldOf(b.edge[(Math.random() * b.edge.length) | 0], P)
+          const fx = Math.floor(P[0]) + ((Math.random() * 3) | 0) - 1, fy = Math.floor(P[1]) + ((Math.random() * 3) | 0) - 1
+          if (sim.get(fx, fy) === 0) sim.set(fx, fy, F, 8 + ((Math.random() * 10) | 0))
+        }
+      }
       if (b.asleep) {
         b.age += dt // 火苗这类垫底动画睡着也要走
         // 尸块睡够 8s 就"化"进世界:刚体对象撤掉,肉像素留着(原作尸体最后也就是一堆 meat)
@@ -651,8 +662,9 @@ export class Entities {
     if (!die && ex && dmg > 0 && (ex.explode_on_damage_percent ?? 0) > 0 && Math.random() < ex.explode_on_damage_percent) die = true
     // 漏(MaterialInventory leak_on_damage_percent:"if higher than 0 then it might leak when projectile damage happens" = 漏的概率):桶 / 灯笼被打到 → 从伤口冒液体
     if (!die && b.inventory && dmg > 0 && (d.inventory?.leak_on_damage_percent ?? 0) > 0 && Math.random() < d.inventory.leak_on_damage_percent) this._leak(b, hx, hy, 6 + Math.round(Math.random() * 8))
-    // script_physics_body_modified = physics_lantern_damaged.lua:像素被打掉就在原地 EntityLoad(misc/fire.xml)—— 灯笼一被打中就起火,漏出来的油跟着烧
-    if (lost > 0 && d.scripts?.some((s) => s.endsWith('physics_lantern_damaged'))) this._fireAt(hx, hy, 3)
+    // script_physics_body_modified = physics_lantern_damaged.lua:像素被打掉就在原地 EntityLoad(misc/fire.xml)—— fire.xml 是 ElectricityComponent hack_is_set_fire=1:
+    // 一帧内在周围乱窜一段点燃碰到的可燃物,比 3 格自己就灭的火靠谱得多。这里除了当场放火,再让灯笼自己烧 2.5s(每帧往身边空气格放火),掉下去一路点着漏出来的油
+    if (lost > 0 && d.scripts?.some((s) => s.endsWith('physics_lantern_damaged'))) { this._fireAt(hx, hy, 3); b.fireT = Math.max(b.fireT || 0, 2.5) }
     // 钉子 / 链子挂着的像素被打掉 → 关节断,掉下来(Box2D 关节锚在像素上;大灯笼钉在墙里的走地形检查)
     if (lost > 0 && b.ropes) for (const r of b.ropes) if (!r.broken && (r.breakOnModified || !b.hasPixelNear(r.lx, r.ly))) { r.broken = true; if (b.asleep) b.wake(this.sim) }
     if (b.destroyed > 0.6) die = true

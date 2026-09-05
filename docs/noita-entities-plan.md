@@ -582,6 +582,10 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       怪的碰撞查询一帧问 7000 次"这格有没有醒着的刚体",而 `bodySolidAt` 线性扫全部刚体(140 个:50 多盏灯笼 + 尸块 + 道具)做 contains → 一帧上百万次。
       改:`_rebuildBodyGrid` 每帧 `_updateBodies` 后把醒着的刚体按 32px 格子建哈希,`bodySolidAt` 只查一格(0~2 个)→ 0.87ms/帧。顺带:挂着的灯笼永远在摆、永远醒着(27/53)——
       `RigidBody.step` 给挂着的(hanging)加关节摩擦(每秒 ×0.15 / 角 ×0.1);钉在侧墙上的身子埝在墙里,每帧被地形顶出又被链拉回永远抖 → `_attachRopes` 先把灯挂直到锚点正下方、还重叠就横挪 ≤6px。之后醒着的灯 3/54。
+    - **"灯笼掉下来又左右晃,原版是直接点着了"(用户 09-05)**:`misc/fire.xml` 不是几格火,是 `ElectricityComponent hack_is_set_fire=1` 一帧的"点火电流",在周围乱窜一段把碰到的可燃物都点了;
+      我们原来 `_fireAt` 放 3 格火,火在空气里 8~18 帧就灭,油是随后几帧才从伤口漏出来、又跟着灯往下掉,根本没碰上火。改:被打中的灯笼 `fireT 2.5s` 当移动火源(每帧往边缘像素旁放 3 格火),
+      漏出来的 4 格油 3 格在烧;顺带按 materials.xml `solid_gravity_scale`(glass_box2d 1.3)给刚体重力倍率 —— 灯掉得更快,≥25px 的落差砸地就过 120 阈值碎掉(和原版一样矮处掉下来不碎,倒在地上、身边一圈火)。
+      "左右晃"是 9×13 的灯头轻底窄落地翻倒的过程(~0.6s 倒成横躺后就停),不是永远晃。
 16. **金块颜色 / 刚体摇晃 / 怪穿墙 / 圣山崩塌 / 捡心效果(09-05 第三批)**:
     - 金块是绿红黄的:`items_gfx/goldnugget_*.png` 不是颜色图,`gold_box2d` 的父材质 gem_box2d `Graphics normal_mapped="1"` —— png 是**法线图**,显示 = 材质 color(ffc74e 金)按法线打光。
       materials.json 抽 `normalMapped`,RigidBody `_canvas` 对这类按法线(左上来光)给材质色明暗;碎屑也用材质色。宝石 / 药瓶玻璃同一套。头顶状态图标改原图 12×12 不缩放(缩到 8 就糊)。
