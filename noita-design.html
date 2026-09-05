@@ -57,6 +57,9 @@
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .pill { display: inline-block; font-size: 12px; color: var(--gold); border: 1px solid rgba(255,208,80,0.4); border-radius: 999px; padding: 0 8px; margin-right: 6px; }
   .num { font-family: var(--mono); color: #f2e7c9; }
+  pre { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: #0e0b15; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; color: #e6dfc9; margin: 8px 0; }
+  pre .c { color: var(--dim); } pre .k { color: var(--purple); } pre .s { color: var(--green); } pre .bad { color: var(--red); } pre .good { color: var(--blue); }
+  .formula { font-family: var(--mono); font-size: 14px; color: #fff4d6; background: rgba(255,208,80,0.06); border-left: 3px solid var(--gold); padding: 8px 14px; margin: 10px 0; overflow: auto; }
   footer { border-top: 1px solid var(--line); padding: 26px 20px 60px; text-align: center; color: var(--dim); font-size: 13px; }
   footer a { margin: 0 8px; }
   @media (max-width: 900px) {
@@ -87,6 +90,7 @@
 <nav class="toc">
   <b>目录</b>
   <a href="#s0">0 · 一句话总纲</a>
+  <a href="#s0b" class="sub">③ 组合而非枚举：公式 + 代码</a>
   <a href="#s1">1 · 材质与元胞自动机</a>
   <a href="#s2">2 · 世界生成</a>
   <a href="#s3">3 · 区块流式与存档</a>
@@ -121,6 +125,67 @@
 <div class="blk life"><b>生活比喻</b>
   Noita 更像一间<b>化学实验室 + 沙盘</b>，而不是一部剧本电影。设计师没有写"油桶被打中会爆炸"这句剧情，他只写了"油是可燃液体""火点燃可燃物""桶漏了油会流出来"，
   然后爆炸是玩家自己在沙盘里"发现"的。做菜也一样：菜谱不写每一道菜，写的是"盐是咸的、油能炸、火会烧"，剩下的交给厨师去组合。
+</div>
+
+<h3 id="s0b">③ 到底什么意思：用公式和代码把"组合而非枚举"说透</h3>
+<div class="card">
+  <div class="blk design"><b>数学角度：加法成本，乘法产出</b>
+    <p><b>枚举</b>：要 N 个效果就写 N 份东西。成本 N，产出 N。<br>
+    <b>组合</b>：把内容拆成几个独立维度，每个维度 n<sub>i</sub> 个选项，再写一条"怎么组合"的规则。成本是各维度<b>加起来</b>，产出是各维度<b>乘起来</b>：</p>
+    <div class="formula">成本 = n₁ + n₂ + … + n<sub>k</sub>　　　产出 = n₁ × n₂ × … × n<sub>k</sub></div>
+    <p><b>例 1 · 材质反应（标签配对）</b>：469 种材质两两相遇 ≈ 11 万对。枚举要写 11 万条。Noita 写 328 条，每条左边是<b>标签</b>（一个材质集合）而不是材质名：<code>[meltable] + lava → [meltable]_molten</code>。
+    一条规则覆盖 |A|×|B| 对。我们的实现里 328 条标签规则加载时展开成 <span class="num">10872</span> 条具体 (a,b) 规则，杠杆约 33 倍。</p>
+    <p><b>例 2 · 火（属性判定）</b>：火根本不走反应表，它是一条对所有材质成立的函数：</p>
+    <div class="formula">ignite(火, 邻格) = burnable(邻格) ∧ autoignition(邻格) ≤ fireTemp(火)</div>
+    <p>新加一种材质"纸"只填两个数，不写规则。枚举法加第 N+1 种材质要补它和前面 N 种的全部交互（O(N)，总共 O(N²)）；属性法加一种是 O(1)，总共 O(N)。</p>
+    <p><b>例 3 · 法术（函数复合）</b>：每张修饰卡是一个函数 m<sub>i</sub>: Config → Config，弹丸卡是"用当前 Config 发一发"，施法就是复合：</p>
+    <div class="formula">shot = P( m<sub>k</sub> ∘ … ∘ m₁ ( c₀ ) )</div>
+    <p>482 张卡里约 300 张弹丸、179 张修饰。一根"1 弹丸 + 2 修饰"的杖，不同结果约 300 × 179 × 178 ≈ <span class="num">950 万</span>种；写的数据只有 482 条。设计者写加法，玩家玩到乘法。</p>
+  </div>
+  <div class="blk design"><b>程序角度：不是没有 if，是 if 判的东西从"名字"换成了"属性"</b>
+    <p>常见的 Unity 写法——每个效果一个 prefab，脚本里按名字分支：</p>
+<pre><span class="c">// Fireball.cs</span>
+void OnCollision(Collider other) {
+  <span class="bad">if (other.tag == "Wood")</span>  other.GetComponent&lt;Wood&gt;().Burn();
+  <span class="bad">if (other.tag == "Oil")</span>   other.GetComponent&lt;Oil&gt;().Ignite();
+  <span class="bad">if (other.tag == "Grass")</span> ...
+}
+<span class="c">// Lava.cs、Torch.cs、Explosion.cs 里再各抄一遍这张名单</span></pre>
+    <p>加一种"纸"，要打开每一个火源脚本各补一行：工作量 = 火源数 × 材质数，漏一处就是"火把点不着纸但火球能"。</p>
+    <p>Noita 的写法——材质只是一行数字，火系统全游戏只有一段：</p>
+<pre><span class="c">// 材质表(materials.xml 抽出来的)</span>
+mats[WOOD]  = { burnable: 1, autoignition: 300, fireHp: 80 }
+mats[OIL]   = { burnable: 1, autoignition: 100 }
+mats[STONE] = { burnable: 0 }
+
+<span class="c">// 火系统:唯一的点火代码。有 if,但判的是属性,不是名字</span>
+for (const n of neighbors(fireCell)) {
+  const m = mats[grid[n]]
+  <span class="good">if (m.burnable &amp;&amp; m.autoignition &lt;= mats[grid[fireCell]].fireTemp)</span> ignite(n)
+}</pre>
+    <p>火球、熔岩、火把都不需要知道木头存在——它们只是往格子里写一个"火"材质，火自带 <code>fireTemp</code>。加"纸" = 材质表加一行，零代码。</p>
+    <p>反应表更进一步，<b>把 if 变成查表</b>：</p>
+<pre><span class="c">// 加载时:328 条标签规则 → 展开成 N×N 查表</span>
+for (const r of reactions)
+  for (const a of matsWithTag(r.tagA))
+    for (const b of matsWithTag(r.tagB))
+      rx[a * N + b] = { outA: r.outA(a), outB: r.outB(b), prob: r.prob }
+
+<span class="c">// 运行时:两格相邻,一次数组下标,连分支都没有</span>
+const r = rx[grid[i] * N + grid[j]]
+if (r &amp;&amp; rand() &lt; r.prob) { grid[i] = r.outA; grid[j] = r.outB }</pre>
+    <p>法术同一招：卡不是带脚本的 prefab，而是一串数据操作 <code>[{field:'speed_multiplier', op:'mul', v:2.5}, …]</code>，一个通用解释器按顺序作用到 Config 上。
+    修饰卡不知道任何弹丸的存在，弹丸也不知道任何修饰的存在，它们只通过 Config 这一个中间物见面；枚举写法里"加速"要分别适配火球、箭、锯刃，又是 N × M。</p>
+    <p><b>回到 Unity：prefab 不是问题，问题是逻辑写在 prefab 里的 if 名字。</b>同样的事用 ScriptableObject 完全能做：一个 <code>MaterialDef</code>（属性表）、一个 <code>ReactionTable</code>、一个通用 <code>FireSystem</code>、一个通用 <code>Projectile</code> 吃 <code>ProjectileConfig</code>。
+    prefab 数量 ≈ 每种<b>类型</b>一个，不是每个<b>东西</b>一个——火球和箭是同一个 prefab、不同的 config。</p>
+  </div>
+  <div class="blk life"><b>生活比喻</b>
+    枚举像给每个员工单独写一份规章（"张三迟到扣 50，李四迟到扣 50……"）；组合像写一条"迟到扣 50"再给每个人填一张考勤卡。人越多，前者越写不完，后者只是多印一张卡。
+  </div>
+  <div class="blk insp"><b>一句话与代价</b>
+    <p><b>枚举 = 每个东西一份代码；组合 = 每个东西一行数据 + 每类东西一份代码。</b>东西的数量远多于类型时（469 种材质 vs 4 种 cell_type，482 张卡 vs 5 种卡类型），后者少一两个量级的代码，且新增内容不碰代码。
+    代价是涌现出来的组合没法逐个测，所以 Noita 要在规则上加护栏——比如 <code>speed_multiplier</code> 被 clamp 到 0~20，不然叠几张加速就飞出世界。</p>
+  </div>
 </div>
 
 <h2 id="s1">1 · 材质与元胞自动机 <small>materials.xml · CellSim</small></h2>
