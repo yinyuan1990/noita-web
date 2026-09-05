@@ -230,6 +230,9 @@ CPU×4/×6 模拟结果(15s 巡航):
   幽灵 `d.ghost`(穿墙、`d.aura` 光环伤害、`d.invulnerable`),幽灵水晶碎了 500px 内幽灵散掉。
   lukki 蜘蛛 `d.limbs`(`_initLukki / _legsStep / _attackLeg / _drawLeg`):身体飞行模型 + 两段式 IK 腿踩 len 内的实心、攻击腿 aim→jab 0.5 伤、CellEater 被挡就吃、死了腿变肉块;
   `d.overlays` 叠层精灵(wiggle / emissive)、`d.areaDamage`(tiny 碰到掉血)、`d.eggs`(卵被打出小蜘蛛)。`damage_multipliers` 在 `hurt()` 按 src(projectile / explosion / fire)乘,所有怪生效。
+  黏液怪(giantshooter "大蜘蛛" / slimeshooter / acidshooter / tentacler)`d.tentacles`(`_tentaclesStep / _drawTentacles`:verlet 触手,点 0 钉在挂点、v×0.8/帧、重力 400、链约束、进实心退回);
+  `e.inventory`(MaterialInventory:弹丸命中按 `leak_on_damage_percent` 漏 6~14 格)、`d.splitBelow`(giantshooter_death.lua:hp 跌破 0.3 出 3 只 slimeshooter)、
+  `d.explode`(ExplodeOnDamage 死亡爆炸:giantshooter r30 填酸、坦克 / 炮塔 / 无人机)、所有带 LightComponent 的怪在 `lights()` 发光(玩家一屏内)。
 - **圣山守卫**(noitaPlay `guard`):`templeMarks` 发 `shop_area`(shop_hitbox)/ `areacheck`(temple_areacheck_horizontal 两行砖)→ 货出框 = 偷、砖行被挖 = 泄漏 → 惹怒众神 → 3s 后在特权祭坛出 Stevari(`necromancer_shop`,
   `d.attacks` = AIAttackComponent 多段按距离挑弹)。飞行体统一有 `_findFlyPath`(8px 格 BFS,整个碰撞盒不撞才算能飞)+ 贴斜坡滑;物品不挡怪。
 - **Worker 全局** `WorldClient.setGlobals({shopCount})` → `world.globals`(GlobalsGetValue 的替身:TEMPLE_SHOP_ITEM_COUNT,EXTRA_SHOP_ITEM 特权 +1),`scanTempleMarks` 生成商店时读。

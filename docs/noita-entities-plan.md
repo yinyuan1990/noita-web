@@ -676,6 +676,17 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     所以钻头是挖一条 1px 隧道:岩石(hp 1e5)一格掉 1.5~3% 速度,一发钻 ~29px;神殿砖(hp 1e6,耐久 14 刚好 ≤14)一格掉 15%,一发 3~4 格;长枪(coeff 6 / 400px/s / mass 0.65)扎岩石 2~3 格就停。
     顺带两处:① 穿地弹子步改 1px(2px 步会隔格挖);② `terminal_velocity` 夹速(0xd67cf7,`|v| > t → v̂·t`)在**位置积分之后**,1400 的初速第一帧仍跑满 23px,第二帧才夹到 1000 —— 之前先夹后走少跑一帧。
     探针 `_noita-drill-shot.mjs`:岩墙 depth 29 / 神殿砖 4 / 长枪 3 / 连发 12 发穿 47px。
+25. **手机背包滑不动(用户 09-05)**:`#editor` 只拦了 touchstart 的冒泡,touchmove 还是冒到 window 那个 `preventDefault` 的处理器 → 浏览器不滚。
+    `#editor` 再拦 touchmove / touchend(passive)+ CSS `touch-action: pan-y`。CDP 真实触摸拖 180px:旧版 scrollTop 0 → 新版 165。
+26. **矿洞"大蜘蛛"= Äitinuljaska(`animals/giantshooter_weak`,用户 09-05:"第一关 boss…我看有个大蜘蛛")**:矿洞 g_big_enemies 8% / g_unique_enemy 10%,不是 boss 但是矿洞最大的怪。
+    原版 xml:base_enemy_flying(飘着追人,不放弹 attack_ranged_enabled=0,只有 base_humanoid 的 0.2~0.4 近战碰)· hp 2(显示 50)· 绿光 r80 (118,255,118) · 5 条 verlet 黏液触手子实体 ·
+    MaterialInventory 400 酸 leak_on_damage 99.9% · ExplodeOnDamage 死亡必炸(r30 伤 3、坑里 70% 填酸、ray_energy 160000)· `giantshooter_death.lua`:hp 从 ≥0.3 被打到 <0.3 那一下 → ±10px 出 3 只 **slimeshooter**(非 weak),速度 x −90~90 / y −150~25 · 布娃娃 torso + 12 段触手图。
+    我们之前只有一个会飘的绿团:没触手、不漏酸、不分裂、死了不炸、不发光。补:
+    - prepare:`<Entity><Base file="verlet_chains/…tentacle…"><InheritTransform position>` → `d.tentacles[{x,y,points,rest,stiff,damp,massMin,massMax,pieces[{img,oy}]}]`(slimeshooter / acidshooter / tentacler 也顺带有了);`script_damage_received=giantshooter_death` → `d.splitBelow`。
+    - Entities:`e.tents` verlet 链(`_tentaclesStep`:点 0 钉挂点、v=(p−prev)×0.8、重力 400×mass、一点风摆、链约束 2 轮、进实心退回;`_drawTentacles` 在身体后面画 2×2 小片);
+      `e.inventory` + hurt 里弹丸命中按 leak 概率 `_leak` 6~14 格;`splitBelow` 分裂;`_die` 里 `d.explode` → `explodeConfig`(坦克 / 炮塔 / 无人机同样死亡爆炸);`lights()` 从"只有 lukki"改成所有带 LightComponent 的怪(玩家一屏内:矿工头灯 r50、火法师 r100…)。
+    - 没反出来的:verlet 的重力常数(exe 0xd67de0 只看到风的 sin 叠加:sin(t×25)、sin(y×5)×100、sin(y×0.005)×300…),用 VelocityComponent 默认 400 代替。
+    探针 `_noita-giantshooter-shot.mjs`:触手 5 条长 4.5~15.8px 垂下;打到 0.2 → 身边 3 只 slimeshooter、漏酸 22 格 / 库存 400→388;死亡酸 1250 格、布娃娃 1 具、掉金 20。
 
 ## 2.5 接手指南(新会话从这里开始)
 

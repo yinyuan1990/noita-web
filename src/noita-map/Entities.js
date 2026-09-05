@@ -132,6 +132,7 @@ export class Entities {
     if (d.bodyImage) this._img(d.bodyImage)
     if (d.overlays) for (const o of d.overlays) this._img(o.image)
     if (d.limbs) for (const L of d.limbs) { if (L.a) this._img(L.a.img); if (L.b) this._img(L.b.img); if (L.knee) this._img(L.knee.img) }
+    if (d.tentacles) for (const T of d.tentacles) for (const p of T.pieces) this._img(p.img)
     if (d.ragdoll) for (const img of d.ragdoll) this._img(img) // 尸体部件图提前要,死的那一刻整具一起出来
   }
 
@@ -764,6 +765,10 @@ export class Entities {
       anim: d.sprite.def || 'stand', frame: 0, ft: 0, animLock: 0,
     }
     if (d.limbs) this._initLukki(e, d)
+    // verlet 触手(giantshooter / slimeshooter / acidshooter / tentacler 的黏液触手):每条从挂点垂直垂下 num_points 个点,质量 mass_min~max
+    if (d.tentacles) e.tents = d.tentacles.map((T) => ({ T, pts: Array.from({ length: T.points }, (_, i) => ({ x: x + T.x, y: y + T.y + i * T.rest, px: x + T.x, py: y + T.y + i * T.rest, m: T.massMin + Math.random() * (T.massMax - T.massMin) })) }))
+    // MaterialInventoryComponent(giantshooter 400 酸 / slimeshooter 800 毒液):被弹丸打到按 leak_on_damage_percent 从伤口漏
+    if (d.inventory?.materials?.length) e.inventory = d.inventory.materials.map(([m, n]) => ({ m, left: +n }))
     // 法杖幽灵:出生就拿一根 wand_level_03(wand_ghost.lua),画的就是这根法杖;死了掉下来
     if (d.wandGhost) { const h = this.hooks.ghostWand?.(d.wandGhost, x, y); if (h?.image) { e.held = h; this._img(h.image) } }
     if (d.attacks?.length) {
@@ -1173,6 +1178,7 @@ export class Entities {
       else if (e.crawler) this._crawlStep(e, dt, dx, dy)
       else this._walkStep(e, dt, f60, inLiq, dy)
       if (e.legs) this._legsStep(e, dt)
+      if (e.tents) this._tentaclesStep(e, dt)
       // AreaDamageComponent(lukki_tiny:盒里的人每 update_every_n_frame 帧掉 damage_per_frame)
       const AD = e.d.areaDamage
       if (AD) {
@@ -1606,6 +1612,50 @@ export class Entities {
   }
 
   /**
+   * verlet 触手(VerletPhysicsComponent,giantshooter 的 5 条黏液触手):点 0 钉在 实体位置 + InheritTransform 偏移(x 随朝向翻),
+   * 其余点 verlet 积分:v = (p − p_prev) × velocity_dampening(0.8/帧),重力 400(VelocityComponent 默认,verlet 自己的常数没反出来)× mass,
+   * 再加一点 simulate_wind 的横向摆(exe 0xd67de0:sin(t×25)·sin(y×5)… 的叠加,这里只取一项);链约束 resting_distance,stiffness 1.25 → 满量修正,
+   * 迭代 2 轮;collide_with_cells:进实心就退回上一帧位置。
+   */
+  _tentaclesStep(e, dt) {
+    const sim = this.sim, face = e.face || 1, t = this.time
+    const g = 400 * dt * dt
+    for (const c of e.tents) {
+      const T = c.T, P = c.pts, n = P.length
+      const p0 = P[0]; p0.px = p0.x; p0.py = p0.y; p0.x = e.x + T.x * face; p0.y = e.y + T.y
+      const wind = Math.sin(t * 5 + T.x) * Math.sin(t * 1.3) * 30 * dt * dt
+      for (let i = 1; i < n; i++) {
+        const p = P[i], vx = (p.x - p.px) * T.damp, vy = (p.y - p.py) * T.damp
+        p.px = p.x; p.py = p.y
+        p.x += vx + wind * p.m; p.y += vy + g * p.m
+      }
+      const k = Math.min(1, T.stiff)
+      for (let it = 0; it < 2; it++) for (let i = 1; i < n; i++) {
+        const a = P[i - 1], b = P[i]
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.001, diff = ((d - T.rest) / d) * k
+        if (i === 1) { b.x -= dx * diff; b.y -= dy * diff } else { a.x += dx * diff * 0.5; a.y += dy * diff * 0.5; b.x -= dx * diff * 0.5; b.y -= dy * diff * 0.5 }
+      }
+      for (let i = 1; i < n; i++) {
+        const p = P[i], m = sim.get(Math.floor(p.x), Math.floor(p.y))
+        if (m > 0 && sim.kind[m] === 1) { p.x = p.px; p.y = p.py }
+      }
+    }
+  }
+
+  /** 触手:每个点一张 2×2 / 2×1 的小片(piece xml 的 SpriteComponent offset_y 是锚点),cloth z 在身体后面 → 先画 */
+  _drawTentacles(ctx, e, ox, oy) {
+    for (const c of e.tents) {
+      const T = c.T
+      for (let i = 1; i < c.pts.length; i++) {
+        const pc = T.pieces[Math.min(i - 1, T.pieces.length - 1)], img = this._img(pc.img)
+        if (!img?.image) continue
+        const p = c.pts[i]
+        ctx.drawImage(img.image, Math.round(p.x - ox - img.width / 2), Math.round(p.y - oy - pc.oy))
+      }
+    }
+  }
+
+  /**
    * 爬墙(longleg):surf = 实心贴在哪一侧('d' 地 / 'u' 顶 / 'l' 左墙 / 'r' 右墙),沿切向朝目标爬,
    * 撞到前方的墙就转上去,爬到边缘就绕过去,哪边都没有就掉。精灵按 surf 旋转(脚朝实心)。
    */
@@ -1766,13 +1816,23 @@ export class Entities {
     // DamageModel damage_multipliers(lukki:projectile 0.2 / explosion 0.8 / fire 1.2 / melee 2.0)
     const mul = e.d.damage?.multipliers
     if (mul) { const key = src === 'proj' ? 'projectile' : src; if (mul[key] !== undefined) dmg *= mul[key] }
+    const hp0 = e.hp
     e.hp -= dmg
     e.vx += ix; e.vy += iy
     if (src === 'black_hole' || src === 'electricity') e.hurtT = 0.1
     // lukki_eggs.lua damage_received:伤 >0.1 且(致死 或 10%)→ 出一只小蜘蛛
     if (e.d.eggs && dmg > 0.1 && (e.hp <= 0 || Math.random() < 0.1)) { this.spawnCreature(e.d.eggs, e.x + (Math.random() - 0.5) * 6, e.y); this.hooks.sfx?.('clash', { vol: 0.4, rate: 1.6, minGap: 100 }) }
+    // giantshooter_death.lua damage_received:hp 从 ≥0.3 被这一下打到 <0.3(致死那一下也算)→ 原地 ±10 出 3 只 slimeshooter,速度 x −90~90 / y −150~25
+    const SB = e.d.splitBelow
+    if (SB && hp0 > SB.hp && e.hp < SB.hp) {
+      const R = (a, b) => a + Math.random() * (b - a)
+      for (let i = 0; i < SB.count; i++) { const s = this.spawnCreature(SB.spawn, e.x + R(-SB.offset, SB.offset), e.y + R(-SB.offset, SB.offset)); if (s) { s.vx = R(SB.vx[0], SB.vx[1]); s.vy = R(SB.vy[0], SB.vy[1]); s.state = 'chase'; s.stateT = 3 } }
+      this.hooks.sfx?.('clash', { vol: 0.5, rate: 0.9, minGap: 100 })
+    }
     if (src === 'proj' || src === 'explosion') {
       e.hurtT = 0.25
+      // MaterialInventory leak_on_damage_percent(giantshooter 400 酸 99.9%):被弹丸打到就从伤口漏一小股,漏光为止
+      if (e.inventory && src === 'proj' && Math.random() < (e.d.inventory?.leak_on_damage_percent ?? 0)) this._leak(e, hx, hy, 6 + Math.round(Math.random() * 8))
       if (e.state !== 'attack' && !e.helpless) { e.state = 'chase'; e.stateT = 4 }
       if (e.helpless || (e.escapeP && Math.random() * 100 < e.escapeP)) { e.state = 'flee'; e.stateT = 2 } // escape_if_damaged_probability
       const spray = this.mats.byName.get(e.d.damage?.blood_spray_material || e.d.damage?.blood_material || '')
@@ -1816,6 +1876,8 @@ export class Entities {
     this.stats.killed++
     // ExplosionComponent trigger=ON_DEATH(地雷 mine_scavenger:r30 伤 4 起火 80%)
     if (e.d.explosionOnDeath) this.explodeConfig(e.x, e.y, e.d.explosionOnDeath)
+    // ExplodeOnDamageComponent explode_on_death_percent(giantshooter:r30 伤 3、坑里 70% 填酸;坦克 / 炮塔 / 无人机也是这样炸)
+    if (e.d.explode?.config && Math.random() < (e.d.explode.explode_on_death_percent ?? 1)) this.explodeConfig(e.x, e.y, e.d.explode.config)
     // 法杖幽灵死了 → 手里的法杖掉在地上(原作是 ItemPickUpper 背包里的物品掉落)
     if (e.held?.wand) this.hooks.dropWand?.(e.held.wand, e.x, e.y)
     // 幽灵水晶碎了 → 附近的幽灵一起散掉(ghost_crystal.lua)
@@ -2127,8 +2189,9 @@ export class Entities {
   /** 醒着刚体的光(矿灯 LightComponent);睡着的也发光 */
   lights(cb, ox, oy) {
     for (const b of this.bodies) if (!b.dead && b.light) cb(b.x - ox, b.y - oy, Math.min(120, b.light.radius * 0.5), `${b.light.r ?? 255},${b.light.g ?? 200},${b.light.b ?? 120}`, 0.8)
-    // lukki 的 LightComponent(r32 暖橘光,眼睛发光)
-    for (const e of this.list) if (!e.dead && e.legs && e.d.light) cb(e.x - ox, e.y - oy, e.d.light.radius * 1.25, `${e.d.light.r ?? 120},${e.d.light.g ?? 60},${e.d.light.b ?? 10}`, 0.35)
+    // 怪身上的 LightComponent(lukki r32 暖橘 / 矿工头灯 r50 / giantshooter r80 绿光 / 火法师 r100):只给玩家周围一屏内的
+    const pl = this.player
+    for (const e of this.list) if (!e.dead && e.d.light && Math.abs(e.x - pl.x) < 320 && Math.abs(e.y - pl.y) < 200) cb(e.x - ox, e.y - oy, e.d.light.radius * 1.25, `${e.d.light.r ?? 120},${e.d.light.g ?? 60},${e.d.light.b ?? 10}`, 0.35)
   }
 
   render(ctx, ox, oy) {
@@ -2194,6 +2257,7 @@ export class Entities {
       const px = Math.round(e.x - ox) + (wb ? wb[0] : 0), py = Math.round(e.y - oy) + (wb ? wb[1] : 0)
       if (e.hurtT > 0) ctx.globalAlpha = 0.75
       if (e.legs) for (const g of e.legs) this._drawLeg(ctx, e, g, ox, oy) // 腿 z_index 1.1:在身体后面
+      if (e.tents) this._drawTentacles(ctx, e, ox, oy)
       ctx.save()
       ctx.translate(px, py)
       // 爬墙的:脚朝实心那侧转过去(d 0 / r −90° / l +90° / u 180°)

@@ -340,6 +340,20 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     }
     // lukki_eggs.lua damage_received:被打(>0.1 伤)致死或 10% → 出一只 lukki_tiny
     if ((e.comps.get('LuaComponent') || []).some((l) => /lukki_eggs/.test(l.script_damage_received || ''))) d.eggs = 'lukki_lukki_tiny'
+    // giantshooter_death.lua damage_received:hp 从 ≥0.3 被打到 <0.3 那一下 → 出 3 只 slimeshooter(不是 weak),位置 ±10、速度 x −90~90 / y −150~25
+    if ((e.comps.get('LuaComponent') || []).some((l) => /giantshooter_death/.test(l.script_damage_received || ''))) d.splitBelow = { hp: 0.3, spawn: 'slimeshooter', count: 3, offset: 10, vx: [-90, 90], vy: [-150, 25] }
+    // 子实体 verlet 链(giantshooter 的 5 条黏液触手:<Entity><Base file="verlet_chains/…"><InheritTransformComponent><Transform position>):
+    // VerletPhysicsComponent num_points / resting_distance / stiffness / velocity_dampening,每个点一张 2×2 / 2×1 的小精灵(piece xml 的 SpriteComponent,offset_y 是贴图锚点)
+    // 只收触手类(悬挂物 props/suspended_* 的 verlet_chains/chain 是往上吊到天花板的链,另一回事)
+    const chainRefs = [...xml.matchAll(/<Entity>\s*<Base\s+file="([^"]*verlet_chains\/[^"]*tentacle[^"]+)"\s*>\s*<InheritTransformComponent>\s*<Transform\s+position\.x="([^"]+)"\s+position\.y="([^"]+)"/g)]
+    if (kind === 'animals' && chainRefs.length) {
+      d.tentacles = chainRefs.map((m) => {
+        const cx = readFile(m[1]) || ''
+        const C = parseComponents(cx), vp = first(C, 'VerletPhysicsComponent')
+        const pieces = [...cx.matchAll(/<Base\s+file="([^"]+)"\s*\/>/g)].map((p) => { const px = readFile(p[1]) || ''; const s = first(parseComponents(px), 'SpriteComponent'); return s ? { img: copyGfx(s.image_file), oy: num(s.offset_y, 0) } : null }).filter(Boolean)
+        return { x: num(m[2], 0), y: num(m[3], 0), points: num(vp?.num_points, 2), rest: num(vp?.resting_distance, 2), stiff: num(vp?.stiffness, 1), damp: num(vp?.velocity_dampening, 0.99), massMin: num(vp?.mass_min, 0.8), massMax: num(vp?.mass_max, 1), pieces }
+      }).filter((c) => c.pieces.length)
+    }
     // 地雷:CollisionTriggerComponent(触发半径 / 计时)+ ExplosionComponent trigger=ON_DEATH 的 config_explosion
     const ct = first(e, 'CollisionTriggerComponent'); if (ct) d.mine = { radius: num(ct.radius, 20), timer: num(ct.timer_for_destruction, 30) / 60 }
     const exc = first(e, 'ExplosionComponent'); if (exc && (exc.trigger || 'ON_DEATH') === 'ON_DEATH' && e.subs.config_explosion) d.explosionOnDeath = pick(e.subs.config_explosion, Object.keys(e.subs.config_explosion))
