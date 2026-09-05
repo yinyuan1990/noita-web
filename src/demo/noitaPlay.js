@@ -1813,12 +1813,20 @@ function render() {
         const wx = ox + i
         const e = sim._entry(wx, wy)
         if (!e) continue
-        const li = (wy & 511) * CHUNK + (wx & 511)
-        const m = e.mat[li]
+        let li = (wy & 511) * CHUNK + (wx & 511), src = e
+        let m = e.mat[li]
         if (m === 0) continue
         const k = KD[m]
-        let o = (j * VW + i) * 4
-        if (k === 3) { const ii = i + wobX[i], jj = j + wobY[j]; if (ii >= 0 && ii < VW && jj >= 0 && jj < VH) o = (jj * VW + ii) * 4 }
+        const o = (j * VW + i) * 4
+        // 折射是"采样"(gather):这一格是液体 → 颜色取偏移处那格(也得是液体)。不能反过来把自己写到偏移处(scatter):
+        // 偏移量随 x 从 0 跳到 1 的那一列会被写两次、旁边一列没人写 → 水面上一条条黑线(用户截图)
+        if (k === 3) {
+          const ii = i + wobX[i], jj = j + wobY[j]
+          if (ii >= 0 && ii < VW && jj >= 0 && jj < VH) {
+            const e2 = sim._entry(ox + ii, oy + jj)
+            if (e2) { const li2 = ((oy + jj) & 511) * CHUNK + ((ox + ii) & 511), m2 = e2.mat[li2]; if (m2 > 0 && KD[m2] === 3) { m = m2; li = li2; src = e2 } }
+          }
+        }
         if (k >= 2) {
           const c = COL[m]
           let r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255, a = k === 2 ? 255 : ALP[m]
@@ -1827,7 +1835,7 @@ function render() {
           if (m === fireM) { fireCells++; const f = 0.7 + Math.random() * 0.3; r = 255; g = (140 + Math.random() * 90) | 0; b = 40; a = (255 * f) | 0 }
           else if (k === 4) a = Math.min(a, 140) // 气体更透
           else if (k === 2) { const h = ((wx * 374761393 + wy * 668265263) >>> 0) % 100; const jt = 0.86 + h / 100 * 0.28; r *= jt; g *= jt; b *= jt }
-          if (e.aux[li] && k !== 5 && k !== 4) { r = Math.min(255, r + 120); g = Math.min(255, g + 40) } // 燃烧中
+          if (src.aux[li] && k !== 5 && k !== 4) { r = Math.min(255, r + 120); g = Math.min(255, g + 40) } // 燃烧中
           d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = a
         } else if (k === 1 && e.aux[li]) { d[o] = 255; d[o + 1] = 120; d[o + 2] = 30; d[o + 3] = 150 } // 燃烧的木头
       }
