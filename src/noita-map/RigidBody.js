@@ -146,13 +146,14 @@ export class RigidBody {
     // 比数 3×3 实心格稳:陷进去的接触像素周围全是实心,梯度法会给出噪声法线,箱子就一边抖一边自己转。
     let nx = ex - cx, ny = ey - cy
     let l = Math.hypot(nx, ny)
-    // 几个像素的小块没有"形状",质心法线是噪声:看接触点四周哪边实心多(±2px 采样),法线背着实心那边;四周都一样(卡缝里)才按来向(速度反方向)退
-    if (this.n < 12 && !buried) {
+    // 法线优先用接触点附近**地形**的梯度(5×5 采样,背着实心多的那边):平底的桌子一个角搭在斜坡上时,"质心→质心"算出来是斜的,
+    // 冲量消不掉下落速度、顶出又落回,桌子悬在坡上方 2~3px 抖个没完(用户的板凳 / 桌子);地形梯度给的是坡面法线,落下去就实实在在搁住
+    if (!buried) {
       const X = Math.floor(cx), Y = Math.floor(cy)
-      const sx = (solid(X + 2, Y) ? 1 : 0) + (solid(X + 2, Y - 1) ? 1 : 0) - (solid(X - 2, Y) ? 1 : 0) - (solid(X - 2, Y - 1) ? 1 : 0)
-      const sy = (solid(X, Y + 2) ? 1 : 0) + (solid(X + 1, Y + 2) ? 1 : 0) - (solid(X, Y - 2) ? 1 : 0) - (solid(X + 1, Y - 2) ? 1 : 0)
-      if (sx || sy) { nx = -sx; ny = -sy; l = Math.hypot(nx, ny) }
-      else { const sp = Math.hypot(this.vx, this.vy); if (sp > 1) { nx = -this.vx / sp; ny = -this.vy / sp; l = 1 } }
+      let gx = 0, gy = 0
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (solid(X + dx, Y + dy)) { gx += dx; gy += dy }
+      if (gx || gy) { nx = -gx; ny = -gy; l = Math.hypot(nx, ny) }
+      else if (this.n < 12) { const sp = Math.hypot(this.vx, this.vy); if (sp > 1) { nx = -this.vx / sp; ny = -this.vy / sp; l = 1 } } // 小块卡缝里四周一样:按来向退
     }
     if (buried || l < 0.5) { nx = 0; ny = -1; l = 1 }
     nx /= l; ny /= l
@@ -184,9 +185,21 @@ export class RigidBody {
     // 静定:接触点沿切向的跨度 ≥2px 且刚体中心投影落在两端之间(重心在支点之间)= 稳稳搁着,不该再有翻倒的扭矩;
     // 不然崎岖地面上的石头两个小凸起轮流当支点,每帧一个方向的扭矩冲量,永远左右摇(用户截图里那块石头)
     const tc = (this.x - cx) * tx + (this.y - cy) * ty
-    const stable = tmax - tmin >= 2 && tc >= tmin - 0.5 && tc <= tmax + 0.5
+    let stable = tmax - tmin >= 2 && tc >= tmin - 0.5 && tc <= tmax + 0.5
+    const slow = Math.abs(this.vx) < 20 && Math.abs(this.vy) < 20
+    // 板凳两条腿在崎岖地上永远不同时着地:一条腿点接触 → 扭矩 → 倒向另一条腿 → 再反过来,来回摇。慢速时把"差 1px 就着地"的边缘像素也算支点:
+    // 两条腿(一条在地、一条悬 1px)一起看重心在不在支点之间,在 → 静定,杀掉转动让它落实到两条腿上,而不是接着摇
+    if (!stable && slow && Math.abs(ny) > 0.7) {
+      let nmin = tmin, nmax = tmax
+      for (let e = 0; e < this.edge.length; e++) {
+        this.worldOf(this.edge[e], P)
+        if (!solid(Math.floor(P[0]), Math.floor(P[1] + 1)) && !solid(Math.floor(P[0]), Math.floor(P[1] + 2))) continue
+        const t = (P[0] - cx) * tx + (P[1] - cy) * ty; if (t < nmin) nmin = t; if (t > nmax) nmax = t
+      }
+      stable = nmax - nmin >= 2 && tc >= nmin - 0.5 && tc <= nmax + 0.5
+    }
     const face = this.n < 12 || stable || tmax - tmin > Math.min(this.w0, this.h0) * 0.6
-    if (stable && Math.abs(this.vx) < 20 && Math.abs(this.vy) < 20) this.w *= 0.5
+    if (stable && slow) this.w *= 0.5
     // 冲量(接触点 C,法线 N)
     const rx = cx - this.x, ry = cy - this.y
     const vrx = this.vx - this.w * ry, vry = this.vy + this.w * rx

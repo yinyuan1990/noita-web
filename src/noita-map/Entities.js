@@ -532,8 +532,9 @@ export class Entities {
         }
         continue
       }
-      // 埋进实心太深(沙落上来 / 布景刚盖上)→ 顶出来;要在入睡前查,睡着后中心格是自己的像素
-      if (b.age > 1 && this._solidB(Math.floor(b.x), Math.floor(b.y))) { for (let k = 0; k < 12 && this._solidB(Math.floor(b.x), Math.floor(b.y)); k++) b.y -= 1 }
+      // 埋进实心太深(沙落上来 / 布景刚盖上)→ 顶出来;要在入睡前查,睡着后中心格是自己的像素。
+      // 只在包围盒中心真有自己的像素时才查那一格:桌子 / 板凳的中心是两腿之间的空当,搁在斜坡上那格是地面 → 之前每帧被抬 1px 又落回去,看着就是"无外力左右晃"
+      if (b.age > 1 && b.mask[(b.h0 >> 1) * b.w0 + (b.w0 >> 1)] && this._solidB(Math.floor(b.x), Math.floor(b.y))) { for (let k = 0; k < 12 && this._solidB(Math.floor(b.x), Math.floor(b.y)); k++) b.y -= 1 }
       const vyBefore = b.vy, spBefore = Math.hypot(b.vx, b.vy)
       const touching = b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
       // PhysicsBodyCollisionDamageComponent:撞上东西时速度超过 speed_threshold(灯笼 120)→ 掉血 = 速度 × damage_multiplier(默认 1/60);灯笼掉下来砸地就碎、洒油、起火
