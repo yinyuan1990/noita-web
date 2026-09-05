@@ -644,6 +644,13 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     黑暗里毒液 ≈ 72% 的本色 = (130,184,12)。我们之前只按 27% alpha 混色 + 每 5 格一个 0.08 alpha 的小光 → (24,32,4)。改:发光材质 alpha += gfx_glow(毒液 68+60 = 50%),光源表上限 400 → 1600、每点 alpha 0.3 + 0.35×gl(火 0.65 / 熔岩 0.5 / 毒液 0.38)。
     探针 `_noita-glow-shot.mjs`:黑处并排毒液池 / 水池,毒液均色 (24,32,4) → (55,78,5),水不变 (18,30,25);满屏毒液(2.6 万格、光源表打满 1600)56fps。
 
+22. **水 + 毒液同时在头顶(用户 09-05:原版能同时显示两个沾污图标)**:`StatusEffectDataComponent.stain_effects` 是 VECTOR_FLOAT —— **每种状态各一个量**;`SpriteStainsComponent` 里精灵每个像素只存一种液体材质,
+    某状态的量 = 被给这种状态的液体(materials.xml `<Stains><StatusEffect type=…>`,blood 是旧写法 `status_effects="BLOODY"`)染色的像素占比;新液体盖像素时旧的按比例被顶掉,总和 ≤ 100%。
+    材质字段:`liquid_sprite_stains_status_threshold`(oil / radioactive_liquid / 瞬移液 0.2:占比不到 20% 状态不生效,水 / 血 / 黏液 0)、`liquid_sprite_stain_shaken_drop_chance`(瞬移液 5,其余 1)、`liquid_sprite_stain_ignited_drop_chance`(只有水写了 10)。
+    之前我们只有一个 `player.wet / stain / wetMat`(换液体就把旧的砍到 2 成)。改:`player.stains = [{mat, kind, amt}]`,`addStain` 按像素覆盖语义(新增 f → 其它各扣 f 比例),每种各自晃掉 × shaken_drop,
+    `stainActive(kind)` 按材质阈值;防火 / 沾油易燃 / 辐射掉血 / 黏液减速 / 精灵染色(几种一层层叠)/ HUD 与头顶图标全部按"生效中的每一种";三个字段抽进 materials.json。
+    旧接口 `player.wet`(总量)/ `stain`(量最大的)/ `wetMat` 留成 getter 给探针。验证:泡满水 WET 100% → 走进毒液 150ms:WET 54% + RADIOACTIVE 46% 两个图标同亮,650ms 后 6% / 94%;湿身碰火探针数值不变。
+
 ## 2.5 接手指南(新会话从这里开始)
 
 **仓库**:`https://github.com/yinyuan1990/noita-web.git`(main;2026-09-04 首推,`.gitignore` 排除 node_modules / dist* / noita-ref / scripts/out / scripts/shots)。

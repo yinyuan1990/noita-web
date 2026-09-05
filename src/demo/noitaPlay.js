@@ -110,9 +110,13 @@ const P = {
 const player = {
   x: 227, y: -120, vx: 0, vy: 0, onGround: false, thrusting: false, fuel: 100, hp: 4, maxHp: 4, face: 1, walkT: 0, iframe: 0,
   aimX: 300, aimY: -120, fireCd: 0, fly: P.flyTimeMax, airFrames: 0, sinceFly: 999, flyExhausted: false, upHeld: false,
-  // 水:wasWet 上一帧碰着液体(入水一刻掀水花);wet = GameEffect WET 剩余秒(600 帧 = 10s,出水后滴水、精灵染色);headInLiq 头没在液体里
-  wasWet: false, wet: 0, wetMat: 0, stain: '', headInLiq: false, dripT: 0, fireT: 0, fireDur: 4, fireTick: 0, gold: 0,
+  // 水:wasWet 上一帧碰着液体(入水一刻掀水花);stains = 身上每种沾污各自的量(见 STAIN_THRESHOLD 注释);headInLiq 头没在液体里
+  wasWet: false, stains: [], headInLiq: false, dripT: 0, fireT: 0, fireDur: 4, fireTick: 0, gold: 0,
   air: 7, dead: false, kills: 0, // air_in_lungs(秒);dead = 死亡画面挂着
+  // 旧接口(探针 / 日志用):wet = 沾污总量 0~10,stain = 量最大的那种,wetMat = 它的材质
+  get wet() { return this.stains.reduce((a, s) => a + s.amt, 0) },
+  get stain() { const s = this.stains.slice().sort((a, b) => b.amt - a.amt)[0]; return s ? s.kind : '' },
+  get wetMat() { const s = this.stains.slice().sort((a, b) => b.amt - a.amt)[0]; return s ? s.mat : 0 },
   kickCd: 0, kickT: 0, // 踢:冷却 / 出脚动画剩余
 }
 // 自由模式(FREE,默认开,?free=0 关):法术全开(背包里有整个法术库、随处改法杖)、法力 / 次数无限 —— 玩家要的是玩材质效果,不是攒资源
@@ -731,13 +735,23 @@ function heartBurst(x, y) {
 }
 const FIRE_PROTECT = new Set(['WET', 'BLOODY', 'SLIMY', 'RADIOACTIVE']) // status_list.lua protects_from_fire=true(OILED 表里也是 true,但实际是"更易燃、烧更久",按 wiki 处理)
 /**
+ * 沾污是"每种状态各一个量"(StatusEffectDataComponent.stain_effects 是 VECTOR_FLOAT,一项一种状态):精灵的每个像素只能被一种液体染色(SpriteStainsComponent),
+ * 某状态的量 = 被给这种状态的液体染色的像素占比,所以水 + 毒液可以同时在身上、头顶两个图标一起亮(用户在原版看到的);新液体覆盖像素时旧的按比例被顶掉,总量 ≤ 100%。
+ * 材质 liquid_sprite_stains_status_threshold(油 / 毒液 0.2):占比不到 20% 状态不生效(图标不出);水 / 血 / 黏液没写 = 0,沾一点就算。
+ * player.stains = [{ mat, kind, amt(0~10 = 0~100%) }]
+ */
+const stainAmt = (kind) => { const s = player.stains.find((x) => x.kind === kind); return s ? s.amt : 0 }
+const stainActive = (kind) => { const s = player.stains.find((x) => x.kind === kind); return !!s && s.amt >= (mats.list[s.mat]?.liquidSpriteStainsStatusThreshold || 0) * 10 }
+/** 生效中的沾污状态(按量从大到小) */
+const activeStains = () => player.stains.filter((s) => s.amt > 0 && stainActive(s.kind)).sort((a, b) => b.amt - a.amt)
+/**
  * 着火(DamageModel fire_probability_of_ignition=1):碰到火时先看身上的沾污 —— 防火沾污被火烤掉(updateWet 里每秒 4 成),烤光才点着;
  * 点着后 mFireDurationFrames:4s(OILED ×3,"烧得久得多"),每 0.5s 一跳伤害 = 2% 最大血(wiki:2% of max HP per second),泡进任何液体立刻灭
  */
 function ignitePlayer() {
   if (player.fireT > 0 || flags.protFire) return
-  if (player.wet > 0 && FIRE_PROTECT.has(player.stain)) return
-  player.fireDur = player.stain === 'OILED' && player.wet > 0 ? 12 : 4
+  if (activeStains().some((s) => FIRE_PROTECT.has(s.kind))) return
+  player.fireDur = stainActive('OILED') ? 12 : 4
   player.fireT = player.fireDur; player.fireTick = 0
   sfx.play('fire', { vol: 0.5, rate: 1.2, minGap: 200 })
   oplog.ev('ignite', { x: player.x | 0, y: player.y | 0 })
@@ -783,7 +797,7 @@ let respawning = false
 async function respawn() {
   if (respawning) return
   respawning = true
-  player.dead = false; player.hp = player.maxHp; player.air = 7; player.fireT = 0; player.wet = 0; player.stain = ''; player.iframe = 1.5
+  player.dead = false; player.hp = player.maxHp; player.air = 7; player.fireT = 0; player.stains = []; player.iframe = 1.5
   player.x = 227; player.y = -120; player.vx = 0; player.vy = 0; player.fly = P.flyTimeMax
   cam.x = player.x; cam.y = player.y
   collapsed.clear(); guard.angered = false; guard.deaths = 0
@@ -1001,7 +1015,7 @@ function addEffect(id, mul = 1) {
   const d = EFFECT_DEFS[id]
   if (!d || d.dur <= 0) { toast(`喝下去:${d?.name || id}`); return }
   effects[id] = Math.max(effects[id] || 0, d.dur * mul)
-  if (['WET', 'OILED', 'BLOODY', 'SLIMY', 'RADIOACTIVE'].includes(id)) { player.wet = 10; player.stain = id }
+  if (['WET', 'OILED', 'BLOODY', 'SLIMY', 'RADIOACTIVE'].includes(id)) addStain(mats.byName.get({ WET: 'water', OILED: 'oil', BLOODY: 'blood', SLIMY: 'slime', RADIOACTIVE: 'radioactive_liquid' }[id]) || 0, id, 10)
   toast(`${d.name} ${Math.round(d.dur * mul)}s`)
 }
 /** 喝一口手里的药水 */
@@ -1416,31 +1430,50 @@ function splash(speed, dy = 0) {
   return done
 }
 /**
- * 沾污量(SpriteStainsComponent + StatusEffectDataComponent.stain_effects):player.wet 是 0~10 的"沾了多少"(原作 = 精灵被染色像素的占比),
- * 状态只要还剩 1% 就全额生效(wiki);泡进液体很快沾满、只湿脚最多沾四成;掉的方式是"晃掉"(stain_shaken_drop_chance:动得越快掉得越快,站着不动几乎不干),
+ * 沾污量(SpriteStainsComponent + StatusEffectDataComponent.stain_effects):每种沾污各自 0~10 的"沾了多少"(原作 = 精灵被该液体染色像素的占比),
+ * 到材质的 status_threshold 就全额生效(水 0、油 / 毒液 0.2);泡进液体很快沾满、只湿脚最多沾四成;掉的方式是"晃掉"(stain_shaken_drop_chance:动得越快掉得越快,站着不动几乎不干),
  * 碰火时 WET / BLOODY / SLIMY / RADIOACTIVE 这些 protects_from_fire 的沾污被火"烤掉"(每秒烤掉 4 成)而不是直接着火 —— 烤完才点得着
  */
+/**
+ * 沾上 add(0~10)的液体 m(状态 kind):新染的像素均匀盖在身上,已有的每种沾污按比例被顶掉(SpriteStains 一个像素只存一种材质),总量 ≤ 10;
+ * cap = 这种沾污最多到多少(只湿脚 4 成)
+ */
+function addStain(m, kind, add, cap = 10) {
+  if (!kind || add <= 0) return
+  let s = player.stains.find((x) => x.kind === kind)
+  if (!s) { s = { mat: m, kind, amt: 0 }; player.stains.push(s) }
+  s.mat = m
+  add = Math.min(add, Math.max(0, cap - s.amt))
+  if (add <= 0) return
+  const f = add / 10
+  for (const o of player.stains) if (o !== s) o.amt -= o.amt * f
+  s.amt = Math.min(10, s.amt + add)
+  const tot = player.stains.reduce((a, o) => a + o.amt, 0)
+  if (tot > 10) s.amt -= tot - 10
+  player.stains = player.stains.filter((o) => o.amt > 0.05)
+}
 function updateWet(dt, inLiq, feetWet = false) {
   if ((inLiq || feetWet) && !flags.stainless) {
     const m = inLiq ? matAt(player.x, player.y + P.boxB + P.buoyancyOffsetY) : matAt(player.x, player.y + P.boxB - 0.5)
-    if (m > 0 && KIND[m] === 'liquid') {
-      const k = stainKindOf(m)
-      if (k !== player.stain) player.wet = Math.min(player.wet, 2) // 换了另一种液体:旧的被冲掉大半
-      player.wetMat = m; player.stain = k
-    }
-    player.wet = Math.min(inLiq ? 10 : Math.max(player.wet, 4), player.wet + dt * (inLiq ? 40 : 12))
+    if (m > 0 && KIND[m] === 'liquid') addStain(m, stainKindOf(m), dt * (inLiq ? 40 : 12), inLiq ? 10 : 4)
     return
   }
-  if (player.wet <= 0) { player.stain = ''; player.wet = 0; return }
+  if (!player.stains.length) return
   const speed = Math.hypot(player.vx, player.vy)
-  player.wet -= dt * (0.12 + Math.min(1, speed / 90) * 0.9) // 站着 ~80s 才干,一路跑 ~10s
+  // 晃掉(stain_shaken_drop_chance × 材质 liquid_sprite_stain_shaken_drop_chance,瞬移液 5):站着 ~80s 才干,一路跑 ~10s;每种沾污各自掉
+  for (const s of player.stains) s.amt -= dt * (0.12 + Math.min(1, speed / 90) * 0.9) * (mats.list[s.mat]?.liquidSpriteStainShakenDropChance || 1)
+  player.stains = player.stains.filter((s) => s.amt > 0)
+  if (!player.stains.length) return
   player.dripT -= dt
-  if (player.dripT <= 0 && player.wetMat > 0 && simBound) {
-    player.dripT = 0.08 + (1 - player.wet / 10) * 0.6 + Math.random() * 0.15
+  const tot = player.stains.reduce((a, s) => a + s.amt, 0)
+  if (player.dripT <= 0 && simBound) {
+    player.dripT = 0.08 + (1 - tot / 10) * 0.6 + Math.random() * 0.15
+    // 滴哪种:按量抽
+    let r = Math.random() * tot, drip = player.stains[0]; for (const s of player.stains) { r -= s.amt; if (r <= 0) { drip = s; break } }
     const b = bodyBox()
     const x = b.x0 - 1 + Math.floor(Math.random() * (b.x1 - b.x0 + 3)), y = Math.floor(player.y - 8 + Math.random() * 12)
     // 滴落只是粒子(原作 stain 掉落也不成像素),落地即散,别把脚下的土全变成泥
-    if (debris.length < 900) debris.push({ x, y, vx: (Math.random() - 0.5) * 12 + player.vx * 0.5, vy: 10, m: player.wetMat, col: mats.color[player.wetMat], dust: true })
+    if (drip.mat > 0 && debris.length < 900) debris.push({ x, y, vx: (Math.random() - 0.5) * 12 + player.vx * 0.5, vy: 10, m: drip.mat, col: mats.color[drip.mat], dust: true })
   }
 }
 /** 水下气泡:嘴边冒出,向上加速,到空气就破 */
@@ -1545,12 +1578,15 @@ function step(dt) {
     const nearFire = mc2 === sim.M_FIRE || mf === sim.M_FIRE
     if (nearFire) {
       // 防火沾污先被火烤(wiki:Wet "is depleted by contact with Fire"),烤干才着;冒一点蒸汽
-      if (player.wet > 0 && FIRE_PROTECT.has(player.stain) && player.fireT <= 0) {
-        player.wet -= dt * 4
+      const prot = activeStains().filter((s) => FIRE_PROTECT.has(s.kind))
+      if (prot.length && player.fireT <= 0) {
+        // 每种防火沾污都被烤(每秒 4 成,第 12 条校的;水的 liquid_sprite_stain_ignited_drop_chance=10 是唯一写了这项的,其它液体引擎默认值没反出来,先一视同仁)
+        for (const s of prot) s.amt -= dt * 4
+        player.stains = player.stains.filter((s) => s.amt > 0)
         if (Math.random() < dt * 8 && simBound) { const x = Math.floor(player.x + (Math.random() - 0.5) * 5), y = Math.floor(player.y - 9); if (sim.get(x, y) === 0 && sim.M_STEAM) sim.set(x, y, sim.M_STEAM, 0) }
       } else ignitePlayer()
     }
-    if (player.stain === 'OILED' && !nearFire && player.fireT <= 0) { for (const [dx, dy] of [[-3, 0], [3, 0], [0, -6], [0, 3]]) if (matAt(player.x + dx, player.y + dy) === sim.M_FIRE) { ignitePlayer(); break } }
+    if (stainActive('OILED') && !nearFire && player.fireT <= 0) { for (const [dx, dy] of [[-3, 0], [3, 0], [0, -6], [0, 3]]) if (matAt(player.x + dx, player.y + dy) === sim.M_FIRE) { ignitePlayer(); break } }
     if (player.fireT > 0) {
       player.fireT -= dt
       if (inLiq) player.fireT = 0 // 泡进任何液体(包括油)都灭(wiki)
@@ -1558,10 +1594,9 @@ function step(dt) {
       if (player.fireTick >= 0.5) { player.fireTick = 0; player.hp -= 0.01 * player.maxHp; player.hurtFlash = 0.15; if (player.hp <= 0) { player.iframe = 0; damagePlayer(0.001, 0, 0, 'fire') } }
       if (Math.random() < 0.7) { const x = Math.floor(player.x + (Math.random() - 0.5) * 5), y = Math.floor(player.y - 6 + Math.random() * 9); if (sim.get(x, y) === 0) sim.set(x, y, sim.M_FIRE, 0) }
       for (let k = 0; k < 2 && sparks.length < 600; k++) sparks.push({ x: player.x + (Math.random() - 0.5) * 6, y: player.y - 8 + Math.random() * 10, vx: (Math.random() - 0.5) * 24, vy: -50 - Math.random() * 70, c: Math.random() < 0.5 ? '#ffb040' : '#ff6a20', life: 0.3 + Math.random() * 0.2 })
-      if (player.fireT <= 0) player.stain = player.wet > 0 ? player.stain : ''
     }
     // RADIOACTIVE 沾污:慢慢掉血
-    if (player.stain === 'RADIOACTIVE' && player.wet > 0 && !flags.protRadioactive) player.hp -= 0.02 * dt
+    if (stainActive('RADIOACTIVE') && !flags.protRadioactive) player.hp -= 0.02 * dt
   }
   if (simBound) updateBubbles(dt, headInLiq)
   // 憋气(DamageModel air_needed=1 / air_in_lungs_max=7 / air_lack_of_damage=0.6):头没在液体里 7 秒后开始掉血,出水很快回满;BREATH_UNDERWATER 特权免
@@ -1611,7 +1646,7 @@ function step(dt) {
   }
   player.fuel = (player.fly / P.flyTimeMax) * 100
   // 水平:目标 ±57(地面)/ ±52(空中),accel_x 0.15 每帧向目标插值;松手也是同样的减速
-  const target = dir * (player.onGround ? P.runMax : P.flyVx) * (player.stain === 'SLIMY' && player.wet > 0 ? 0.6 : 1) * effectMul.move // SLIMY:动作变慢;疾跑药 ×2
+  const target = dir * (player.onGround ? P.runMax : P.flyVx) * (stainActive('SLIMY') ? 0.6 : 1) * effectMul.move // SLIMY:动作变慢;疾跑药 ×2
   // 被黑洞吸着(pullT)且没按方向:不往 0 收速度,不然拉力被"松手减速"抵消掉;按着方向才是"trying to resist its pull"
   player.pullT = Math.max(0, (player.pullT || 0) - dt)
   if (!(player.pullT > 0 && !dir)) player.vx += (target - player.vx) * Math.min(1, P.accelX * f60)
@@ -1705,21 +1740,25 @@ const wetCv = document.createElement('canvas'); wetCv.width = 48; wetCv.height =
 function drawPlayer(ctx, ox, oy) {
   const a = Math.atan2(player.aimY - (player.y - 2), player.aimX - player.x)
   let tip
-  if (player.wet > 0 && player.wetMat > 0) {
+  const stains = player.stains.filter((s) => s.amt > 0 && s.mat > 0)
+  if (stains.length) {
     // SpriteStainsComponent:身上沾了液体 → 精灵按液体色染一层,出水后随滴落渐淡
     const wc = wetCv.getContext('2d')
     wc.globalCompositeOperation = 'source-over'; wc.clearRect(0, 0, 48, 48)
     const oxo = player.x - 24, oyo = player.y - 28
     tip = sprite.draw(wc, player.x, player.y, player.face, a, oxo, oyo)
     tip = { x: tip.x + oxo - ox, y: tip.y + oyo - oy }
-    // SpriteStainsComponent:染的是精灵像素本身(材质色),fade_stains_towards_srite_top=1 → 越靠头顶越淡;量越大越深(原版是染色像素占比)
-    const c = mats.color[player.wetMat], frac = Math.min(1, player.wet / 10)
+    // SpriteStainsComponent:染的是精灵像素本身(材质色),fade_stains_towards_srite_top=1 → 越靠头顶越淡;量越大越深(原版是染色像素占比);
+    // 几种液体同时在身上就一层层叠(原版是各占一部分像素)
     wc.globalCompositeOperation = 'source-atop'
-    const g = wc.createLinearGradient(0, 28 + HEAD, 0, 28 + FEET)
-    const rgb = `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`
-    g.addColorStop(0, `rgba(${rgb},${(0.05 + 0.15 * frac).toFixed(2)})`); g.addColorStop(1, `rgba(${rgb},${(0.15 + 0.5 * frac).toFixed(2)})`)
-    wc.fillStyle = g
-    wc.fillRect(0, 0, 48, 48)
+    for (const s of stains) {
+      const c = mats.color[s.mat], frac = Math.min(1, s.amt / 10)
+      const g = wc.createLinearGradient(0, 28 + HEAD, 0, 28 + FEET)
+      const rgb = `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`
+      g.addColorStop(0, `rgba(${rgb},${(0.05 + 0.15 * frac).toFixed(2)})`); g.addColorStop(1, `rgba(${rgb},${(0.15 + 0.5 * frac).toFixed(2)})`)
+      wc.fillStyle = g
+      wc.fillRect(0, 0, 48, 48)
+    }
     ctx.drawImage(wetCv, Math.round(player.x - ox) - 24, Math.round(player.y - oy) - 28)
   } else tip = sprite.draw(ctx, player.x, player.y, player.face, a, ox, oy)
   wandTip = { x: tip.x + ox, y: tip.y + oy }
@@ -1739,7 +1778,8 @@ function activeStatuses() {
   const out = []
   // 原版状态区:着火显示剩余秒(release notes "Fire status duration displayed in the status area"),沾污显示量("Stain status amount is displayed next to icon")
   if (player.fireT > 0) out.push({ icon: 'on_fire', frac: player.fireT / (player.fireDur || 4), col: '#ff7a20', text: `着火 ${player.fireT.toFixed(1)}s` })
-  if (player.wet > 0 && player.stain) out.push({ icon: player.stain.toLowerCase(), frac: Math.min(1, player.wet / 10), col: STAIN_COL[player.stain] || '#7fb8ff', text: `${STAIN_NAME[player.stain] || player.stain} ${Math.ceil(Math.min(1, player.wet / 10) * 100)}%` })
+  // 每种生效中的沾污一个图标(stain_effects 一项一种,水 + 毒液可以同时亮),量 = 占比
+  for (const s of activeStains()) out.push({ icon: s.kind.toLowerCase(), frac: Math.min(1, s.amt / 10), col: STAIN_COL[s.kind] || '#7fb8ff', text: `${STAIN_NAME[s.kind] || s.kind} ${Math.ceil(Math.min(1, s.amt / 10) * 100)}%` })
   // 喝药来的效果(effects: id → 剩余秒):有图标的显示剩余秒
   for (const [id, left] of Object.entries(effects)) {
     if (!(left > 0)) continue

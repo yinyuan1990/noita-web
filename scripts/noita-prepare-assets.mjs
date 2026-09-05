@@ -54,6 +54,8 @@ const NUM_FIELDS = {
   gas_speed: 0, gas_upwards_speed: 0, gas_horizontal_speed: 0, gas_downwards_speed: 0,
   solid_friction: 0, solid_restitution: 0, solid_gravity_scale: 1, solid_break_on_explosion_rate: 0,
   always_ignites_damagemodel: 0, liquid_slime: 0, liquid_solid: 0, liquid_stains: 0,
+  // 沾污(SpriteStains):status_threshold = 精灵被染占比不到这个数状态不生效(油 / 毒液 0.2);shaken_drop = 晃掉速度倍率(瞬移液 5);ignited_drop = 碰火时掉的倍率(水 10)
+  liquid_sprite_stains_status_threshold: 0, liquid_sprite_stain_shaken_drop_chance: 1, liquid_sprite_stain_ignited_drop_chance: 0,
   // wiki(Making a custom material):platform_type 0 = fall through / 1 = can stand on;solid_static_type 0 = 会掉、角色能穿、弹丸不能;1 = 静态全挡;2~5 = 静态、角色能穿、弹丸不能
   // 树 / 蘑菇的 wood_loose / fungus_loose 都是 solid_static_type=0 platform_type=0 → 人和怪穿树走,子弹打得中
   platform_type: 1, solid_static_type: 0,
