@@ -927,7 +927,9 @@ export class ProjectileSystem {
         dug++
         // 液体:抛飞(落回来还是液体);material_sparks:真材质碎屑沿反射向喷回
         if (k === K_LIQUID) {
-          if (!ex.destroyLiquid) { const n = Math.sqrt(d2) || 1, s = 60 + Math.random() * 120; this.hooks.debris?.(xx + 0.5, yy + 0.5, (dx / n) * s, (dy / n) * s - 40, m, mats.color[m]) }
+          // 反 exe IMPL_DoExplosion 0x687d7a:CreateParticle 速度 = (格子相对爆心的偏移) × 0.1 × (1 + Random(−0.35, 0.35)) px/帧(×60 换 px/s)——
+          // 火花弹 r2 的爆炸只把水挪 ~12 px/s(几乎看不出),炸弹 r60 边上的水 ~360 px/s 才是大浪;之前一律 60~180 px/s 往上喷,子弹一死水里就一团水花
+          if (!ex.destroyLiquid) { const jx = 1 + (Math.random() - 0.5) * 0.7, jy = 1 + (Math.random() - 0.5) * 0.7; this.hooks.debris?.(xx + 0.5, yy + 0.5, dx * 0.1 * jx * 60, dy * 0.1 * jy * 60, m, mats.color[m]) }
         } else if (ms > 0 && Math.random() < Math.min(0.6, ms / Math.max(4, r * r))) {
           const a2 = back + (Math.random() - 0.5) * 1.6, s = 50 + Math.random() * 120
           this.hooks.debris?.(xx + 0.5, yy + 0.5, Math.cos(a2) * s, Math.sin(a2) * s - 30, m, mats.color[m])

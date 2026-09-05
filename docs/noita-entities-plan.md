@@ -644,6 +644,8 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     - **入水**(用户:"原版子弹入水没有多余粒子,水面会鼓动"):反 exe `VelocitySystem::Update`(0xd67458,`VelocityComponent.displace_liquid` 默认 1):实体这一帧所在格变了 → 看位置周围 **3×3** 格,
       液体格计入 `mLatestLiquidHitCount`(liquid_drag 乘它),并以 `rand%100 < 75` 的概率把那格抛成飞行粒子,速度 = **−(mVelocity × 0.1) 再转 Random(−0.3, 0.3) rad** —— 水沿弹的来向以一成弹速被顶回去,水面就这么鼓起来,没有别的溅射。
       我们之前入水那一下随机掀 3~16 粒 40~190 px/s 的水珠(自创)。改:`_displaceLiquid` 每帧一次(原版按帧末位置,不是每个子步)照上式;液体阻力乘液体格数。验证:火花弹 (749,177) 入水,水粒子 (−69,−29)(−76,−3)…= −0.1v±0.3rad,每帧 ≈7 粒;速度 769→500→395→238 几帧就慢下来。
+      **用户仍看到水花**:剩下的一处是弹死时的爆炸 —— IMPL_DoExplosion 0x687d7a 对坑里的液体(hole_destroy_liquid=0)`CreateParticle` 速度 = 格子相对爆心的偏移 × 0.1 × (1 + Random(−0.35, 0.35)) px/帧:
+      火花弹 r2 的坑只把水挪 ~12 px/s(基本看不出),炸弹 r60 边上才有 ~360 px/s 的大浪;我们之前不管半径一律 60~180 px/s 往上喷。改成原式后火花弹在水里死:13 粒、最快 43 px/s(含入水顶回去的)。
 
 21. **毒液不是亮绿的(用户 09-05:原版截图里 radioactive_liquid 亮黄绿带光晕,我们是暗橄榄色)**:materials.xml `radioactive_liquid` Graphics color `44B4FF10`(alpha 只有 27%)+ `gfx_glow=60`。
     原版靠 glow:`post_final.frag` 把 glow 贴图(材质色 × gfx_glow/255,低分辨率 + 模糊 = 光晕)`lights += glow`(发光格不被黑暗压暗)再 `color = max(color + glow×0.6 − 0.6×lights, color + glow − color×sky×glow)` screen 叠上去,
