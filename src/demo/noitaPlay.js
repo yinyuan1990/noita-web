@@ -1766,10 +1766,9 @@ function drawStatusIcons(ctx, ox, oy) {
   ctx.imageSmoothingEnabled = false
   list.forEach((s, i) => {
     const im = STATUS_ICONS[s.icon], x = x0 + i * (S + gap)
+    // 原版头顶只有 ui_gfx/status_indicators 的图标本身,剩余量条 / 百分比只在 HUD 血条下面的状态区(updateStatusHud)
     if (im?.complete && im.naturalWidth) ctx.drawImage(im, x, y0, S, S)
     else { ctx.fillStyle = s.col; ctx.fillRect(x, y0, S, S) }
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x, y0 + S + 1, S, 1)
-    ctx.fillStyle = s.col; ctx.fillRect(x, y0 + S + 1, Math.max(1, Math.round(S * Math.min(1, s.frac))), 1)
   })
 }
 

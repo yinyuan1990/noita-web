@@ -560,7 +560,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       `spawnItem('goldnugget_N')` 之前没带 gold 值,探针撒的金块捡不到钱,顺手修了。
     - 头顶导航箭头 + "传送门 1149" 文字去掉(原版头顶什么都没有);屏边小箭头和顶部横幅保留,距离数字进横幅。
     - 状态区按原版放 HUD 血条 / 悬浮条下面(release notes:"Fire status duration displayed in the status area" / "Stain status amount is displayed next to icon"):
-      每行 12×12 图标 + 剩余量条 + 数字(着火 = 剩余秒,沾污 = %,药效 = 剩余秒),文字行里的 [湿] [着火] 撤掉。头顶只留图标。
+      每行 12×12 图标 + 剩余量条 + 数字(着火 = 剩余秒,沾污 = %,药效 = 剩余秒),文字行里的 [湿] [着火] 撤掉。头顶只留图标(09-05 用户指出头顶图标下面还画着一条量条,原版没有 → 去掉,`drawStatusIcons` 只画图)。
     - 主角身上怎么体现:SpriteStainsComponent 染的是精灵像素本身,`fade_stains_towards_srite_top=1` 越靠头顶越淡 → 染色改成脚重头轻的渐变,量越大越深;着火照旧从身体往外冒火格 + 火星(fire_how_much_fire_generates=4/帧)。
 15. **怪卡石头里 / 灯笼(09-05)**:
     - 怪卡在石头里:原版怪只在生成点的空气里出现,不存在长在岩石里的怪;我们地形和原版有出入 / 布景后盖 / 塌方,`_settle` 只往上找 24px、`_unstick` 只在 ±3px 找,找不到就原地冻住 —— 就是截图那只。
