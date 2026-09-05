@@ -1253,6 +1253,9 @@ const editor = {
 $('edClose').addEventListener('click', (e) => { e.stopPropagation(); editor.toggle(false) })
 $('btnEdit').addEventListener('click', (e) => { e.stopPropagation(); editor.toggle() })
 for (const id of ['editor', 'btnEdit']) $(id).addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true })
+// 背包里的手指拖动要让浏览器自己滚(#editor overflow:auto):touchmove 也拦住,否则冒泡到 window 的 touchmove 会 preventDefault 把滚动吃掉
+$('editor').addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true })
+$('editor').addEventListener('touchend', (e) => e.stopPropagation(), { passive: true })
 window.addEventListener('keydown', (e) => { if (e.key === 'i' || e.key === 'I' || e.key === 'Tab') { e.preventDefault(); editor.toggle() } })
 
 // ── 踢(原版右键 kick:踢飞近处的道具 / 尸体,踢到怪掉一点血并击退)──
