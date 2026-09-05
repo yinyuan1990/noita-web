@@ -812,7 +812,9 @@ export class ProjectileSystem {
     }
     let ex = d.explosion
     // c.explosion_radius / damage_explosion(_add):加到 config_explosion 上(高爆 +64 半径 +3.2 伤害;没有爆炸配置的弹加了半径也会炸)
-    if ((p.exR || p.exD) && (ex || p.exR > 0)) ex = { ...(ex || { radius: 0, damage: 0, shake: 0, hole: true, holeLiquid: false, rayEnergy: 0, maxDurability: 0, sprite: null, sparks: null, matSparks: null, light: null, createCell: null, power: [0, 0.2], knockback: 1 }), radius: (ex?.radius || 0) + p.exR, damage: (ex?.damage || 0) + p.exD }
+    if ((p.exR || p.exD) && (ex || p.exR > 0)) ex = { ...(ex || { radius: 0, damage: 0, shake: 0, hole: true, holeLiquid: false, rayEnergy: 0, maxDurability: 0, sprite: null, sparks: null, matSparks: null, light: null, createCell: null, power: [0, 0.2], knockback: 1 }), radius: Math.max(0, (ex?.radius || 0) + p.exR), damage: (ex?.damage || 0) + p.exD }
+    // explosion_tiny.lua(聚爆卡的附加实体):不管加减多少,半径直接设成 5
+    if (p.beh?.explosionRadiusSet !== undefined && ex) ex = { ...ex, radius: p.beh.explosionRadiusSet }
     if (!ex || !(byHit ? d.deathExplode : d.lifetimeExplode) && !(p.exR > 0)) return
     this._lg = d.looseGround || null
     this._exFx = p.ragdollFx || p.d.ragdollFx || 0 // 火箭类 c.ragdoll_fx=2:被爆炸炸死的尸体 BLOOD_EXPLOSION 散块
@@ -864,7 +866,7 @@ export class ProjectileSystem {
    */
   explode(x, y, ex, back = -Math.PI / 2) {
     const sim = this.sim, mats = this.mats
-    const r = ex.radius
+    const r = Math.max(0, ex.radius || 0) // 修饰卡减出来的负半径:不挖不伤,只剩闪光 / 声音(负数会让 createRadialGradient 抛错把整个渲染循环卡死)
     const maxDur = ex.maxDurability || 10
     let dug = 0
     // CastRays

@@ -52,6 +52,7 @@ export const EXTRA_BEHAVIOR = {
   accelerating_shot: { airFrictionAdd: -3 }, // accelerating_shot.lua:air_friction −3
   decelerating_shot: { airFrictionAdd: 6 },
   area_damage: { areaDamage: { r: 16, perFrame: 0.14 } }, // AreaDamageComponent circle_radius 16 damage_per_frame 0.14
+  explosion_tiny: { explosionRadiusSet: 5 }, // explosion_tiny.lua(聚爆):第 1 帧把 config_explosion.explosion_radius 直接设成 5(卡上的 −30 被这句盖掉,火箭 15−30 不会变负数)
   light_shot: {}, heavy_shot: {}, tinyspark_white: {}, tinyspark_white_small: {}, tinyspark_white_weak: {}, tinyspark_yellow: {}, tinyspark_red: {}, // 纯粒子装饰
 }
 /** game_effect_entities 里我们能施加的状态(damage_game_effect_entities:命中时给目标) */

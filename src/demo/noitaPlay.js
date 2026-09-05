@@ -1856,6 +1856,7 @@ function render() {
   L.fillRect(0, 0, lw, lh)
   L.globalCompositeOperation = 'lighter'
   const light = (x, y, r, rgb, a) => {
+    if (!(r > 0)) return // 半径 ≤0 / NaN:createRadialGradient 会抛 IndexSizeError,一帧抛错整个循环就停了
     const g = L.createRadialGradient(x * s, y * s, 0, x * s, y * s, r * s)
     g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(0.5, `rgba(${rgb},${a * 0.35})`); g.addColorStop(1, 'rgba(0,0,0,0)')
     L.fillStyle = g; L.beginPath(); L.arc(x * s, y * s, r * s, 0, 7); L.fill()

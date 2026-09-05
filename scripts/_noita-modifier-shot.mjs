@@ -60,6 +60,17 @@ const r = await page.evaluate(async () => {
   res.teleportCast = { castTo: P.defs.teleport_cast.castTo, spawnAt, boltsAlive: bolts.length }
   // 6. 法术库里现在有多少修饰卡可用
   res.usableMods = W.usableSpells().filter((s) => s.type === 'MODIFIER').map((s) => s.id).length
+  // 7. 魔法飞弹 + 聚爆(EXPLOSION_TINY:explosion_radius −30,火箭 15 → 负数曾让 createRadialGradient 抛错卡死):explosion_tiny.lua 把半径直接设 5,朝下打地应炸出 r≈5 的坑、循环还在跑
+  {
+    pl.x = ox; pl.y = oy + 20; pl.vx = 0; pl.vy = 0
+    for (let y = oy + 40; y < oy + 60; y++) for (let x = ox - 30; x < ox + 30; x++) np.sim.set(x, y, np.mats.byName.get('rock_static'), 0)
+    const { ps: p7 } = castAt(['EXPLOSION_TINY', 'ROCKET'], Math.PI / 2, ox, oy + 20)
+    const beh = p7[0].beh, exR = p7[0].exR
+    const t0 = np.entities.time
+    await wait(900)
+    let dug = 0; for (let y = oy + 40; y < oy + 60; y++) for (let x = ox - 30; x < ox + 30; x++) if (np.sim.get(x, y) === 0) dug++
+    res.tinyRocket = { exR, radiusSet: beh?.explosionRadiusSet, projDead: p7[0].dead, holeCells: dug, loopAlive: np.entities.time - t0 > 0.5, errors: window.__lastError || null }
+  }
   return res
 })
 console.log(JSON.stringify(r, null, 1))

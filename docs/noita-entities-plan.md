@@ -502,7 +502,8 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
    - `gun.lua` 语义(Wands.cast 照抄):`c` **每个 shot 一份**(`create_shot` → 默认值;根 shot 从法杖 gunaction_config 拷);同一 shot 里所有卡(弹丸卡自己也改 c:火球 +20 后座、火花弹 +5 暴击)的 ops 都进同一个 c,
      `register_action(c)` 一次 → shot 里所有弹共享最终 c;触发载荷是新 shot(新 c);`shot_effects` 整次施法共享。
    - 引擎侧:`extra_entities` 是挂在弹上的子实体,绝大多数是 lua(数值原样抄进 `Wands.EXTRA_BEHAVIOR`):piercing_shot(on_collision_die=0)/ clipping_shot(penetrate_world,墙里 ×0.1)/ fly_up|down(第 20 帧竖直 2|v|)/
-     chaotic_arc(每 2 帧 ±0.4·max|v|)/ floating_arc(探 30px 悬 12px,vy 限 ±240 各一半)/ avoiding_arc(每 3 帧四向探 20px,(20²−d²)×0.3)/ lifetime_infinite / remove_bounce / nolla(1 帧)/ accelerating(air_friction −3)/ decelerating(+6)/ autoaim(200px 最近敌人 lerp 0.8 ±0.1rad)/ homing_cursor(朝法杖朝向转 20%)。
+     chaotic_arc(每 2 帧 ±0.4·max|v|)/ floating_arc(探 30px 悬 12px,vy 限 ±240 各一半)/ avoiding_arc(每 3 帧四向探 20px,(20²−d²)×0.3)/ lifetime_infinite / remove_bounce / nolla(1 帧)/ accelerating(air_friction −3)/ decelerating(+6)/ autoaim(200px 最近敌人 lerp 0.8 ±0.1rad)/ homing_cursor(朝法杖朝向转 20%)/
+     explosion_tiny(聚爆卡:`c.explosion_radius −30` 之外还挂 `explosion_tiny.lua`,第 1 帧把 `config_explosion.explosion_radius` **直接设成 5** —— 火箭 15−30 = −15 不会出现;09-05 用户报"魔法飞弹 + 聚爆碰地卡死"就是负半径喂进 `createRadialGradient` 抛错停了整个循环,现按 lua 设 5,`explode()` / 光闪再兜底夹 ≥0)。
      **HomingComponent**(反 exe HomingSystem::Update 0xc4adc0):detect_distance(默认 150)内最近目标;accelerate 模式 `v = v × velocity_multiplier + dir × targeting_coeff × dt × (1 − d/detect)`(所以追踪弹会明显变慢);just_rotate 模式只按 max_turn_rate 每帧转向。
      homing 130/0.86、homing_short 480/0.83/60、homing_shooter 30/0.99/300(追射手)、anti_homing −130、homing_rotate 0.2rad、homing_accelerating 20/0.4/200 每帧 +2/+0.01。
      **SineWaveComponent** m 0.6 × sin(freq 1.0 × 帧)当方向摆;**AreaDamageComponent** r16 每帧 0.14。
