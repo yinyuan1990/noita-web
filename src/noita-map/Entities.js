@@ -394,15 +394,41 @@ export class Entities {
           if (this._solid(Math.floor(hx) + dx, Math.floor(hy) + dy)) { bd = dd; best = [Math.floor(hx) + dx + 0.5, Math.floor(hy) + dy + 0.5] }
         }
         b.nailed = false
-        if (best) ropes.push({ ax: best[0], ay: best[1], lx, ly, len: Math.max(0, Math.sqrt(bd) - 1), breakDist: d.joint.breakForce > 0 && d.joint.breakForce < 1 ? 8 : 24, attach: true, breakOnModified: !!d.joint.breakOnModified })
+        if (best) {
+          const len = Math.max(0, Math.sqrt(bd) - 1)
+          // 挂直:挂钩放到锚点正下方 len 处;钉在侧墙上的,身子还埝在墙里就横着挪开(≤6px),不然每帧被地形顶出来又被链拉回去,永远在墙上抖、永远睡不着
+          const P = [0, 0]
+          const overlaps = () => { for (let e = 0; e < b.edge.length; e++) { b.worldOf(b.edge[e], P); if (this._solidB(Math.floor(P[0]), Math.floor(P[1]))) return true } return false }
+          b.rot = 0; b.x = best[0] - lx; b.y = best[1] + 0.5 + len - ly
+          if (overlaps()) { const x0 = b.x; let ok = false; for (let k = 1; k <= 6 && !ok; k++) for (const s of [1, -1]) { b.x = x0 + s * k; if (!overlaps()) { ok = true; break } } if (!ok) b.x = x0 }
+          const hx = b.x + lx, hy = b.y + ly
+          ropes.push({ ax: best[0], ay: best[1], lx, ly, len: Math.max(len, Math.hypot(hx - best[0], hy - best[1])), breakDist: d.joint.breakForce > 0 && d.joint.breakForce < 1 ? 8 : 24, attach: true, breakOnModified: !!d.joint.breakOnModified })
+        }
       } else { b.nailed = false; ropes.push({ ax: b.x + lx, ay: b.y + ly, lx, ly, len: 0, breakDist: d.joint.breakable ? 12 : 24 }) }
     }
     if (ropes.length) b.ropes = ropes
   }
 
+  /**
+   * 醒着刚体的空间格(32px):怪的碰撞查询 _solidC 一帧要问 7000 次"这格有没有醒着的刚体",按刚体表线性扫(矿里 50 多盏灯笼 + 尸块 = 140 个)
+   * 一帧上百万次 contains,单这一项 16ms;按格子查一次只碰 0~2 个。每帧 _updateBodies 之后重建(刚体动过了)
+   */
+  _rebuildBodyGrid() {
+    const g = this._bgrid ||= new Map()
+    g.clear()
+    for (const b of this.bodies) {
+      if (b.dead || b.asleep) continue
+      const r = b.r + 1, x0 = Math.floor((b.x - r) / 32), x1 = Math.floor((b.x + r) / 32), y0 = Math.floor((b.y - r) / 32), y1 = Math.floor((b.y + r) / 32)
+      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) { const k = ((cx & 0xffff) << 16) | (cy & 0xffff); const c = g.get(k); if (c) c.push(b); else g.set(k, [b]) }
+    }
+  }
   /** 醒着的刚体像素挡人(玩家碰撞 / 站上去);睡着的已经在 mat 里 */
   bodySolidAt(wx, wy) {
-    for (const b of this.bodies) if (!b.asleep && b.contains(wx + 0.5, wy + 0.5)) return b
+    const g = this._bgrid
+    if (!g) { for (const b of this.bodies) if (!b.asleep && !b.dead && b.contains(wx + 0.5, wy + 0.5)) return b; return null }
+    const c = g.get(((Math.floor(wx / 32) & 0xffff) << 16) | (Math.floor(wy / 32) & 0xffff))
+    if (!c) return null
+    for (const b of c) if (!b.asleep && !b.dead && b.contains(wx + 0.5, wy + 0.5)) return b
     return null
   }
   /** 这一格是哪个刚体的(醒着 / 睡着都算;推箱子时用:睡着的推一下就醒) */
@@ -949,6 +975,7 @@ export class Entities {
     const rect = cam && cam.x0 !== undefined ? cam : null
     const x0 = rect ? rect.x0 : cam.x - VW / 2 - 96, x1 = rect ? rect.x1 : cam.x + VW / 2 + 96, y0 = rect ? rect.y0 : cam.y - VH / 2 - 96, y1 = rect ? rect.y1 : cam.y + VH / 2 + 96
     this._updateBodies(dt, x0, y0, x1, y1)
+    this._rebuildBodyGrid()
     const pl = this.player
     for (let i = this.worms.length - 1; i >= 0; i--) {
       const w = this.worms[i]

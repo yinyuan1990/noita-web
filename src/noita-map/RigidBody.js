@@ -105,6 +105,8 @@ export class RigidBody {
       if (this._resolve(solid)) touching = true
       if (this.ropes) this._ropes()
     }
+    // 挂着的东西(灯笼的铰链 / 吊链):关节摩擦把摆动耗掉,不然 50 盏灯笼永远在墙上晃、永远醒着
+    if (this.ropes && this.hanging) { const f = Math.pow(0.15, dt); this.vx *= f; this.vy *= f; this.w *= Math.pow(0.1, dt) }
     // 快停下来的东西"坐实":慢速贴地时角速度再多耗一点;角度离最近的正放(0 / 90°)不到 4° 且几乎不转 → 直接摆正。
     // 不然长凳 / 崩塌的石块这种细长件只有一条腿挨地时按点接触给扭矩,另一条腿落地又反过来,永远左右摇(用户反馈的板凳 / 石块被打后来回晃)
     if (touching && Math.abs(this.vx) < 10 && Math.abs(this.vy) < 14 && !this.fixedRot) {

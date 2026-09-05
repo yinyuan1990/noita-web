@@ -578,6 +578,10 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       `_attachRopes` 从挂钩点(图顶中)12px 内找最近实心格钉上去、挂钩到墙的距离当链长(12px 内没墙就掉,原版一样),拽 8px 断,**任何像素被打掉关节就断**(灯 hp 0.15,火花弹 0.12 → 第一发起火漏油、掉下来 / 第二发碎)。
       火苗 `lantern_small_flame.xml` 19 帧 z_index −1:Noita 的 z 越小越靠前,火苗画在玻璃壳**前面**(之前把整张 171×13 的帧表当皮直接画了)→ RigidBody `over` 叠帧,睡着也走帧。
       探针 `_noita-lamp-shot.mjs`:传送到煤矿 (300,400),lights 表 56 个带 ent 的标记 → 54 只 lantern_small 刚体、53 只挂着(链长 2~5px、锚点是实心);正下方朝上打:第 2 发抠像素 + 起火 + 碎,洒 4 格油。
+    - **随之而来的 20fps(用户 09-05)**:`_noita-prof-shot.mjs`(给各子系统 update/render 包计时,`deep` 连 Entities 内部方法一起包)—— 矿里 `entities.update` 15.9ms/帧,全在 `_solidC` → `bodySolidAt`:
+      怪的碰撞查询一帧问 7000 次"这格有没有醒着的刚体",而 `bodySolidAt` 线性扫全部刚体(140 个:50 多盏灯笼 + 尸块 + 道具)做 contains → 一帧上百万次。
+      改:`_rebuildBodyGrid` 每帧 `_updateBodies` 后把醒着的刚体按 32px 格子建哈希,`bodySolidAt` 只查一格(0~2 个)→ 0.87ms/帧。顺带:挂着的灯笼永远在摆、永远醒着(27/53)——
+      `RigidBody.step` 给挂着的(hanging)加关节摩擦(每秒 ×0.15 / 角 ×0.1);钉在侧墙上的身子埝在墙里,每帧被地形顶出又被链拉回永远抖 → `_attachRopes` 先把灯挂直到锚点正下方、还重叠就横挪 ≤6px。之后醒着的灯 3/54。
 16. **金块颜色 / 刚体摇晃 / 怪穿墙 / 圣山崩塌 / 捡心效果(09-05 第三批)**:
     - 金块是绿红黄的:`items_gfx/goldnugget_*.png` 不是颜色图,`gold_box2d` 的父材质 gem_box2d `Graphics normal_mapped="1"` —— png 是**法线图**,显示 = 材质 color(ffc74e 金)按法线打光。
       materials.json 抽 `normalMapped`,RigidBody `_canvas` 对这类按法线(左上来光)给材质色明暗;碎屑也用材质色。宝石 / 药瓶玻璃同一套。头顶状态图标改原图 12×12 不缩放(缩到 8 就糊)。
