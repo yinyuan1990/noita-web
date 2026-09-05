@@ -257,6 +257,8 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
     bounces: num(pc.bounces_left, 0), bounceEnergy: num(pc.bounce_energy, 0.8), bounceAlways: pc.bounce_always === '1', bounceAnyAngle: pc.bounce_at_any_angle === '1', bounceFx,
     dieLowVel: pc.die_on_low_velocity === '1' ? num(pc.die_on_low_velocity_limit, 5) : 0, dieOnLiquid: pc.die_on_liquid_collision === '1',
     collideWorld: pc.collide_with_world !== '0' && pc.penetrate_world !== '1', groundPenetration: num(pc.ground_penetration_coeff, 0),
+    // 反 exe ProjectileSystem 0xd32970(穿地):max_energy = coeff × ½v²,每格 take = min(格 hp, E),格 hp −= take、v ×= (1 − take/E),格 hp 归零就挖掉继续走;max_durability > 0 时耐久更高的格挡住
+    groundPenMaxDur: num(pc.ground_penetration_max_durability_to_destroy, 0),
     leaveSprite: pc.on_death_gfx_leave_sprite === '1', velRotation: pc.velocity_sets_rotation !== '0', angularVelocity: num(pc.angular_velocity, 0),
     mass: num(vel.mass, 0.05),
     // VelocityComponent 引擎默认(component_documentation):gravity_y 400 / air_friction 0.55 / terminal_velocity 1000 / liquid_drag 1 —— 没写就是这些,不是 0

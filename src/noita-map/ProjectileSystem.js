@@ -102,7 +102,7 @@ export class ProjectileSystem {
     const p = {
       name, d, x, y, owner, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, speed0: spd, life: life > 0 ? life : 30, age: 0, frame: 0, ft: 0,
       emit: d.emitters.map(() => ({ t: 0, dist: 0, ring: 0 })), sEmit: (d.sprEmitters || []).map(() => ({ t: 0 })), lastX: x, lastY: y, dead: false,
-      bounces: d.bounces, rot: a, spin: d.angularVelocity || 0, penetrate: d.groundPenetration > 0 ? d.groundPenetration * 8 : 0, frames: 0,
+      bounces: d.bounces, rot: a, spin: d.angularVelocity || 0, frames: 0,
       payload: payload && payload.length ? payload : null, // 触发弹(gun.lua BeginTriggerHitWorld / Timer / Death)的载荷:死的时候在原地朝原方向放出
       dmgAdd, // 修饰卡 damage_projectile_add 累加的加伤
       conv: (d.converters || []).map(() => ({ r: 0, done: false })), // MagicConvertMaterialComponent 扫环进度
@@ -152,11 +152,11 @@ export class ProjectileSystem {
       if (af) { const f = 1 - af * dt; p.vx *= f; p.vy *= f }
       // VelocitySystem:液体里 v −= v·liquid_drag·dt·液体格数(格数 = 位置周围 3×3 里的液体格,_displaceLiquid 数的 mLatestLiquidHitCount)
       if (!isMat && p.wasLiq && d.liquidDrag) { const f = Math.max(0, 1 - d.liquidDrag * dt * Math.max(1, p.liqHits || 0)); p.vx *= f; p.vy *= f }
-      if (d.terminal > 0) { const sp0 = Math.hypot(p.vx, p.vy); if (sp0 > d.terminal) { p.vx *= d.terminal / sp0; p.vy *= d.terminal / sp0 } }
       // 子步进碰撞;撞上实心:先看 bounces_left —— 有次数就反弹(bounce_always 任何角度都弹,否则只有擦着弹;
       // bounce_at_any_angle 按真实法线反射),没了才 on_collision_die;ground_penetration 允许穿进地里一段
       const sp = Math.hypot(p.vx, p.vy)
-      const sub = Math.max(1, Math.ceil(sp * dt / 2))
+      // 穿地弹按 1px 步进(每格都要过一遍能量判定),其余 2px;步长按当前速度算——穿地时速度被削,后面的步子随之变短
+      const sub = Math.max(1, Math.ceil(sp * dt / (d.groundPenetration > 0 ? 1 : 2)))
       let hit = false, hitLiquid = false
       for (let s = 0; s < sub && !hit; s++) {
         const nx = p.x + (p.vx * dt) / sub, ny = p.y + (p.vy * dt) / sub
@@ -184,12 +184,30 @@ export class ProjectileSystem {
         if (m >= 0 && solid && p.beh?.clip) { p.x += (nx - p.x) * p.beh.clip; p.y += (ny - p.y) * p.beh.clip; continue }
         if (m >= 0 && solid && d.collideWorld) {
           if (p.noHit > 0) { p.x = nx; p.y = ny; continue }
-          if (p.penetrate > 0) { p.penetrate -= Math.hypot(nx - p.x, ny - p.y); p.x = nx; p.y = ny; continue }
+          // ground_penetration(反 exe ProjectileSystem 0xd32970):E = coeff × mass × ½|v|²;这格 take = min(hp, E),v ×= (1 − take/E);
+          // 吃得下整格 hp 就把格挖掉继续钻(光明穿凿 coeff 4 / 1400px/s:E 6.5e6,岩石 1e5 一格掉 1.5% 速度,神殿砖 1e6 一格掉 15%),
+          // 吃不下就停在这格(长枪扎进土里);ground_penetration_max_durability_to_destroy > 0 时耐久更高的格直接挡住;|v| ≤ 10 也停
+          if (d.groundPenetration > 0) {
+            const sp2 = p.vx * p.vx + p.vy * p.vy
+            const hpT = this.matHp ||= (() => { const a = new Float32Array(this.mats.list.length); for (const q of this.mats.list) a[q.id] = q.hp || 0; return a })()
+            if (sp2 > 100 && !(d.groundPenMaxDur > 0 && this.durability[m] > d.groundPenMaxDur)) {
+              const E = d.groundPenetration * (d.mass || 1) * 0.5 * sp2, hpc = hpT[m] || 1, take = Math.min(hpc, E)
+              const f = 1 - take / E; p.vx *= f; p.vy *= f
+              if (take >= hpc) {
+                sim.set(Math.floor(nx), Math.floor(ny), 0, 0)
+                if (Math.random() < 0.3) this.hooks.debris?.(nx, ny, -p.vx * 0.05 + (Math.random() - 0.5) * 40, -p.vy * 0.05 - 20 - Math.random() * 30, m, this.mats.color[m])
+                p.x = nx; p.y = ny; continue
+              }
+            }
+          }
           if (p.bounces > 0 && this._tryBounce(p, nx, ny)) { p.bounces--; continue }
           hit = true; break
         }
         p.x = nx; p.y = ny
       }
+      // VelocitySystem::Update 0xd67cf7:apply_terminal_velocity 时 |v| > terminal_velocity → v = v̂·terminal;在位置积分之后才夹,
+      // 所以初速 1400 的光明穿凿第一帧仍跑满 23px,第二帧才被夹到 1000
+      if (d.terminal > 0) { const sp0 = Math.hypot(p.vx, p.vy); if (sp0 > d.terminal) { p.vx *= d.terminal / sp0; p.vy *= d.terminal / sp0 } }
       if (p.spin) p.rot += p.spin * dt
       else if (d.velRotation) p.rot = Math.atan2(p.vy, p.vx)
       p.frames += dt * 60

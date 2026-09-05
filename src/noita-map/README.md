@@ -261,7 +261,8 @@ on_death/lifetime_explode、`config_explosion`)→ `SpriteComponent`(Sprite xml 
 碰撞行为(统计了全部 208 个 ProjectileComponent 的字段后补齐):`bounces_left` 反弹次数 + `bounce_energy` 能量保留(弹力球 10 次 ×0.9、
 泡泡/喷吐 20 次 ×0.5)+ `bounce_always`(任何角度都弹)/ `bounce_at_any_angle`(锯刃按真实法线反射)—— 普通弹只在擦边(入射角余弦 <0.55)时弹,
 正撞就死;法线由撞点 5×5 邻域实心分布估计;`bounce_fx_file` 的粒子喷发;`die_on_low_velocity(_limit)`;`die_on_liquid_collision`(火球入水灭);
-`penetrate_world` / `collide_with_world=0`;`ground_penetration_coeff`(长枪穿进地里);`on_death_gfx_leave_sprite`(箭插在地里、锯片躺着,那格被挖掉才消失);
+`penetrate_world` / `collide_with_world=0`;`ground_penetration_coeff` + `ground_penetration_max_durability_to_destroy`(exe 0xd32970:每格 `E = coeff×mass×½|v|²`,`take = min(格 hp, E)`,`v ×= 1 − take/E`,
+吃完格 hp 就挖掉继续钻,吃不完停在这格;光明穿凿一发钻 ~29px 岩石隧道,长枪扎 2~3 格;`terminal_velocity` 夹速在位置积分之后);`on_death_gfx_leave_sprite`(箭插在地里、锯片躺着,那格被挖掉才消失);
 `velocity_sets_rotation=0` + `angular_velocity`(卵石自转不随速度转向)。
 第二轮对齐(按 490 个 xml 的组件统计逐个补):
 - `SpriteParticleEmitterComponent`(45 处):贴图粒子——火球的橙烟团、锯刃的火星、挖掘弹的尘,含 color/color_change(每秒变色/淡出)、随机位置/速度/旋转/角速度、重力、减速、缩放、additive

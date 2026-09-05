@@ -669,6 +669,13 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       慢速时把"差 1~2px 就着地"的边缘像素也算支点做静定判定(一条腿在地一条腿悬着的板凳不再来回倒)。桌 ×3 / 凳 ×4 / 床 / 石 ×4 落真实地形 4s 内全部入睡、零晃动;平台探针 / 尸体探针不变。
     - 人入水:player_base 的 VelocityComponent 一样带 `displace_liquid`(+ LiquidDisplacerComponent radius 1 / velocity 30 把身体挤到的格挪开),按 VelocitySystem 的规则:换格时 3×3 液体格 75% 以 −0.1×自身速度 ±0.3rad 顶回去,
       几十 px/s 的小鼓包;之前按落速掀 8~45 粒 40~230 px/s 的水珠(自创)—— 水探针入水 debris 59 → 0。
+24. **光明穿凿(LUMINOUS_DRILL,用户 09-05:"背包法术卡第 11 个效果不对")—— 反 `ProjectileSystem` 穿地函数 0xd32970(断言串 `max_energy != 0`)**:
+    `deck/luminous_drill.xml`:speed 1400 / lifetime 2 帧 / damage 0.4 / `ground_penetration_coeff=4` / `ground_penetration_max_durability_to_destroy=14` / mass 1.65 / 4 个 spark_green 拖尾发射器(两个 0.02s 短命 + 两个 0.15~0.32s `draw_as_long`)。
+    穿地**不是走固定距离**(之前 coeff×8 px 直接滑进地里、什么也不挖),而是和爆炸射线一样的能量账:格是实心/液体且 |v| > 10 → `max_durability > 0` 时耐久更高的格挡住 →
+    `E = coeff × ½|v|²`(文档说还乘 mass,取 coeff×mass),`take = min(格 hp, E)`,格 hp −= take,`v ×= (1 − take/E)`;格 hp 归零就把格删掉继续钻,没吃完就停在这格(on_collision_die 死)。
+    所以钻头是挖一条 1px 隧道:岩石(hp 1e5)一格掉 1.5~3% 速度,一发钻 ~29px;神殿砖(hp 1e6,耐久 14 刚好 ≤14)一格掉 15%,一发 3~4 格;长枪(coeff 6 / 400px/s / mass 0.65)扎岩石 2~3 格就停。
+    顺带两处:① 穿地弹子步改 1px(2px 步会隔格挖);② `terminal_velocity` 夹速(0xd67cf7,`|v| > t → v̂·t`)在**位置积分之后**,1400 的初速第一帧仍跑满 23px,第二帧才夹到 1000 —— 之前先夹后走少跑一帧。
+    探针 `_noita-drill-shot.mjs`:岩墙 depth 29 / 神殿砖 4 / 长枪 3 / 连发 12 发穿 47px。
 
 ## 2.5 接手指南(新会话从这里开始)
 
