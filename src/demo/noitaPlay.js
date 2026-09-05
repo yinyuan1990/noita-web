@@ -12,6 +12,7 @@ import { PlayerSprite } from '../noita-map/PlayerSprite.js'
 import { ParallaxSky } from '../noita-map/Sky.js'
 import { Entities } from '../noita-map/Entities.js'
 import { Ragdoll } from '../noita-map/Ragdoll.js'
+import { LiquidRefraction } from '../noita-map/render/Refraction.js'
 import { Vegetation } from '../noita-map/Vegetation.js'
 import { WandSystem, FREE_CAPACITY } from '../noita-map/Wands.js'
 import { PerkSystem } from '../noita-map/Perks.js'
@@ -233,10 +234,14 @@ let VW = VIEW_W, VH = 240, SCALE = 1
 let overlay = null, overlayCv = document.createElement('canvas'), lightCv = document.createElement('canvas')
 const glowPts = [] // 本帧发光格 [x,y,glow,color,...](视口坐标)
 let fireCells = 0
-// 液体折射表(post_final.frag ENABLE_REFRACTION):本帧每列的 dx / 每行的 dy(见 render 里的计算),wobOx/wobOy = 本帧视口左上世界坐标
+// 液体折射(post_final.frag ENABLE_REFRACTION):有 WebGL 就在放大那一步按屏幕分辩率做(render/Refraction.js,原式 + 亚像素采样,和原版一样);
+// 没有 WebGL 退回世界分辨率的整像素版:wobX/wobY = 本帧每列的 dx / 每行的 dy,wobOx/wobOy = 本帧视口左上世界坐标
+const refr = (() => { try { const r = new LiquidRefraction(); return r.ok ? r : null } catch (e) { console.warn('refraction shader', e); return null } })()
+let liqMask = new Uint8Array(1) // VW×VH 液体掩码(给 shader)
 let wobX = new Int8Array(1), wobY = new Int8Array(1), wobOx = 0, wobOy = 0
-/** 世界点 (wx,wy) 落在液体格里 → 这一格的折射偏移 [dx,dy](采样到的那格也得是液体),否则 null。弹丸 / 人 / 怪在水里画的时候用 */
+/** 世界点 (wx,wy) 落在液体格里 → 这一格的折射偏移 [dx,dy](采样到的那格也得是液体),否则 null。弹丸 / 人 / 怪在水里画的时候用(只在没 WebGL 的退路里) */
 function liquidWobble(wx, wy) {
+  if (refr) return null
   const i = Math.floor(wx) - wobOx, j = Math.floor(wy) - wobOy
   if (i < 0 || j < 0 || i >= VW || j >= VH) return null
   const m = sim.get(Math.floor(wx), Math.floor(wy))
@@ -254,7 +259,8 @@ function resize() {
   overlayCv.width = VW; overlayCv.height = VH
   overlay = new ImageData(VW, VH)
   lightCv.width = Math.ceil(VW / 4); lightCv.height = Math.ceil(VH / 4)
-  wobX = new Int8Array(VW); wobY = new Int8Array(VH)
+  wobX = new Int8Array(VW); wobY = new Int8Array(VH); liqMask = new Uint8Array(VW * VH)
+  if (refr) refr.resize(game.width, game.height)
 }
 window.addEventListener('resize', resize); resize()
 const toWorld = (sx, sy) => [cam.x - VW / 2 + sx / SCALE, cam.y - VH / 2 + sy / SCALE]
@@ -1844,9 +1850,10 @@ function render() {
     // 只有采样到的那格也是液体才偏。液体像素和落在液体里的东西(弹丸 / 人 / 怪,见 liquidWobble)都按这张表偏
     const tW = performance.now() / 1000 * 10
     wobOx = ox; wobOy = oy
-    // 我们的画布 1 世界像素 = 1 格,0.5px 以下的偏移四舍五入就没了;原版屏幕是 4~5 倍缩放、亚像素采样看得见 —— y 向 0.48px 的幅度按 |cos|>0.5 量化成 ±1
-    for (let i = 0; i < VW; i++) wobX[i] = Math.round(Math.sin(tW + (ox + i) * (50 / VW)) * 0.002 * VW)
-    for (let j = 0; j < VH; j++) { const c = Math.cos(tW + (oy + j) * (50 / VH)); wobY[j] = c > 0.5 ? 1 : c < -0.5 ? -1 : 0 }
+    liqMask.fill(0)
+    // 没 WebGL 的退路:世界分辨率上整像素偏(0.5px 以下四舍五入就没了 → y 向 0.48px 的幅度按 |cos|>0.5 量化成 ±1);有 WebGL 时这两张表全 0,折射在 shader 里做
+    for (let i = 0; i < VW; i++) wobX[i] = refr ? 0 : Math.round(Math.sin(tW + (ox + i) * (50 / VW)) * 0.002 * VW)
+    for (let j = 0; j < VH; j++) { const c = Math.cos(tW + (oy + j) * (50 / VH)); wobY[j] = refr ? 0 : c > 0.5 ? 1 : c < -0.5 ? -1 : 0 }
     for (let j = 0; j < VH; j++) {
       const wy = oy + j
       for (let i = 0; i < VW; i++) {
@@ -1861,8 +1868,9 @@ function render() {
         // 折射是"采样"(gather):这一格是液体 → 颜色取偏移处那格(也得是液体)。不能反过来把自己写到偏移处(scatter):
         // 偏移量随 x 从 0 跳到 1 的那一列会被写两次、旁边一列没人写 → 水面上一条条黑线(用户截图)
         if (k === 3) {
+          liqMask[j * VW + i] = 255
           const ii = i + wobX[i], jj = j + wobY[j]
-          if (ii >= 0 && ii < VW && jj >= 0 && jj < VH) {
+          if ((ii !== i || jj !== j) && ii >= 0 && ii < VW && jj >= 0 && jj < VH) {
             const e2 = sim._entry(ox + ii, oy + jj)
             if (e2) { const li2 = ((oy + jj) & 511) * CHUNK + ((ox + ii) & 511), m2 = e2.mat[li2]; if (m2 > 0 && KD[m2] === 3) { m = m2; li = li2; src = e2 } }
           }
@@ -1953,7 +1961,9 @@ function render() {
   vctx.globalCompositeOperation = 'source-over'
   vctx.imageSmoothingEnabled = false
   gctx.imageSmoothingEnabled = false
-  gctx.drawImage(view, 0, 0, game.width, game.height)
+  // 放大到屏幕:有 WebGL 走液体折射 shader(post_final.frag 原式,屏幕分辩率亚像素采样),否则直接贴
+  if (refr && simBound) gctx.drawImage(refr.render(view, liqMask, VW, VH, performance.now() / 1000, cam.x, cam.y), 0, 0)
+  else gctx.drawImage(view, 0, 0, game.width, game.height)
   // 瞄准点
   if (touch.aim) {
     // 瞄准摇杆指示:原点小环 + 方向点(限制在 40px 内)
@@ -2042,4 +2052,4 @@ function loop(now) {
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }

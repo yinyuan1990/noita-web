@@ -638,6 +638,12 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     - 折射:`post_final.frag ENABLE_REFRACTION`:液体格(extra_data.a ≥ 0.99)的采样坐标偏 `dx = sin(time×10 + (u + cam.x/VW)×50)×0.002`、`dy = cos(time×10 + (v − cam.y/VH)×50)×0.002`(采样到的那格也得是液体),
       即世界 x 的函数 → 幅 0.85px、波长 ≈ 53px;y 同理幅 0.48px。整张前景(世界像素 + 精灵)都按这个坐标采样,所以泡在水里的弹丸 / 人 / 怪跟水一起晃。
       之前我们只晃液体像素、且相位轴写反了(x 偏移是行的函数)。改:`wobX[列] / wobY[行]` 按原式算(y 幅 0.48 在 1:1 画布上按 |cos|>0.5 量化成 ±1),`liquidWobble(wx,wy)` 给弹丸(`hooks.wobble`)/ 玩家 / 怪的绘制位置加同样的偏移。
+    - **用户:折射还是看不出来** —— 0.85px 的偏移原版是在**屏幕分辨率**下亚像素采样(tex_coord 是屏幕 uv,tex_fg 用 nearest 采样):翻转边界在屏幕像素之间平滑移动,2~4.5 倍缩放下看着就是水里的东西在晃;
+      我们世界分辨率的 canvas 上四舍五入只剩 0/±1 的抖。改:`render/Refraction.js` —— 放大到屏幕那一步改用 WebGL(输入 = 乘完光照的世界画面 + VW×VH 液体掩码 `liqMask`,fragment 就是 post_final.frag 那几行原式),
+      有 WebGL 时世界分辨率上的整像素偏移全关掉(`liquidWobble` 返 null),没 WebGL 退回原来那套。软件 GL(swiftshader)下 56fps。
+    - **入水**(用户:"原版子弹入水没有多余粒子,水面会鼓动"):反 exe `VelocitySystem::Update`(0xd67458,`VelocityComponent.displace_liquid` 默认 1):实体这一帧所在格变了 → 看位置周围 **3×3** 格,
+      液体格计入 `mLatestLiquidHitCount`(liquid_drag 乘它),并以 `rand%100 < 75` 的概率把那格抛成飞行粒子,速度 = **−(mVelocity × 0.1) 再转 Random(−0.3, 0.3) rad** —— 水沿弹的来向以一成弹速被顶回去,水面就这么鼓起来,没有别的溅射。
+      我们之前入水那一下随机掀 3~16 粒 40~190 px/s 的水珠(自创)。改:`_displaceLiquid` 每帧一次(原版按帧末位置,不是每个子步)照上式;液体阻力乘液体格数。验证:火花弹 (749,177) 入水,水粒子 (−69,−29)(−76,−3)…= −0.1v±0.3rad,每帧 ≈7 粒;速度 769→500→395→238 几帧就慢下来。
 
 21. **毒液不是亮绿的(用户 09-05:原版截图里 radioactive_liquid 亮黄绿带光晕,我们是暗橄榄色)**:materials.xml `radioactive_liquid` Graphics color `44B4FF10`(alpha 只有 27%)+ `gfx_glow=60`。
     原版靠 glow:`post_final.frag` 把 glow 贴图(材质色 × gfx_glow/255,低分辨率 + 模糊 = 光晕)`lights += glow`(发光格不被黑暗压暗)再 `color = max(color + glow×0.6 − 0.6×lights, color + glow − color×sky×glow)` screen 叠上去,

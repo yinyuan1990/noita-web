@@ -150,7 +150,8 @@ export class ProjectileSystem {
       p.vy += (isMat ? 150 : d.gravity + p.gAdd) * dt
       const af = isMat ? d.friction * 0.25 : d.airFriction + p.afAdd
       if (af) { const f = 1 - af * dt; p.vx *= f; p.vy *= f }
-      if (!isMat && p.wasLiq && d.liquidDrag) { const f = Math.max(0, 1 - d.liquidDrag * dt); p.vx *= f; p.vy *= f }
+      // VelocitySystem:液体里 v −= v·liquid_drag·dt·液体格数(格数 = 位置周围 3×3 里的液体格,_displaceLiquid 数的 mLatestLiquidHitCount)
+      if (!isMat && p.wasLiq && d.liquidDrag) { const f = Math.max(0, 1 - d.liquidDrag * dt * Math.max(1, p.liqHits || 0)); p.vx *= f; p.vy *= f }
       if (d.terminal > 0) { const sp0 = Math.hypot(p.vx, p.vy); if (sp0 > d.terminal) { p.vx *= d.terminal / sp0; p.vy *= d.terminal / sp0 } }
       // 子步进碰撞;撞上实心:先看 bounces_left —— 有次数就反弹(bounce_always 任何角度都弹,否则只有擦着弹;
       // bounce_at_any_angle 按真实法线反射),没了才 on_collision_die;ground_penetration 允许穿进地里一段
@@ -175,9 +176,9 @@ export class ProjectileSystem {
         const solid = k === K_STATIC || k === K_SAND
         const liquid = k === K_LIQUID
         if (m >= 0 && liquid && (d.dieOnLiquid || d.type === 'MATERIAL_PARTICLE')) { hitLiquid = true; hit = true; break }
-        // 穿水的弹丸(多数弹默认 die_on_liquid_collision=0)扎进水面那一下也溅水
-        if (m >= 0 && liquid && !p.wasLiq && sp > 120 && d.type !== 'MATERIAL_PARTICLE') { p.wasLiq = true; this._splash(p, sp * 0.7) }
-        else if (m >= 0 && !liquid) p.wasLiq = false
+        // 穿水的弹丸(多数弹默认 die_on_liquid_collision=0):VelocityComponent.displace_liquid —— 每到一个新格把周围 3×3 的液体格以一成弹速顶回去(见 _displaceLiquid)
+        if (m >= 0 && liquid && d.type !== 'MATERIAL_PARTICLE') p.inLiq = true
+        else if (m >= 0 && !liquid) p.inLiq = false
         // clipping_shot:penetrate_world,在地里以 penetrate_world_velocity_coeff(0.1)的速度挪
         if (m >= 0 && solid && p.beh?.clip) { p.x += (nx - p.x) * p.beh.clip; p.y += (ny - p.y) * p.beh.clip; continue }
         if (m >= 0 && solid && d.collideWorld) {
@@ -256,7 +257,10 @@ export class ProjectileSystem {
           else if (SPR.next) { p.spr = SPR.next; p.frame = 0 }
         }
       }
-      if (hit && hitLiquid && d.type !== 'MATERIAL_PARTICLE') this._splash(p, sp)
+      // 液体位移一帧一次(原版按帧末位置,不是每个子步):这一帧落在液体里 → 周围 3×3 顶一次;入水那一下响一声
+      if (p.inLiq && !hit && d.type !== 'MATERIAL_PARTICLE') { this._displaceLiquid(p); if (!p.wasLiq && sp > 120) this.hooks.sfx?.('water', { vol: Math.min(0.6, 0.15 + sp / 900), rate: 1.1 + Math.random() * 0.3, minGap: 90 }); p.wasLiq = true }
+      else if (!p.inLiq && !hit) p.wasLiq = false
+      if (hit && hitLiquid && d.type !== 'MATERIAL_PARTICLE') { this._displaceLiquid(p); this.hooks.sfx?.('water', { vol: Math.min(0.6, 0.15 + sp / 900), rate: 1.1 + Math.random() * 0.3, minGap: 90 }) }
       if (hit && (d.collisionDie || hitLiquid)) { this._die(p, true); this.list.splice(i, 1); continue }
       if (d.dieLowVel && p.age > 0.1 && Math.hypot(p.vx, p.vy) < d.dieLowVel) { this._die(p, true); this.list.splice(i, 1); continue }
       if (p.age >= p.life) { this._die(p, false); this.list.splice(i, 1); continue }
@@ -337,22 +341,30 @@ export class ProjectileSystem {
     return l ? [nx / l, ny / l] : [0, -1]
   }
 
-  /** 反弹:返回 true 表示弹开了(位置留在撞前一步) */
-  /** 弹丸扎进液体:按速度掀几粒水珠(取真实液体格 → 碎屑,落回世界),响一声 */
-  _splash(p, speed) {
-    const sim = this.sim, x0 = Math.floor(p.x), y0 = Math.floor(p.y)
-    const n = Math.min(16, Math.max(3, Math.round(speed / 35)))
-    let done = 0
-    for (let t = 0; t < n * 3 && done < n; t++) {
-      const x = x0 - 3 + Math.floor(Math.random() * 7), y = y0 - 1 + Math.floor(Math.random() * 4)
+  /**
+   * 弹丸在液体里(反 exe VelocitySystem::Update 0xd67458,VelocityComponent.displace_liquid 默认 1):
+   * 这一帧所在格变了 → 看位置周围 3×3 格,每个液体格计入 mLatestLiquidHitCount(liquid_drag 用),并以 rand%100 < 75 的概率
+   * 把那格抛成飞行粒子,速度 = −(mVelocity × 0.1) 再转 Random(−0.3, 0.3) rad —— 水沿着弹的来向以一成弹速被顶回去,水面就是这样"鼓"起来的;
+   * 没有别的溅射。返回抛了几格(入水那一下响一声)
+   */
+  _displaceLiquid(p) {
+    const sim = this.sim, cx = Math.floor(p.x), cy = Math.floor(p.y)
+    if (p.dispX === cx && p.dispY === cy) return 0
+    p.dispX = cx; p.dispY = cy
+    let n = 0, hits = 0
+    for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) {
       const m = sim.get(x, y)
       if (m <= 0 || sim.kind[m] !== K_LIQUID) continue
+      hits++
+      if (Math.random() * 100 >= 75) continue
+      const a = (Math.random() - 0.5) * 0.6, ca = Math.cos(a), sa = Math.sin(a)
+      const vx = -p.vx * 0.1, vy = -p.vy * 0.1
       sim.set(x, y, 0, 0)
-      const c = this.mats.color[m], lt = ((Math.min(255, ((c >> 16) & 255) + 70) << 16) | (Math.min(255, ((c >> 8) & 255) + 70) << 8) | Math.min(255, (c & 255) + 70))
-      this.hooks.debris?.(x, y - 1, (Math.random() - 0.5) * 90 + p.vx * 0.15, -(40 + Math.random() * 150), m, lt)
-      done++
+      this.hooks.debris?.(x + 0.5, y + 0.5, vx * ca - vy * sa, vx * sa + vy * ca, m, this.mats.color[m], true)
+      n++
     }
-    if (done) this.hooks.sfx?.('water', { vol: Math.min(0.6, 0.15 + speed / 900), rate: 1.1 + Math.random() * 0.3, minGap: 90 })
+    p.liqHits = hits
+    return n
   }
 
   _tryBounce(p, hx, hy) {
