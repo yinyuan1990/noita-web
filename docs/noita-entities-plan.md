@@ -687,6 +687,19 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       `e.inventory` + hurt 里弹丸命中按 leak 概率 `_leak` 6~14 格;`splitBelow` 分裂;`_die` 里 `d.explode` → `explodeConfig`(坦克 / 炮塔 / 无人机同样死亡爆炸);`lights()` 从"只有 lukki"改成所有带 LightComponent 的怪(玩家一屏内:矿工头灯 r50、火法师 r100…)。
     - 没反出来的:verlet 的重力常数(exe 0xd67de0 只看到风的 sin 叠加:sin(t×25)、sin(y×5)×100、sin(y×0.005)×300…),用 VelocityComponent 默认 400 代替。
     探针 `_noita-giantshooter-shot.mjs`:触手 5 条长 4.5~15.8px 垂下;打到 0.2 → 身边 3 只 slimeshooter、漏酸 22 格 / 库存 400→388;死亡酸 1250 格、布娃娃 1 具、掉金 20。
+27. **按 noita-design.html 逐模块对表(用户 09-05:"按模块全部反了和我们的做对比,主要是细节,地图系统还是不够好")—— 第一批:光照 / 雾 / 天光(第 11 模块),这是画面"不像"的最大一项**:
+    先做了材质混淆表 `_noita-map-confusion.mjs`(24 块真值 vs 我们):煤矿材质一致 71~77%(错配主要是 sand_static↔rock_static_wet 的噪声形状,不可复现)、山体 67~92%(rock_hard↔rock_static 同理)、
+    地表 86~90%(差的是我们烙进材质的树 wood_loose,存档格子里没有树 —— 原版树是 PixelSprite 实体不进 petri),结构(实/空)85~100%。材质带噪声要逐位一致得反 procedural_terrain.cpp(0x8fec00~0x911600,75KB),暂缓。
+    **光照反自 `shaders/post_final.frag` + `data/temp/light_mask_inv_pow22_smoothed_center.png`(data.wak 里,之前没解包)+ LightSystem 0xcb71d0 + WorldLightAndFog**,见 `render/Lighting.js` 头注释:
+    - 没有"环境光":`lights = tex_lights×0.8 → ^1.5 → +glow → 加天光 → ^(1/2.2) → ×雾 + 探索过的暖灰`,前景 `color_fg *= lights`,**背景(天空)不吃光照**(fg.a==0 直接出 bg)。
+    - 光罩:64×64 贴图,中心只有 143/255,径向剖面 143,142,133,121,107,92,76,62,49,43,32,22,14,8,4,1,0;**LightSystem 把 sprite.scale 设成 radius/64 → radius 是光斑直径,真照到的半径只有一半**(玩家 350 → 175px,lantern_small 240 → 120,蜡烛 64 → 32)。
+      之前我们 25 盏灯笼各按 120px 满亮度叠加,整个矿洞一片亮;按原版一半半径 + 0.56 峰值后,矿里就是原版那种"灯边一团暖光、其余暗褐"。
+    - 雾(fog of war):`FogOfWarRadiusComponent radius 256`(玩家默认),32px 格(0x7a2430 ×1/32)双线性;未探索 = 全黑,探索过没光的地方 `+= 0.35 × 1.4×(0.6,0.5,0.45)` ≈ 0.29 的暖灰;爆炸闪光顺带开孔(fog_of_war_hole);雾随存档走(base64 每 chunk 256 字节)。
+    - 天光(skylight):`RENDER_SKYLIGHT_ABOVE_WEIGHT 1 / SIDES 0.75 / TOTAL 0.9 / MAX_REDUCTION 96`,从天空一行行往下:`(上 + 0.75 左上 + 0.75 右上)/2.5 × 0.9 − 实心占比 × 96/255`(原版 64px 格,我们 32px 一行开平方);
+      敞开竖井 640px 深还剩 0.35,实心 2 格挡光;`sky_light_color` 取色板 sky 带(开局黄昏 → 地表一层橙色,原版开局就是这个色)。每 0.5s 重算(挖了洞天光跟着进来)。
+    - LightComponent 缺省色 (255,178,118),所有带 LightComponent 的实体 / 道具都按 xml 半径与颜色给光(之前灯笼半径 ×0.5、怪 ×0.35 都是拍的)。
+    合成在 1/4 分辩率光图上逐像素做(107×61),雾 / 天光先按 32px 格取成小数组再双线性:0.5ms/帧(第一版逐像素查 Map 1.6ms)。
+    效果:矿洞截图和原版视频帧(scripts/out/noita-hd/t60.png)同一种"黑 + 暖褐 + 灯边亮"的调子;地表黄昏橙光、山洞内部黑。
 
 ## 2.5 接手指南(新会话从这里开始)
 

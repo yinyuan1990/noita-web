@@ -13,6 +13,7 @@ import { ParallaxSky } from '../noita-map/Sky.js'
 import { Entities } from '../noita-map/Entities.js'
 import { Ragdoll } from '../noita-map/Ragdoll.js'
 import { LiquidRefraction } from '../noita-map/render/Refraction.js'
+import { Lighting, Skylight } from '../noita-map/render/Lighting.js'
 import { Vegetation } from '../noita-map/Vegetation.js'
 import { WandSystem, FREE_CAPACITY } from '../noita-map/Wands.js'
 import { PerkSystem } from '../noita-map/Perks.js'
@@ -231,7 +232,17 @@ const game = $('game'), gctx = game.getContext('2d')
 const view = document.createElement('canvas'), vctx = view.getContext('2d') // 世界像素分辨率的中间画布
 const cam = { x: player.x, y: player.y }
 let VW = VIEW_W, VH = 240, SCALE = 1
-let overlay = null, overlayCv = document.createElement('canvas'), lightCv = document.createElement('canvas')
+let overlay = null, overlayCv = document.createElement('canvas'), fgMaskCv = document.createElement('canvas'), skyCv = document.createElement('canvas')
+// 光照(render/Lighting.js:原版 post_final.frag 的合成 + 光罩蒙版 + 雾(FogOfWarRadius 256)+ 天光(RENDER_SKYLIGHT_*));1/4 分辩率光图
+const lighting = new Lighting(4)
+lighting.sky = new Skylight((wx, wy) => {
+  const e = streamer.get(Math.floor(wx / CHUNK) + WCX, Math.floor(wy / CHUNK) + WCY)
+  if (!e?.mat) return 1
+  const m = e.mat[(wy & 511) * CHUNK + (wx & 511)]
+  if (m === 0) return 0
+  const k = sim.kind?.[m] ?? 1
+  return k === 1 || k === 2 ? 1 : k === 3 ? 0.5 : 0
+})
 const glowPts = [] // 本帧发光格 [x,y,glow,color,...](视口坐标)
 let fireCells = 0
 // 液体折射(post_final.frag ENABLE_REFRACTION):有 WebGL 就在放大那一步按屏幕分辩率做(render/Refraction.js,原式 + 亚像素采样,和原版一样);
@@ -257,8 +268,8 @@ function resize() {
   VW = VIEW_W; VH = Math.ceil(innerHeight / SCALE)
   view.width = VW; view.height = VH
   overlayCv.width = VW; overlayCv.height = VH
+  fgMaskCv.width = VW; fgMaskCv.height = VH; skyCv.width = VW; skyCv.height = VH
   overlay = new ImageData(VW, VH)
-  lightCv.width = Math.ceil(VW / 4); lightCv.height = Math.ceil(VH / 4)
   wobX = new Int8Array(VW); wobY = new Int8Array(VH); liqMask = new Uint8Array(VW * VH)
   if (refr) refr.resize(game.width, game.height)
 }
@@ -882,6 +893,7 @@ function saveGame(why = 'tick') {
     perks: player.perks, perkState: { nextIndex: perks.nextIndex, picked: perks.picked, rerollCount: perks.rerollCount || 0, rerollIndex: perks.rerollIndex ?? null },
     wands: player.wands.map(serWand), items: player.items.map((i) => ({ potion: i.potion, name: i.name })), spells: player.spells, payload,
     guard: { angered: guard.angered, deaths: guard.deaths }, collapsed: [...collapsed],
+    fog: lighting.fog.serialize(),
   }
   const json = JSON.stringify(s)
   if (json === lastSave) return false
@@ -895,6 +907,7 @@ function loadGame() {
   let s = null
   try { s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null') } catch { return false }
   if (!s || s.v !== 1 || !s.player) return false
+  try { lighting.fog.restore(s.fog) } catch { /* 旧存档没有雾 */ }
   // 特权:按拿的顺序重放效果(改 player.maxHp / P / flags),再用存档覆盖血量;牌堆指针照存档
   for (const id of s.perks || []) perks.pickup(id, { player, P, flags, R: (a, c) => a + Math.floor(Math.random() * (c - a + 1)) })
   player.perks = [...(s.perks || [])]
@@ -1827,10 +1840,8 @@ function render() {
   const shk = shakeT > 0 ? shakeT * 18 : 0
   const ox = Math.round(cam.x - VW / 2 + (Math.random() - 0.5) * shk), oy = Math.round(cam.y - VH / 2 + (Math.random() - 0.5) * shk)
   // 天空:Noita 原版视差背景(weather_gfx/parallax_* 蒙版 + 昼夜色板),原作只在相机深度 < 512 时画;
-  // 地下露出的空气由 chunk 位图的背景墙负责
-  vctx.fillStyle = '#06070a'
-  vctx.fillRect(0, 0, VW, VH)
-  if (cam.y < 512) sky.draw(vctx, ox + VW / 2, oy + VH / 2, VW, VH)
+  // 前景(tex_fg)先画在透明底上,光照只乘前景;天空(tex_bg)最后 destination-over 垫到透明处 —— post_final.frag 里 color_fg.a==0 的像素直接出背景,不吃光照 / 雾
+  vctx.clearRect(0, 0, VW, VH)
   vctx.imageSmoothingEnabled = false
   const cx0 = Math.floor(ox / CHUNK) + WCX, cx1 = Math.floor((ox + VW) / CHUNK) + WCX
   const cy0 = Math.floor(oy / CHUNK) + WCY, cy1 = Math.floor((oy + VH) / CHUNK) + WCY
@@ -1934,37 +1945,38 @@ function render() {
   const pw = liquidWobble(player.x, player.y - 4)
   drawPlayer(vctx, ox - (pw ? pw[0] : 0), oy - (pw ? pw[1] : 0))
   if (player.hurtFlash > 0) { vctx.fillStyle = `rgba(255,0,0,${(player.hurtFlash * 1.2).toFixed(2)})`; vctx.fillRect(0, 0, VW, VH) }
-  // 光照:Noita 洞穴是黑的,画面由光源驱动。低分辨率光图(1/4)叠加所有光源 → multiply 回主画面
-  const depth = Math.max(0, Math.min(1, (cam.y + 40) / 240)) // 地表 0 → 地下 1
-  // 地表环境光跟着天色(夜里 sky_light 变暗,原作地表夜晚也是黑的);地下不受影响
-  const ambient = Math.max((0.35 + 0.65 * sky.daylight()) * (1 - depth) + 0.1 * depth, hasEffect('NIGHTVISION') ? 0.55 : 0) // 夜视药:洞里也亮
-  const L = lightCv.getContext('2d'), lw = lightCv.width, lh = lightCv.height, s = 0.25
-  L.globalCompositeOperation = 'source-over'
-  L.fillStyle = `rgb(${(ambient * 255) | 0},${(ambient * 255) | 0},${(ambient * 255 * 1.05) | 0})`
-  L.fillRect(0, 0, lw, lh)
-  L.globalCompositeOperation = 'lighter'
-  const light = (x, y, r, rgb, a) => {
-    if (!(r > 0)) return // 半径 ≤0 / NaN:createRadialGradient 会抛 IndexSizeError,一帧抛错整个循环就停了
-    const g = L.createRadialGradient(x * s, y * s, 0, x * s, y * s, r * s)
-    g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(0.5, `rgba(${rgb},${a * 0.35})`); g.addColorStop(1, 'rgba(0,0,0,0)')
-    L.fillStyle = g; L.beginPath(); L.arc(x * s, y * s, r * s, 0, 7); L.fill()
-  }
-  light(player.x - ox, player.y - oy, 150, '255,240,210', 0.95)
-  for (const l of lamps) light(l.x - ox, l.y - oy - (l.kind === 'torchstand' ? 16 : 2), l.kind === 'lantern' ? 120 : l.kind === 'candle' ? 55 : l.kind === 'tubelamp' ? 150 : l.kind === 'torchstand' ? 96 : 90, l.kind === 'candle' ? '255,200,120' : l.kind === 'tubelamp' ? '200,230,255' : '255,190,110', 0.9)
-  // lights += glow:发光格照亮自己那一小圈(火 gl=1 → 0.65,熔岩 0.59 → 0.5,毒液 0.235 → 0.38),半径 14~36
+  // 光照(反 post_final.frag,见 render/Lighting.js):tex_lights = 所有 LightComponent 按 64×64 光罩蒙版加起来 → ×0.8 → ^1.5 → 加天光(天光从地表一格格渗下来)
+  // → ^(1/2.2) → 乘雾(没探索过的全黑,探索过没光的留 ≈0.29 暖灰)→ multiply 到前景。没有"环境光"这回事:地下亮不亮只看有没有灯 / 探索过没有
+  lighting.begin(VW, VH)
+  lighting.fog.reveal(player.x, player.y, 256) // FogOfWarRadiusComponent:256 是玩家默认的
+  const light = (x, y, r, rgb, a) => lighting.light(x, y, r, rgb, a)
+  light(player.x - ox, player.y - oy, 350, '255,255,255', 1) // player_base.xml LightComponent radius 350 白光
+  // 标记点上的灯(LightComponent 默认色 255,178,118):lantern_small 240 / candle 64 / physics_tubelamp 150 (200,230,255) / torch_stand 96
+  for (const l of lamps) light(l.x - ox, l.y - oy - (l.kind === 'torchstand' ? 16 : 2), l.kind === 'lantern' ? 240 : l.kind === 'candle' ? 64 : l.kind === 'tubelamp' ? 150 : 96, l.kind === 'tubelamp' ? '200,230,255' : '255,178,118', 1)
+  // lights += glow:发光格照亮自己那一小圈(火 gl=1,熔岩 0.59,毒液 0.235),半径 14~36
   for (let k = 0; k < glowPts.length; k += 4) {
     const c = glowPts[k + 3], gl = glowPts[k + 2] / 255
-    light(glowPts[k], glowPts[k + 1], 14 + gl * 22, `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`, Math.min(0.8, 0.3 + 0.35 * gl))
+    light(glowPts[k], glowPts[k + 1], (14 + gl * 22) * 2, `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`, Math.min(1.6, 0.6 + 0.9 * gl))
   }
-  // 投射物 LightComponent 彩色光 + 发射/爆炸闪光;道具的光(矿灯)
+  // 投射物 LightComponent 彩色光 + 发射/爆炸闪光(爆炸同时在雾上开孔:fog_of_war_hole);道具 / 怪的光(矿灯 / 大蜘蛛绿光)
   projectiles.lights(light, ox, oy)
+  for (const f of projectiles.flashes) if (f.r > 40) lighting.fog.reveal(f.x, f.y, f.r * 1.5)
   entities.lights(light, ox, oy)
-  for (const p of temple.portals) if (p.on && Math.abs(p.x - cam.x) < VW && Math.abs(p.y - cam.y) < VH) { light(p.x - ox, p.y - oy - 16, 255, '64,100,255', 0.55); light(p.x - ox, p.y - oy - 16, 64, '64,100,255', 0.9) }
+  for (const p of temple.portals) if (p.on && Math.abs(p.x - cam.x) < VW && Math.abs(p.y - cam.y) < VH) { light(p.x - ox, p.y - oy - 16, 510, '64,100,255', 1); light(p.x - ox, p.y - oy - 16, 128, '64,100,255', 1.5) }
+  const skyRgb = sky.color(0, false)
+  const lightCv = lighting.compose({ ox, oy, skyColor: [skyRgb[0] / 255, skyRgb[1] / 255, skyRgb[2] / 255], nightVision: hasEffect('NIGHTVISION') ? 1 : 0 })
+  // multiply 会把透明处也涂成光色 → 先留一份前景 alpha,乘完 destination-in 抠回来;然后把天空 / 黑底垫到透明处
+  const fm = fgMaskCv.getContext('2d'); fm.clearRect(0, 0, VW, VH); fm.drawImage(view, 0, 0)
   vctx.globalCompositeOperation = 'multiply'
   vctx.imageSmoothingEnabled = true
   vctx.drawImage(lightCv, 0, 0, VW, VH)
-  vctx.globalCompositeOperation = 'source-over'
   vctx.imageSmoothingEnabled = false
+  vctx.globalCompositeOperation = 'destination-in'
+  vctx.drawImage(fgMaskCv, 0, 0)
+  vctx.globalCompositeOperation = 'destination-over'
+  if (cam.y < 512) { const sc = skyCv.getContext('2d'); sc.clearRect(0, 0, VW, VH); sky.draw(sc, ox + VW / 2, oy + VH / 2, VW, VH); vctx.drawImage(skyCv, 0, 0) }
+  vctx.fillStyle = '#06070a'; vctx.fillRect(0, 0, VW, VH)
+  vctx.globalCompositeOperation = 'source-over'
   gctx.imageSmoothingEnabled = false
   // 放大到屏幕:有 WebGL 走液体折射 shader(post_final.frag 原式,屏幕分辩率亚像素采样),否则直接贴
   if (refr && simBound) gctx.drawImage(refr.render(view, liqMask, VW, VH, performance.now() / 1000, cam.x, cam.y), 0, 0)
@@ -1991,6 +2003,7 @@ function simWindow() {
 }
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now
+  lighting.sky.tick(dt)
   // 区块流:以相机为中心的一屏 + 边距;再加上模拟窗口那一圈
   const half = { x: VW / 2 + 32, y: VH / 2 + 32 }
   const simRect = simWindow()
@@ -2057,4 +2070,4 @@ function loop(now) {
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }

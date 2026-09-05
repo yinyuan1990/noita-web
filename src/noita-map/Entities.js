@@ -2188,10 +2188,11 @@ export class Entities {
 
   /** 醒着刚体的光(矿灯 LightComponent);睡着的也发光 */
   lights(cb, ox, oy) {
-    for (const b of this.bodies) if (!b.dead && b.light) cb(b.x - ox, b.y - oy, Math.min(120, b.light.radius * 0.5), `${b.light.r ?? 255},${b.light.g ?? 200},${b.light.b ?? 120}`, 0.8)
-    // 怪身上的 LightComponent(lukki r32 暖橘 / 矿工头灯 r50 / giantshooter r80 绿光 / 火法师 r100):只给玩家周围一屏内的
+    // LightComponent 原值:radius 就是世界 px,颜色缺省 255,178,118(component_documentation),亮度 mAlpha 1;光罩衰减在 Lighting.light 里
+    for (const b of this.bodies) if (!b.dead && b.light) cb(b.x - ox, b.y - oy, b.light.radius, `${b.light.r ?? 255},${b.light.g ?? 178},${b.light.b ?? 118}`, 1)
+    // 怪身上的 LightComponent(lukki r32 / 矿工头灯 r50 / giantshooter r80 绿光 / 火法师 r100):只给玩家周围一屏内的
     const pl = this.player
-    for (const e of this.list) if (!e.dead && e.d.light && Math.abs(e.x - pl.x) < 320 && Math.abs(e.y - pl.y) < 200) cb(e.x - ox, e.y - oy, e.d.light.radius * 1.25, `${e.d.light.r ?? 120},${e.d.light.g ?? 60},${e.d.light.b ?? 10}`, 0.35)
+    for (const e of this.list) if (!e.dead && e.d.light && Math.abs(e.x - pl.x) < 400 && Math.abs(e.y - pl.y) < 260) cb(e.x - ox, e.y - oy, e.d.light.radius, `${e.d.light.r ?? 255},${e.d.light.g ?? 178},${e.d.light.b ?? 118}`, 1)
   }
 
   render(ctx, ox, oy) {
