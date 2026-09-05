@@ -1,10 +1,16 @@
 // ── 投射物系统:定义全部来自 data/entities/projectiles/deck/*.xml(projectiles.json),对标 Noita ──
 // 每颗弹:VelocityComponent(重力/空气阻力)→ ProjectileComponent(速度/寿命/碰撞死/爆炸配置)→ SpriteComponent(帧动画,朝速度方向,additive)
 // → ParticleEmitterComponent×N(拖尾:材质色化妆粒子,或 create_real_particles 往世界注入真材质)→ LightComponent(彩色光)。
-// 爆炸 config_explosion:explosion_radius 挖坑(只挖 durability ≤ max_durability_to_destroy 的材质——火花弹挖不动石头,挖掘弹挖不动钢),
+// 爆炸 config_explosion(反 exe ExplosionFactory):360 条射线按 ray_energy 扣材质 hp 决定每个角度挖多深(火球挖不动岩石只挖土),durability > max_durability_to_destroy 的材质挡住射线(炸弹挖不动钢),
 // material_sparks 出真材质碎屑,sparks 出白热火花,create_cell 在坑里生成材质(火球→火),explosion_sprite 播爆炸帧,camera_shake 震屏。
 
+import { EXTRA_BEHAVIOR } from './Wands.js'
+
 const K_STATIC = 1, K_SAND = 2, K_LIQUID = 3, K_GAS = 4, K_FIRE = 5
+const DX8 = [1, 1, 0, -1, -1, -1, 0, 1], DY8 = [0, 1, 1, 1, 0, -1, -1, -1]
+// 世界格坐标 → Map 键(坐标可负:各偏移 2^19,再拼成一个 ≤ 2^40 的整数,double 精确)
+const KOFF = 1 << 19, KMUL = 1 << 20
+const ckey = (x, y) => (x + KOFF) * KMUL + (y + KOFF)
 
 export class ProjectileSystem {
   /**
@@ -34,6 +40,16 @@ export class ProjectileSystem {
     this.burnable = sim.burnable
     this.durability = new Float32Array(mats.list.length)
     for (const m of mats.list) this.durability[m.id] = m.durability || 0
+    // 电(ElectricityComponent):导电材质表(materials.xml electrical_conductivity:液体缺省导电、油 / 胶水 0、金属 1)+ 正在窜的电流 + 亮着的格子
+    this.conductive = new Uint8Array(mats.list.length)
+    for (const m of mats.list) this.conductive[m.id] = m.electricalConductivity ? 1 : 0
+    this.warmTo = new Uint16Array(mats.list.length) // warmth_melts_to_material(水 → 蒸汽):电流加热用
+    for (const m of mats.list) if (m.kind === 'liquid' && m.warmthMeltsToMaterial) this.warmTo[m.id] = mats.byName.get(m.warmthMeltsToMaterial) || 0
+    this.bhParts = []         // 黑洞崩出来的飞行像素 {x,y,vx,vy,col,p}
+    this.zaps = []            // {x,y,dx,dy,energy,speed,heat,owner}
+    this.elec = new Map()     // key(x,y) → 熄灭时刻(秒,以 this.time 计);渲染成闪的亮蓝格,活物碰到就被电
+    this.time = 0
+    this.loops = new Map()    // AudioLoopComponent:本帧还活着的循环声名 → 数量
   }
 
   async load(names) {
@@ -65,21 +81,37 @@ export class ProjectileSystem {
 
   matColor(name) { const id = this.mats.byName.get(name); return id === undefined ? 0xffffff : this.mats.color[id] }
 
-  /** 发射:x,y 杖尖,angle 弧度 */
-  spawn(name, x, y, angle, { spreadRad = 0, owner = 'player', speedMul = 1 } = {}) {
+  /**
+   * 发射:x,y 杖尖,angle 弧度。c = 这颗弹所属 shot 的最终 ConfigGunActionInfo(Wands.cast 回放修饰卡 ops 得到),按引擎语义作用到弹上:
+   *   speed_multiplier 乘初速;damage_projectile_add 加伤;lifetime_add 加寿命(帧);bounces 加反弹次数;gravity 加到 VelocityComponent.gravity_y;
+   *   knockback_force 加击退;explosion_radius / damage_explosion(_add) 加到 config_explosion;friendly_fire;extra_entities → 行为(见 Wands.EXTRA_BEHAVIOR);
+   *   game_effect_entities → 命中时给目标的状态
+   */
+  spawn(name, x, y, angle, { spreadRad = 0, owner = 'player', speedMul = 1, payload = null, dmgAdd = 0, c = null } = {}) {
     const d = this.defs[name]
     if (!d) return null
+    if (c) { speedMul *= c.speed_multiplier; dmgAdd += c.damage_projectile_add || 0 }
     const a = angle + (Math.random() - 0.5) * (d.dirRandom + spreadRad)
     const spd = (d.speed[0] + Math.random() * (d.speed[1] - d.speed[0])) * speedMul
-    const life = (d.lifetime + (Math.random() * 2 - 1) * d.lifetimeRandom) / 60
+    let life = (d.lifetime + (Math.random() * 2 - 1) * d.lifetimeRandom) / 60
+    if (c?.lifetime_add) life += c.lifetime_add / 60
+    // cloud_position.lua:雨云出生时往上找 40px 内的天花板,挂在下面
+    if (d.riseTo) { const sim = this.sim; let k = 0; while (k < d.riseTo) { const m = sim.get(Math.floor(x), Math.floor(y - k - 1)); if (m > 0 && (sim.kind[m] === K_STATIC || sim.kind[m] === K_SAND)) break; k++ } y -= k }
+    // teleport_cast.lua:出生就跳到 range 内随机一个敌人身上(载荷会在那儿放)
+    if (d.castTo && this.hooks.nearestTarget) { const t = this.hooks.nearestTarget(x, y, d.castTo.range, owner, { random: true }); if (t) { x = t.x; y = t.y } }
     const p = {
-      name, d, x, y, owner, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: life > 0 ? life : 30, age: 0, frame: 0, ft: 0,
+      name, d, x, y, owner, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, speed0: spd, life: life > 0 ? life : 30, age: 0, frame: 0, ft: 0,
       emit: d.emitters.map(() => ({ t: 0, dist: 0, ring: 0 })), sEmit: (d.sprEmitters || []).map(() => ({ t: 0 })), lastX: x, lastY: y, dead: false,
       bounces: d.bounces, rot: a, spin: d.angularVelocity || 0, penetrate: d.groundPenetration > 0 ? d.groundPenetration * 8 : 0, frames: 0,
+      payload: payload && payload.length ? payload : null, // 触发弹(gun.lua BeginTriggerHitWorld / Timer / Death)的载荷:死的时候在原地朝原方向放出
+      dmgAdd, // 修饰卡 damage_projectile_add 累加的加伤
+      conv: (d.converters || []).map(() => ({ r: 0, done: false })), // MagicConvertMaterialComponent 扫环进度
+      c, gAdd: 0, afAdd: 0, kbAdd: 0, exR: 0, exD: 0, beh: null, effects: null, friendly: false,
     }
+    if (c) this._applyC(p, c)
     this.list.push(p)
-    // 一次性材质转换(loop=0:触摸系法术在出生点直接变材质)
-    for (const c of d.converters || []) if (!c.loop) this._convert(p, c, c.steps * 60)
+    // 材质转换从出生这一帧就开始扫(触摸系法术只活 4 帧,不能等下一帧)
+    ;(d.converters || []).forEach((c, k) => this._convert(p, c, k, 1 / 60))
     // 枪口火焰 + 发射闪光
     if (d.muzzle?.variants.length) {
       const img = this.images.get(d.muzzle.variants[(Math.random() * d.muzzle.variants.length) | 0])
@@ -87,16 +119,21 @@ export class ProjectileSystem {
     }
     if (d.shootFlash) this.flashes.push({ x, y, r: d.shootFlash.radius, rgb: `${d.shootFlash.r},${d.shootFlash.g},${d.shootFlash.b}`, life: 0.06, max: 0.06 })
     if (d.shakeWhenShot) this.hooks.shake?.(d.shakeWhenShot * 0.08)
-    this.hooks.sfx?.(d.type === 'MATERIAL_PARTICLE' ? 'water' : d.explosion && d.explosion.radius >= 10 ? 'fire' : 'electric', { vol: 0.3, rate: d.type === 'MATERIAL_PARTICLE' ? 1.3 : 1.2 + Math.random() * 0.2, minGap: 40 })
+    // AudioComponent event_root:黑洞出生一声低沉的"咚",其余按弹种给个近似
+    if (d.blackHole) this.hooks.sfx?.('explosion', { vol: 0.7, rate: 0.35, minGap: 100 })
+    else this.hooks.sfx?.(d.type === 'MATERIAL_PARTICLE' ? 'water' : d.explosion && d.explosion.radius >= 10 ? 'fire' : 'electric', { vol: 0.3, rate: d.type === 'MATERIAL_PARTICLE' ? 1.3 : 1.2 + Math.random() * 0.2, minGap: 40 })
     return p
   }
 
   update(dt) {
     const sim = this.sim
+    this.time += dt
+    this.loops.clear()
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i]
       const d = p.d
       p.age += dt
+      if (d.loop) this.loops.set(d.loop, (this.loops.get(d.loop) || 0) + 1)
       if (p.noHit > 0) p.noHit -= dt
       // 速度:重力 + 空气阻力(负值 = 加速,如火箭/发光弹)
       // MATERIAL_PARTICLE(水/油喷射)没有 VelocityComponent 重力,是按材质粒子模拟的:会下坠,ProjectileComponent.friction 当空气阻力
@@ -108,9 +145,13 @@ export class ProjectileSystem {
         if (p.age >= p.life) { this._die(p, false); this.list.splice(i, 1) }
         continue
       }
-      p.vy += (isMat ? 150 : d.gravity) * dt
-      const af = isMat ? d.friction * 0.25 : d.airFriction
-      if (af) { const f = Math.exp(-af * dt); p.vx *= f; p.vy *= f }
+      if (p.beh || p.homing) this._behave(p, dt)
+      // 反 exe VelocitySystem::Update:v += g·dt;v −= v·air_friction·dt;液体里再 −= v·liquid_drag·dt(按碰到的液体格数,这里取 1);|v| ≤ terminal_velocity
+      p.vy += (isMat ? 150 : d.gravity + p.gAdd) * dt
+      const af = isMat ? d.friction * 0.25 : d.airFriction + p.afAdd
+      if (af) { const f = 1 - af * dt; p.vx *= f; p.vy *= f }
+      if (!isMat && p.wasLiq && d.liquidDrag) { const f = Math.max(0, 1 - d.liquidDrag * dt); p.vx *= f; p.vy *= f }
+      if (d.terminal > 0) { const sp0 = Math.hypot(p.vx, p.vy); if (sp0 > d.terminal) { p.vx *= d.terminal / sp0; p.vy *= d.terminal / sp0 } }
       // 子步进碰撞;撞上实心:先看 bounces_left —— 有次数就反弹(bounce_always 任何角度都弹,否则只有擦着弹;
       // bounce_at_any_angle 按真实法线反射),没了才 on_collision_die;ground_penetration 允许穿进地里一段
       const sp = Math.hypot(p.vx, p.vy)
@@ -123,8 +164,10 @@ export class ProjectileSystem {
           const t = this.hooks.hitTest(nx, ny, p)
           if (t && t !== p.lastHit) {
             p.lastHit = t
-            this.hooks.hitEntity?.(t, p, d.damage || 0)
-            if (d.collisionDie) { p.x = nx; p.y = ny; hit = true; break }
+            // damage_scaled_by_speed:伤害 × min(1, 当前速度 / (damage_scale_max_speed || 初速))(箭 / 飞盘慢下来就软)
+            const scale = d.dmgBySpeed ? Math.min(1, sp / ((d.dmgMaxSpeed || p.speed0) || 1)) : 1
+            this.hooks.hitEntity?.(t, p, ((d.damage || 0) + (p.dmgAdd || 0)) * scale)
+            if (d.collisionDie && !d.penetrateEntities && !p.beh?.pierce) { p.x = nx; p.y = ny; hit = true; break } // penetrate_entities / 穿透射击:穿过去,每个实体只伤一次
           }
         }
         const m = sim.get(Math.floor(nx), Math.floor(ny))
@@ -135,6 +178,8 @@ export class ProjectileSystem {
         // 穿水的弹丸(多数弹默认 die_on_liquid_collision=0)扎进水面那一下也溅水
         if (m >= 0 && liquid && !p.wasLiq && sp > 120 && d.type !== 'MATERIAL_PARTICLE') { p.wasLiq = true; this._splash(p, sp * 0.7) }
         else if (m >= 0 && !liquid) p.wasLiq = false
+        // clipping_shot:penetrate_world,在地里以 penetrate_world_velocity_coeff(0.1)的速度挪
+        if (m >= 0 && solid && p.beh?.clip) { p.x += (nx - p.x) * p.beh.clip; p.y += (ny - p.y) * p.beh.clip; continue }
         if (m >= 0 && solid && d.collideWorld) {
           if (p.noHit > 0) { p.x = nx; p.y = ny; continue }
           if (p.penetrate > 0) { p.penetrate -= Math.hypot(nx - p.x, ny - p.y); p.x = nx; p.y = ny; continue }
@@ -146,20 +191,79 @@ export class ProjectileSystem {
       if (p.spin) p.rot += p.spin * dt
       else if (d.velRotation) p.rot = Math.atan2(p.vy, p.vx)
       p.frames += dt * 60
-      // 持续材质转换(冰球一路冻水/灭火、火球点燃周围可燃物)/ 吃格子(大锯刃、黑洞)
-      for (const c of d.converters || []) if (c.loop) this._convert(p, c, c.steps * dt * 60)
+      // 场(GameAreaEffectComponent radius / frame_length):半径内的活物每 frame_length 帧吃一次 damage_game_effect_entities 的状态(冻结 / 电击)
+      const AE = d.areaEffect
+      if (AE) {
+        p.areaT = (p.areaT ?? 0) - dt
+        if (p.areaT <= 0) { p.areaT = AE.every / 60; if (AE.effects.length) this.hooks.areaEffect?.(p.x, p.y, AE.radius, AE.effects, p) }
+        // EnergyShieldComponent(遮蔽之环 radius 28):进圈的敌方弹被弹开
+        if (d.shield) for (const q of this.list) if (q !== p && q.owner !== p.owner && !q.d.areaEffect && q.d.type !== 'STATIC') {
+          const ddx = q.x - p.x, ddy = q.y - p.y, dist = Math.hypot(ddx, ddy)
+          if (dist < d.shield.radius && dist > 0.1 && (q.vx * ddx + q.vy * ddy) < 0) { const sp2 = Math.hypot(q.vx, q.vy); q.vx = (ddx / dist) * sp2; q.vy = (ddy / dist) * sp2; q.rot = Math.atan2(q.vy, q.vx); q.lastHit = null; this.hooks.spark?.(q.x, q.y, -q.vx * 0.1, -q.vy * 0.1, '#80c0ff', 0.2) }
+        }
+      }
+      // 雷霆之环 electrocution_blast.lua:每 10 帧从圈内(±28)随机一点朝随机方向射一道电(misc/electricity.xml,速度 5000)——碰到导电材质就钻进去窜
+      const EL = d.electricity
+      if (EL) { p.elT = (p.elT ?? 0) + dt * 60; while (p.elT >= EL.every) { p.elT -= EL.every; this._shootElectricity(p, EL) } }
+      // BlackHoleComponent(巨大黑洞,引擎内置;对着 wiki 演示 gif 反的):半径每 3 帧 +1 长到 64。它**不是一口吞掉圈内所有格子**,
+      // 而是把圈内的格子一点点崩成飞行像素(wiki:"crumbles any Materials that come into contact with it"),这些像素被 particle_attractor(= radius × 0.25,lua 每 3 帧改)
+      // 拉着绕中心打转、最后在中心湮灭 —— 画面就是一圈淡淡的紫环里满是旋进去的碎屑和粉色长条流光;圈内活物按 damage_probability 每帧吃一次 damage_amount(文档默认 0.1),并被吸向中心
+      const BH = d.blackHole
+      if (BH) {
+        if (p.bhR === undefined) { p.bhR = BH.radius; p.bhT = 0; p.bhAttr = BH.attractor }
+        if (BH.grow) { p.bhT += dt * 60; while (p.bhT >= BH.grow.every) { p.bhT -= BH.grow.every; p.bhR = Math.min(BH.grow.max, p.bhR + BH.grow.step); p.bhAttr = p.bhR * BH.grow.attrPerR } }
+        this._bhCrumble(p, dt)
+        if (BH.damageProb > 0) this.hooks.blackHole?.(p.x, p.y, p.bhR, BH.damageProb, BH.damageAmount, p.bhAttr, dt, p)
+        // 子实体 LooseGroundComponent(probability 0.2 / chunk_probability 0.03 / max_angle π,lua 每次 max_distance = radius + 20):
+        // 从中心朝随机方向射线,碰到的第一块地面(圈里圈外都算)崩成松散材质掉下来 —— 掉进圈里再被崩成飞行像素
+        const L = BH.loose
+        if (L) {
+          const lg = { prob: 1, maxDist: p.bhR + L.distAdd, minR: L.minR, maxR: L.maxR, maxAngle: L.maxAngle }
+          let n = 0
+          if (Math.random() < L.prob * dt * 60) n += this._loosen(p.x, p.y, lg, 1)
+          if (Math.random() < L.chunkProb * dt * 60) n += this._loosen(p.x, p.y, { ...lg, minR: L.maxR, maxR: L.maxR * 2, maxAngle: L.chunkMaxAngle }, 1)
+          if (n > 40) { this.hooks.shake?.(0.06); this.hooks.sfx?.('impact', { vol: 0.25, rate: 0.6, minGap: 250 }) }
+        }
+      }
+      // black_hole_gravity.lua:150px 内的其他弹丸每帧 v += 196 × (1 − d/150) 朝中心(黑洞之间互不吸);刚体(PhysicsApplyForceOnArea)×0.2 交给实体层。
+      // 玩家和普通怪不是刚体,原版不吸(只在圈里吃伤害)
+      const GW = d.gravityWell
+      if (GW) {
+        const f60 = dt * 60
+        for (const q of this.list) {
+          if (q === p || q.d.gravityWell || q.d.blackHole || q.d.type === 'STATIC' || /black_hole/.test(q.d.tags)) continue
+          const ddx = p.x - q.x, ddy = p.y - q.y, dist = Math.hypot(ddx, ddy)
+          if (dist >= GW.dist || dist < 0.5) continue
+          const f = GW.coeff * (1 - dist / GW.dist) * f60
+          q.vx += (ddx / dist) * f; q.vy += (ddy / dist) * f
+        }
+        this.hooks.pull?.(p.x, p.y, GW.dist, GW.coeff * GW.bodyMul, dt)
+      }
+      // 材质转换扫环(冰球一路冻水/灭火、火球点燃周围可燃物、静止之环冻住 72px 内的液体)/ 吃格子(大锯刃、黑洞)
+      if (p.conv.length) for (let k = 0; k < d.converters.length; k++) this._convert(p, d.converters[k], k, dt)
       if (d.cellEater) this._eat(p, d.cellEater)
       // 拖尾发射器 / 贴图粒子发射器
       this._emit(p, dt)
       this._emitSprites(p, dt)
       // 精灵帧
-      if (d.sprite && d.sprite.frames > 1) { p.ft += dt; if (p.ft >= d.sprite.wait) { p.ft = 0; p.frame = (p.frame + 1) % d.sprite.frames } }
+      // 精灵帧:loop=0 播到头 → 有 next_animation 就切过去(场类 blast:spawn → fireball 脉动),没有就停在最后一帧
+      const SPR = p.spr || d.sprite
+      if (SPR && SPR.frames > 1) {
+        p.ft += dt
+        if (p.ft >= SPR.wait) {
+          p.ft = 0
+          if (p.frame + 1 < SPR.frames || SPR.loop) p.frame = (p.frame + 1) % SPR.frames
+          else if (SPR.next) { p.spr = SPR.next; p.frame = 0 }
+        }
+      }
       if (hit && hitLiquid && d.type !== 'MATERIAL_PARTICLE') this._splash(p, sp)
       if (hit && (d.collisionDie || hitLiquid)) { this._die(p, true); this.list.splice(i, 1); continue }
       if (d.dieLowVel && p.age > 0.1 && Math.hypot(p.vx, p.vy) < d.dieLowVel) { this._die(p, true); this.list.splice(i, 1); continue }
       if (p.age >= p.life) { this._die(p, false); this.list.splice(i, 1); continue }
       if (p.age > 30) this.list.splice(i, 1)
     }
+    this._stepZaps(dt)
+    if (this.bhParts.length) this._stepBhParts(dt)
     for (let i = this.stuck.length - 1; i >= 0; i--) { const s = this.stuck[i]; s.life -= dt; if (s.life <= 0 || this.sim.get(Math.floor(s.ax), Math.floor(s.ay)) === 0) this.stuck.splice(i, 1) }
     // 化妆粒子
     for (let i = this.fx.length - 1; i >= 0; i--) {
@@ -168,9 +272,16 @@ export class ProjectileSystem {
       if (f.life <= 0) { this.fx.splice(i, 1); continue }
       f.vy += f.g * dt
       if (f.air) { f.vx += (Math.random() - 0.5) * f.air * dt * 60; f.vy += (Math.random() - 0.5) * f.air * dt * 60 }
+      // attractor_force(黑洞的粉色流光):每帧朝发射源加 force(px/s),越近越快 → 长条流光全朝洞心飞
+      if (f.att) { const dx = f.ax - f.x, dy = f.ay - f.y, dd = Math.hypot(dx, dy) || 1; if (dd < 2) { this.fx.splice(i, 1); continue } f.vx += (dx / dd) * f.att * dt * 60; f.vy += (dy / dd) * f.att * dt * 60 }
       f.x += f.vx * dt; f.y += f.vy * dt
     }
-    for (let i = this.anims.length - 1; i >= 0; i--) { const a = this.anims[i]; a.t += dt; if (a.t >= a.wait * a.frames) this.anims.splice(i, 1) }
+    for (let i = this.anims.length - 1; i >= 0; i--) {
+      const a = this.anims[i]; a.t += dt
+      // SpriteParticleEmitter 出来的会飞的火花(金块闪光):带速度 + velocity_slowdown
+      if (a.vx || a.vy) { a.x += a.vx * dt; a.y += a.vy * dt; const f = Math.exp(-(a.slow || 0) * dt); a.vx *= f; a.vy *= f }
+      if (a.t >= (a.life ?? a.wait * a.frames)) this.anims.splice(i, 1)
+    }
     // 贴图粒子:颜色随时间变化(color_change 每秒),重力,减速,自转,缩放
     for (let i = this.sfx.length - 1; i >= 0; i--) {
       const s = this.sfx[i]
@@ -249,7 +360,9 @@ export class ProjectileSystem {
     const [nx, ny] = this._normalAt(Math.floor(hx), Math.floor(hy))
     const sp = Math.hypot(p.vx, p.vy) || 1
     const cosIn = -(p.vx * nx + p.vy * ny) / sp // 1 = 正撞,0 = 擦边
-    if (!d.bounceAlways && !d.bounceAnyAngle && cosIn > 0.55) return false // 普通弹只擦着弹,正撞就死(箭插进去)
+    // 反 exe ProjectileSystem::Update:反射向量 r = v − 2(v·n)n,只有 r̂·v̂ > 0.75(即 1 − 2cos²θ > 0.75,入射角离表面 < 20.7°)才弹,否则要 bounce_always
+    if (p.noBounce) return false // remove_bounce.lua:bounce_always = false, bounces_left = 0
+    if (!d.bounceAlways && !d.bounceAnyAngle && 1 - 2 * cosIn * cosIn <= 0.75) return false
     const dot = p.vx * nx + p.vy * ny
     p.vx = (p.vx - 2 * dot * nx) * d.bounceEnergy
     p.vy = (p.vy - 2 * dot * ny) * d.bounceEnergy
@@ -274,18 +387,202 @@ export class ProjectileSystem {
     return true
   }
 
-  /** MagicConvertMaterialComponent:半径内随机抽 budget 个格子做 from→to / 任意→to / 灭火 / 点燃 */
-  _convert(p, c, budget) {
-    const sim = this.sim, mats = this.mats
-    let map = null
-    if (c.fromArray && c.toArray) { map = new Map(); c.fromArray.forEach((f, i) => { const a = mats.byName.get(f), b = mats.byName.get(c.toArray[i] || c.toArray[c.toArray.length - 1]); if (a !== undefined && b !== undefined) map.set(a, b) }) }
-    else if (c.from && c.to) { const a = mats.byName.get(c.from), b = mats.byName.get(c.to); if (a !== undefined && b !== undefined) { map = new Map([[a, b]]) } }
-    const toAny = c.fromAny && c.to ? mats.byName.get(c.to) : undefined
-    const n = Math.ceil(budget)
+  /** 把 shot 的 c 作用到弹上(引擎 GunSystem 在 RegisterGunAction 后做的事;数值语义见 spawn 注释) */
+  _applyC(p, c) {
+    p.bounces += c.bounces || 0
+    p.gAdd = c.gravity || 0
+    p.kbAdd = c.knockback_force || 0
+    p.exR = c.explosion_radius || 0
+    p.exD = (c.damage_explosion || 0) + (c.damage_explosion_add || 0)
+    p.friendly = !!c.friendly_fire
+    const beh = {}
+    for (const f of String(c.extra_entities || '').split(',')) {
+      const key = f.trim().split('/').pop().replace('.xml', '')
+      if (!key) continue
+      const b = EXTRA_BEHAVIOR[key]
+      if (b) Object.assign(beh, b)
+    }
+    if (Object.keys(beh).length) {
+      p.beh = beh
+      if (beh.homing) p.homing = { ...beh.homing }
+      if (beh.noBounce) { p.bounces = 0; p.noBounce = true }
+      if (beh.nolla) p.life = 1 / 60
+      if (beh.lifetimeInfinite) { p.life = 1e9; p.friendly = true }
+      if (beh.airFrictionAdd) p.afAdd = beh.airFrictionAdd
+      if (beh.autoaim && this.hooks.nearestTarget) {
+        // autoaim.lua:出生那帧朝 range 内最近的敌人(要有视线)把方向 lerp 过去(steer 0.8),再抖 ±scatter 弧度
+        const t = this.hooks.nearestTarget(p.x, p.y, beh.autoaim.range, p.owner, { los: true })
+        if (t) {
+          const sp = Math.hypot(p.vx, p.vy) || 1, dx = t.x - p.x, dy = t.y - p.y, dl = Math.hypot(dx, dy) || 1
+          let nx = (dx / dl) * (1 - beh.autoaim.steer) + (p.vx / sp) * beh.autoaim.steer, ny = (dy / dl) * (1 - beh.autoaim.steer) + (p.vy / sp) * beh.autoaim.steer
+          const nl = Math.hypot(nx, ny) || 1, rot = (Math.random() * 2 - 1) * beh.autoaim.scatter, cr = Math.cos(rot), sr = Math.sin(rot)
+          nx /= nl; ny /= nl
+          p.vx = (nx * cr - ny * sr) * sp; p.vy = (nx * sr + ny * cr) * sp
+        }
+      }
+    }
+    const fx = String(c.game_effect_entities || '').split(',').map((f) => f.trim().split('/').pop().replace('.xml', '').replace(/^effect_/, '')).filter(Boolean)
+    if (fx.length) p.effects = fx
+  }
+
+  /** 每帧的附加行为(extra_entities 的 lua / 组件),在速度积分前调 */
+  _behave(p, dt) {
+    const b = p.beh, f60 = dt * 60
+    // HomingComponent(反 exe HomingSystem::Update):detect 内最近目标;accelerate 模式 v = v×mult + dir×coeff×dt×(1 − d/detect);rotate 模式只转向,每帧最多 turn 弧度
+    if (p.homing && this.hooks.nearestTarget) {
+      const h = p.homing
+      const t = this.hooks.nearestTarget(p.x, p.y, h.detect, p.owner, { shooter: !!h.shooter })
+      if (t) {
+        const dx = t.x - p.x, dy = t.y - p.y, dist = Math.hypot(dx, dy) || 1
+        if (h.rotate) {
+          const sp = Math.hypot(p.vx, p.vy) || 1, cur = Math.atan2(p.vy, p.vx), want = Math.atan2(dy, dx)
+          let da = Math.atan2(Math.sin(want - cur), Math.cos(want - cur))
+          da = Math.max(-h.turn, Math.min(h.turn, da))
+          p.vx = Math.cos(cur + da) * sp; p.vy = Math.sin(cur + da) * sp
+        } else {
+          const f = Math.max(0, 1 - dist / h.detect), m = Math.pow(h.mult, f60), k = h.coeff * dt * f
+          p.vx = p.vx * m + (dx / dist) * k; p.vy = p.vy * m + (dy / dist) * k
+        }
+      }
+      if (h.accel) { h.coeff = Math.min(h.accel.coeffMax, h.coeff + h.accel.coeffAdd * f60); h.mult = Math.min(h.accel.multMax, h.mult + h.accel.multAdd * f60) }
+    }
+    if (!b) return
+    // homing_cursor.lua:每帧把速度方向朝法杖朝向转 20%
+    if (b.cursor && this.hooks.aimAngle && p.owner === 'player') {
+      const sp = Math.hypot(p.vx, p.vy) || 1, cur = Math.atan2(p.vy, p.vx), want = this.hooks.aimAngle()
+      const da = Math.atan2(Math.sin(want - cur), Math.cos(want - cur)) * b.cursor
+      p.vx = Math.cos(cur + da) * sp; p.vy = Math.sin(cur + da) * sp
+    }
+    // fly_upwards / fly_downwards.lua:第 20 帧那一下,速度变成竖直的 2|v|
+    if (b.flyAt && !p.flew && p.frames >= b.flyAt.frame) { p.flew = true; const sp = Math.hypot(p.vx, p.vy); p.vx = 0; p.vy = b.flyAt.dir * sp * 2 }
+    // SineWaveComponent:方向按 m × sin(freq × 帧数) 摆
+    if (b.sine) {
+      const t = p.frames, prev = (p.sineT ?? t), ang = b.sine.m * (Math.sin(b.sine.freq * t) - Math.sin(b.sine.freq * prev))
+      p.sineT = t
+      if (ang) { const cr = Math.cos(ang), sr = Math.sin(ang), vx = p.vx; p.vx = vx * cr - p.vy * sr; p.vy = vx * sr + p.vy * cr }
+    }
+    // chaotic_arc.lua:每 2 帧 v += Random(−0.4·max|v|, +0.4·max|v|)(x y 用同一个随机数)
+    if (b.chaos) { p.chaosT = (p.chaosT || 0) + f60; if (p.chaosT >= b.chaos.every) { p.chaosT -= b.chaos.every; const s = Math.max(Math.abs(p.vx), Math.abs(p.vy)) * b.chaos.scale, r = (Math.random() * 2 - 1) * s; p.vx += r; p.vy += r } }
+    // floating_arc.lua:往下探 ray px,有地面就把 vy 拉向 (dy − targetY)×60(限 ±maxVy),再和原 vy 各一半;vx ×0.98
+    if (b.float) {
+      const sim = this.sim; let hit = -1
+      for (let k = 1; k <= b.float.ray; k++) { const m = sim.get(Math.floor(p.x), Math.floor(p.y + k)); if (m > 0 && sim.kind[m] !== K_GAS && sim.kind[m] !== K_FIRE) { hit = k; break } }
+      if (hit > 0) { let vy = (hit - b.float.targetY) * 60; vy = Math.max(-b.float.maxVy, Math.min(b.float.maxVy, vy)); p.vy = (vy + p.vy) * 0.5; p.vx *= Math.pow(0.98, f60) }
+    }
+    // avoiding_arc.lua:每 3 帧四向探 ray px,碰到就按 (ray² − d²)×strength 推开
+    if (b.avoid) {
+      p.avoidT = (p.avoidT || 0) + f60
+      if (p.avoidT >= b.avoid.every) {
+        p.avoidT -= b.avoid.every
+        const sim = this.sim, R = b.avoid.ray
+        for (const [dx, dy] of [[1, 0], [0, -1], [-1, 0], [0, 1]]) {
+          for (let k = 1; k <= R; k++) { const m = sim.get(Math.floor(p.x + dx * k), Math.floor(p.y + dy * k)); if (m > 0 && sim.kind[m] !== K_GAS && sim.kind[m] !== K_FIRE) { const push = (R * R - k * k) * b.avoid.strength; p.vx -= push * dx; p.vy -= push * dy; break } }
+        }
+      }
+    }
+    // AreaDamageComponent:每帧给 r 内的敌人 perFrame 伤害
+    if (b.areaDamage) this.hooks.areaDamage?.(p.x, p.y, b.areaDamage.r, b.areaDamage.perFrame * f60, p)
+  }
+
+  /**
+   * 射一道电(shoot_projectile misc/electricity.xml):ElectricityComponent 实体没有碰撞,从起点朝方向飞一帧的路程(speed/60 ≈ 83px),
+   * 路上第一个导电格就是电流的入口;没碰到导电格就白射。
+   */
+  _shootElectricity(p, EL) {
+    const sim = this.sim, C = this.conductive
+    const a = Math.random() * Math.PI * 2, cx = Math.cos(a), sy = Math.sin(a)
+    let x = p.x + (Math.random() * 2 - 1) * EL.spread, y = p.y + (Math.random() * 2 - 1) * EL.spread
+    const len = Math.ceil(EL.shotSpeed / 60)
+    for (let i = 0; i < len; i++) {
+      const m = sim.get(Math.floor(x), Math.floor(y))
+      if (m < 0) return
+      if (m > 0 && C[m]) { this.zap(Math.floor(x), Math.floor(y), cx, sy, EL, p.owner); return }
+      x += cx; y += sy
+    }
+  }
+
+  /** 电流入口:从导电格 (x,y) 开始一条电流,energy 步、每帧 speed 步 */
+  zap(x, y, dx, dy, EL = { energy: 1000, speed: 32, heat: 0 }, owner = 'player') {
+    if (this.zaps.length > 24) return null
+    const z = { x, y, dx, dy, energy: EL.energy, speed: EL.speed, heat: EL.heat, owner }
+    this.zaps.push(z)
+    this.hooks.sfx?.('electric', { vol: 0.3, rate: 1.0 + Math.random() * 0.3, minGap: 120 })
+    return z
+  }
+
+  /**
+   * ElectricityComponent(引擎内置,文档默认 energy 1000 / speed 32):电流每帧在导电材质里顺着惯性方向窜 speed 格,走一格耗 1 energy,
+   * 走出导电材质就断;走过的格亮 0.15s(渲染成闪的亮蓝),活物碰到亮着的格就被电(交给 hooks.shock);probability_to_heat 每帧按概率把头上那格烧热(水 → 蒸汽)
+   */
+  _stepZaps(dt) {
+    if (!this.zaps.length && !this.elec.size) return
+    const sim = this.sim, C = this.conductive, now = this.time
+    const touched = (this.elecNew ||= []); touched.length = 0
+    for (let i = this.zaps.length - 1; i >= 0; i--) {
+      const z = this.zaps[i]
+      // 反 exe ElectricitySystem::Update:每步最多试 16 次 —— 在 mAvgDir 两侧 ±135°(rand × 3π/2 − 3π/4)随机取角,步长 2px(方向 × 2 取整),
+      // 目标格必须非空、导电,且 10 帧内没被电过(避免原地打转);16 次都不行电流就断
+      let n = Math.max(1, Math.round(z.speed * dt * 60)), alive = true
+      while (n-- > 0 && z.energy > 0) {
+        let nx = 0, ny = 0, ok = false
+        for (let t = 0; t < 16; t++) {
+          const a = Math.random() * (Math.PI * 1.5) - Math.PI * 0.75, ca = Math.cos(a), sa = Math.sin(a)
+          const sx = Math.trunc((z.dx * ca - z.dy * sa) * 2), sy = Math.trunc((z.dx * sa + z.dy * ca) * 2)
+          if (!sx && !sy) continue
+          nx = z.x + sx; ny = z.y + sy
+          const m = sim.get(nx, ny)
+          if (m <= 0 || !C[m]) continue
+          if (this.elec.has(ckey(nx, ny))) continue // 亮着 = 0.15s(9 帧)内电过
+          ok = true; break
+        }
+        // 16 次都撞空(浅水坑 2px 一跳容易跳出水面 / 周围都亮着):退回 1px 邻格 —— 先挑没亮的导电格,再挑任何导电格;一个导电邻格都没有才断(电流留在水坑里持续闪)
+        if (!ok) for (let pass = 0; pass < 2 && !ok; pass++) for (let k = 0; k < 8 && !ok; k++) { const tx = z.x + DX8[k], ty = z.y + DY8[k], m = sim.get(tx, ty); if (m > 0 && C[m] && (pass === 1 || !this.elec.has(ckey(tx, ty)))) { nx = tx; ny = ty; ok = true } }
+        if (!ok) { alive = false; break }
+        const sx = nx - z.x, sy = ny - z.y, sl = Math.hypot(sx, sy) || 1
+        z.x = nx; z.y = ny; z.energy--
+        const ndx = z.dx * 0.7 + (sx / sl) * 0.3, ndy = z.dy * 0.7 + (sy / sl) * 0.3, nl = Math.hypot(ndx, ndy) || 1
+        z.dx = ndx / nl; z.dy = ndy / nl
+        this.elec.set(ckey(z.x, z.y), now + 0.15); touched.push(z.x, z.y)
+      }
+      if (alive && z.heat && Math.random() < z.heat) { const m = sim.get(z.x, z.y), to = m > 0 ? this.warmTo[m] : 0; if (to) sim.set(z.x, z.y, to, 0) }
+      if (!alive || z.energy <= 0) this.zaps.splice(i, 1)
+    }
+    for (const [k, t] of this.elec) if (t <= now) this.elec.delete(k)
+    if (touched.length) this.hooks.shock?.(touched)
+  }
+
+  /**
+   * MagicConvertMaterialComponent:从中心一圈圈往外扫(每帧 steps_per_frame 圈,1 圈 = 1px 环),扫到的格做 from→to / 任意→to / 灭火 / 点燃;
+   * 扫到 radius 就完(loop=0:触摸系 4 帧扫完 20~30px、静止之环 15 帧冻完 72px)或从头再来(loop=1:冰球 / 火球一路飞一路转)。
+   * 之前是每帧随机抽 steps×60 个点 —— 72px 的圈 1.6 万格只抽 300 个,静止之环基本冻不住水。
+   */
+  _convert(p, c, ci, dt) {
+    const st = p.conv[ci]
+    if (st.done) return
+    if (!st.map && !st.init) {
+      const mats = this.mats
+      st.init = true
+      if (c.fromArray && c.toArray) { st.map = new Map(); c.fromArray.forEach((f, i) => { const a = mats.byName.get(f), b = mats.byName.get(c.toArray[i] || c.toArray[c.toArray.length - 1]); if (a !== undefined && b !== undefined) st.map.set(a, b) }) }
+      else if (c.from && c.to) { const a = mats.byName.get(c.from), b = mats.byName.get(c.to); if (a !== undefined && b !== undefined) st.map = new Map([[a, b]]) }
+      st.toAny = c.fromAny && c.to ? mats.byName.get(c.to) : undefined
+    }
+    let rings = Math.max(1, Math.round(c.steps * dt * 60))
+    while (rings-- > 0) {
+      if (st.r > c.radius) { if (c.loop) st.r = 0; else { st.done = true; return } }
+      this._convertRing(p, c, st, st.r)
+      st.r++
+    }
+  }
+
+  _convertRing(p, c, st, r) {
+    const sim = this.sim, map = st.map, toAny = st.toAny
+    const n = r === 0 ? 1 : Math.ceil(Math.PI * 2 * r * 1.5)
+    let lx = NaN, ly = NaN
     for (let i = 0; i < n; i++) {
-      // 圆内均匀采样
-      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * c.radius
-      const x = Math.floor(p.x + Math.cos(a) * r), y = Math.floor(p.y + Math.sin(a) * r)
+      const a = (i / n) * Math.PI * 2
+      const x = Math.round(p.x + Math.cos(a) * r), y = Math.round(p.y + Math.sin(a) * r)
+      if (x === lx && y === ly) continue
+      lx = x; ly = y
       const m = sim.get(x, y)
       if (m < 0) continue
       const k = sim.kind[m]
@@ -293,6 +590,81 @@ export class ProjectileSystem {
       if (c.ignite && m > 0 && this.burnable[m] && sim.aux(x, y) === 0 && Math.random() < c.ignite / 100) { sim.set(x, y, m, 1); continue }
       if (map && map.has(m)) { sim.set(x, y, map.get(m), 0); continue }
       if (toAny !== undefined && m > 0 && k !== K_FIRE) sim.set(x, y, toAny, 0)
+    }
+  }
+
+  /**
+   * BlackHoleComponent 的"崩":每帧在圈内随机抽若干点,抽到的格子(气 / 火 / [indestructible] 除外)从世界里拿掉、变成一颗飞行像素(bhParts),
+   * 被 attractor 拉着往中心掉 —— 有横向初速的就绕着转几圈再进去,到中心 3px 内湮灭。抽样数 40 + R:小圈时几乎抽一遍就空,r64 时 500 帧能清掉九成。
+   */
+  _bhCrumble(p, dt) {
+    // 反 noita_dev.exe BlackHoleSystem::Update(component_updators/blackhole_system.cpp):
+    //   最多试 100 次:随机角 → 从中心射到 radius(BlackHoleSystem_Raytrace),第一条打到格子的射线吃掉命中格;
+    //   再以命中点为基准沿垂直方向偏移 ±1..8 px 各射一条(目标点 = 命中点 ± k·perp,再归一化到 radius)→ 一帧最多 17 格,一条"扇面"
+    //   吃掉的格子 CreateParticle(原材质):速度 = 径向方向旋转 π/2 × attractor × 4(切向甩出),再叠 ±10 随机 → 被吸引器拉回来就绕圈
+    let frames = (p.bhAcc = (p.bhAcc || 0) + dt * 60)
+    while (frames >= 1) {
+      frames--; p.bhAcc--
+      let hit = null, hx = 0, hy = 0
+      for (let t = 0; t < 100 && !hit; t++) {
+        const a = Math.random() * Math.PI * 2
+        hit = this._bhRay(p, Math.cos(a), Math.sin(a))
+        if (hit) { hx = hit[0]; hy = hit[1]; this._bhEatCell(p, hx, hy) }
+      }
+      if (!hit) continue
+      const dx = hx + 0.5 - p.x, dy = hy + 0.5 - p.y
+      const px = Math.abs(dx) > Math.abs(dy) ? 0 : 1, py = 1 - px // 垂直偏移方向:|dx|>|dy| 时沿 y 偏,否则沿 x
+      for (let k = 1; k <= 8; k++) for (const s of [1, -1]) {
+        const tx = hx + 0.5 + px * k * s - p.x, ty = hy + 0.5 + py * k * s - p.y, l = Math.hypot(tx, ty) || 1
+        const h = this._bhRay(p, tx / l, ty / l)
+        if (h) this._bhEatCell(p, h[0], h[1])
+      }
+    }
+  }
+
+  /** 从洞心沿 (cx,cy) 走到 radius,返回第一个非空格 [x,y];没打到返回 null */
+  _bhRay(p, cx, cy) {
+    const sim = this.sim, R = p.bhR
+    let lx = NaN, ly = NaN
+    for (let t = 1; t <= R; t++) {
+      const x = Math.floor(p.x + cx * t), y = Math.floor(p.y + cy * t)
+      if (x === lx && y === ly) continue
+      lx = x; ly = y
+      const m = sim.get(x, y)
+      if (m < 0) return null
+      if (m > 0) return [x, y]
+    }
+    return null
+  }
+
+  _bhEatCell(p, x, y) {
+    const sim = this.sim, m = sim.get(x, y)
+    if (m <= 0) return
+    const indId = this._indestructible ||= (() => { const s = new Uint8Array(this.mats.list.length); for (const mm of this.mats.list) if (/\[indestructible\]/.test(mm.tags || '')) s[mm.id] = 1; return s })()
+    if (indId[m]) return
+    const k = sim.kind[m]
+    sim.set(x, y, 0)
+    if (k === K_GAS || k === K_FIRE || this.bhParts.length >= 4000) return
+    const dx = x + 0.5 - p.x, dy = y + 0.5 - p.y, d = Math.hypot(dx, dy) || 1
+    const sp = p.bhAttr * 4 // 4 × attractor_force(exe 常量 4.0)
+    // 旋转 π/2:(dx,dy) → (−dy, dx),切向
+    this.bhParts.push({ x: x + 0.5, y: y + 0.5, vx: (-dy / d) * sp + (Math.random() * 20 - 10), vy: (dx / d) * sp + (Math.random() * 20 - 10), col: this.mats.color[m], p })
+  }
+
+  /**
+   * 黑洞飞行像素(engine particle + 粒子吸引器:范围 radius × 3,力 attractor × 0.025):切向出生、被拉回洞心 → 绕圈收进去。
+   * 吸引器的加速度单位反不出来,按"切向速度 4×attr 时轨道半径 ≈ 洞半径的 1/3"取 12 × attr px/s²,再配轻阻尼让轨道慢慢收;到中心 3px 内消失
+   */
+  _stepBhParts(dt) {
+    const f60 = dt * 60, damp = Math.pow(0.988, f60)
+    for (let i = this.bhParts.length - 1; i >= 0; i--) {
+      const q = this.bhParts[i], p = q.p
+      if (p.dead || p.age > 30) { this.bhParts.splice(i, 1); continue }
+      const dx = p.x - q.x, dy = p.y - q.y, dist = Math.hypot(dx, dy)
+      if (dist < 3 || dist > p.bhR * 3) { this.bhParts.splice(i, 1); continue }
+      const a = p.bhAttr * 12 * dt
+      q.vx = (q.vx + (dx / dist) * a) * damp; q.vy = (q.vy + (dy / dist) * a) * damp
+      q.x += q.vx * dt; q.y += q.vy * dt
     }
   }
 
@@ -310,7 +682,7 @@ export class ProjectileSystem {
       if (Math.random() * 100 >= ce.prob) continue
       if (ce.ignoredTag && (this.mats.list[m].tags || '').includes(ce.ignoredTag)) continue
       sim.set(x, y, 0)
-      if (Math.random() < 0.15) this.hooks.debris?.(x + 0.5, y + 0.5, (Math.random() - 0.5) * 60, -Math.random() * 60, m, this.mats.color[m])
+      if (Math.random() < (ce.quiet ? 0.01 : 0.15)) this.hooks.debris?.(x + 0.5, y + 0.5, (Math.random() - 0.5) * 60, -Math.random() * 60, m, this.mats.color[m])
     }
   }
 
@@ -380,6 +752,9 @@ export class ProjectileSystem {
         if (ringPts) {
           const q = (Math.floor(Math.random() * (ringPts.length / 2))) * 2
           x = p.x + e.ox + ringPts[q] * 0.25; y = p.y + e.oy + ringPts[q + 1] * 0.25 // 256px 图对应约 64px 半径
+        } else if (p.bhR !== undefined) {
+          // black_hole_big.lua 每 3 帧把发射器的 x/y_pos_offset 改成 ±radius:流光在整个圈里随机出生
+          x = p.x + (Math.random() * 2 - 1) * p.bhR; y = p.y + (Math.random() * 2 - 1) * p.bhR
         } else {
           x = p.lastX + dx * t + e.ox + e.offX[0] + Math.random() * (e.offX[1] - e.offX[0])
           y = p.lastY + dy * t + e.oy + e.offY[0] + Math.random() * (e.offY[1] - e.offY[0])
@@ -395,7 +770,7 @@ export class ProjectileSystem {
         }
         if (this.fx.length > 2500) break
         const life = e.life[0] + Math.random() * (e.life[1] - e.life[0])
-        this.fx.push({ x, y, vx, vy, life, max: life, col, g: e.g, fade: e.fade, air: e.airflow, long: e.long })
+        this.fx.push({ x, y, vx, vy, life, max: life, col, g: e.g, fade: e.fade, air: e.airflow, long: e.long, att: e.attractor || 0, ax: p.x, ay: p.y })
       }
     }
     p.lastX = p.x; p.lastY = p.y
@@ -403,7 +778,17 @@ export class ProjectileSystem {
 
   _die(p, byHit) {
     const d = p.d
+    p.dead = true
     const x = Math.floor(p.x), y = Math.floor(p.y)
+    // 触发载荷:撞墙 / 到时 / 死亡 → 在撞点(往回退 2px 别生在墙里)沿原飞行方向放出载荷里的弹(载荷自己也可以再带载荷)
+    if (p.payload) {
+      const pl = p.payload; p.payload = null
+      const sp = Math.hypot(p.vx, p.vy), dir = sp > 1 ? Math.atan2(p.vy, p.vx) : p.rot
+      const bx = byHit ? p.x - Math.cos(dir) * 2 : p.x, by = byHit ? p.y - Math.sin(dir) * 2 : p.y
+      for (const s of pl) this.spawn(s.name, bx, by, dir, { owner: p.owner, c: s.c || null, speedMul: s.speedMul || 1, payload: s.payload, dmgAdd: s.dmgAdd || 0 })
+    }
+    // TeleportProjectileComponent:弹死在哪,射手就传到哪(离墙 min_distance_from_wall,y 速度归零)
+    if (d.teleport && p.owner === 'player') this.hooks.teleport?.(p.x - (byHit ? Math.cos(p.rot) * d.teleport.minWall : 0), p.y - (byHit ? Math.sin(p.rot) * d.teleport.minWall : 0), d.teleport)
     // 留下精灵(箭插在地里、锯片躺着),挂在撞到的那格上,那格被挖掉就消失
     if (d.leaveSprite && byHit && d.sprite?.image) {
       const dir = Math.atan2(p.vy, p.vx)
@@ -424,48 +809,112 @@ export class ProjectileSystem {
         if (!placed) this.hooks.debris?.(p.x, p.y, -p.vx * 0.2 + (Math.random() - 0.5) * 30, -20 - Math.random() * 30, id, this.mats.color[id])
       }
     }
-    const ex = d.explosion
-    if (!ex || !(byHit ? d.deathExplode : d.lifetimeExplode)) return
+    let ex = d.explosion
+    // c.explosion_radius / damage_explosion(_add):加到 config_explosion 上(高爆 +64 半径 +3.2 伤害;没有爆炸配置的弹加了半径也会炸)
+    if ((p.exR || p.exD) && (ex || p.exR > 0)) ex = { ...(ex || { radius: 0, damage: 0, shake: 0, hole: true, holeLiquid: false, rayEnergy: 0, maxDurability: 0, sprite: null, sparks: null, matSparks: null, light: null, createCell: null, power: [0, 0.2], knockback: 1 }), radius: (ex?.radius || 0) + p.exR, damage: (ex?.damage || 0) + p.exD }
+    if (!ex || !(byHit ? d.deathExplode : d.lifetimeExplode) && !(p.exR > 0)) return
     this._lg = d.looseGround || null
     this.explode(p.x, p.y, ex, Math.atan2(-p.vy, -p.vx))
     this._lg = null
   }
 
+  /**
+   * LooseGroundComponent(文档:"shoots a ray in random direction and does the loosening"):试 tries 次,每次按 prob 从 (x,y) 绕上方向 ±max_angle 射一条 max_distance 长的射线,
+   * 碰到的第一块静态地面上 minR~maxR 的一圈变成同类的松散材质(会掉)。静态 → 松散:sand_static→sand / soil→soil / coal→coal / gold→gold / snow,ice→snow / *wood*→wood / 其他→rock_loose
+   */
+  _loosen(x, y, lg, tries) {
+    const sim = this.sim, mats = this.mats
+    const loose = (m) => { const n = mats.name(m); const t = /^sand_static/.test(n) ? 'sand' : /^soil/.test(n) ? 'soil' : /^coal/.test(n) ? 'coal' : /^gold/.test(n) ? 'gold' : /^snow|^ice/.test(n) ? 'snow' : /wood/.test(n) ? 'wood' : 'rock_loose'; return mats.byName.get(t) }
+    let n = 0
+    for (let k = 0; k < tries; k++) {
+      if (Math.random() > lg.prob) continue
+      const a = -Math.PI / 2 + (Math.random() * 2 - 1) * lg.maxAngle, ca = Math.cos(a), sa = Math.sin(a)
+      let cx = NaN, cy = NaN
+      for (let t = 1; t <= lg.maxDist; t++) {
+        const m = sim.get(Math.floor(x + ca * t), Math.floor(y + sa * t))
+        if (m < 0) break
+        if (m > 0 && sim.kind[m] === K_STATIC) { cx = x + ca * t; cy = y + sa * t; break }
+      }
+      if (Number.isNaN(cx)) continue
+      const rr = lg.minR + Math.random() * (lg.maxR - lg.minR)
+      for (let yy = Math.floor(cy - rr); yy <= Math.ceil(cy + rr); yy++) for (let xx = Math.floor(cx - rr); xx <= Math.ceil(cx + rr); xx++) {
+        if ((xx - cx) ** 2 + (yy - cy) ** 2 > rr * rr) continue
+        const m = sim.get(xx, yy)
+        if (!(m > 0 && sim.kind[m] === K_STATIC)) continue
+        if (lg.particles) {
+          // 松脱成"真粒子"(原版 loosening 出来的是同材质的飞行像素,落地又变回那个材质的格子 —— 崩塌的圣山地上堆的是砖色的渣):抠掉 → 碎屑,落地沉积回世界
+          sim.set(xx, yy, 0, 0); n++
+          this.hooks.debris?.(xx, yy, (Math.random() - 0.5) * 30, -10 - Math.random() * 30, m, mats.color[m], true)
+        } else { const l = loose(m); if (l !== undefined) { sim.set(xx, yy, l, 0); n++ } }
+      }
+      if (lg.onHit) lg.onHit(cx, cy)
+    }
+    return n
+  }
+
   /** config_explosion 落地 */
+  /**
+   * 反 noita_dev.exe ExplosionFactory::IMPL_DoExplosion(gameplay_utils/explosion_factory.cpp):
+   *   CastRays:360 条射线(1°/条)从中心走 1px 步到 radius,碰到的每个实心 / 液体格扣掉材质 hp(min(energy, hp)),energy 耗尽或撞上 durability > max_durability_to_destroy 就停,
+   *     记下每条射线的到达距离²;所以火球(ray_energy 5 万)挖不动岩石(hp 10 万),炸弹(600 万)能穿 60 格岩石但被钢(durability 12)挡住
+   *   格子循环:半径内、且离中心距离² ≤ 自己角度那条射线到达距离² 的格子才被摧毁;液体默认(hole_destroy_liquid=0)是被抛飞不是留着;坑内空格按 create_cell_probability% 各自掷骰生成 create_cell_material
+   *   DamageMortals:见 hooks.explosion —— 满额伤害、无距离衰减,但要求 hitbox 能被射线够到(墙挡住就没伤害)
+   */
   explode(x, y, ex, back = -Math.PI / 2) {
     const sim = this.sim, mats = this.mats
     const r = ex.radius
     const maxDur = ex.maxDurability || 10
     let dug = 0
-    // config_explosion.damage 打到范围内的实体(damage_mortals)
-    if (ex.damage > 0 && r > 0) this.hooks.explosion?.(x, y, r, ex.damage)
-    const ms = ex.matSparks ? ex.matSparks[0] + Math.random() * (ex.matSparks[1] - ex.matSparks[0]) : 0
-    if (ex.hole && r > 0) {
-      for (let yy = Math.floor(y - r); yy <= Math.ceil(y + r); yy++) for (let xx = Math.floor(x - r); xx <= Math.ceil(x + r); xx++) {
-        if ((xx - x) ** 2 + (yy - y) ** 2 > r * r) continue
+    // CastRays
+    const reach2 = this._reach2 ||= new Float32Array(360)
+    const energy0 = ex.rayEnergy || 20000
+    const hp = this.matHp ||= (() => { const a = new Float32Array(mats.list.length); for (const m of mats.list) a[m.id] = m.hp || 0; return a })()
+    for (let i = 0; i < 360; i++) {
+      const a = (i / 360) * Math.PI * 2, cx = Math.cos(a), sy = Math.sin(a)
+      let energy = energy0, t = 0, lx = NaN, ly = NaN, stop = false
+      for (t = 1; t <= r && !stop; t++) {
+        const xx = Math.floor(x + cx * t), yy = Math.floor(y + sy * t)
+        if (xx === lx && yy === ly) continue
+        lx = xx; ly = yy
         const m = sim.get(xx, yy)
         if (m <= 0) continue
         const k = sim.kind[m]
         if (k === K_GAS || k === K_FIRE) continue
-        if (k === K_LIQUID && !ex.holeLiquid) continue
-        if ((k === K_STATIC || k === K_SAND) && this.durability[m] > maxDur) continue
+        if (this.durability[m] > maxDur) { t--; stop = true; break } // 挡住:这格不算
+        const take = Math.min(energy, hp[m])
+        energy -= take
+        if (energy <= 0) { if (take < hp[m]) t--; stop = true; break } // 没吃完这格的 hp 就停在它前面
+      }
+      reach2[i] = Math.min(t, r) ** 2
+    }
+    const angIdx = (dx, dy) => { let d = Math.round(Math.atan2(dy, dx) * 180 / Math.PI); d %= 360; if (d < 0) d += 360; return d }
+    // config_explosion.damage 打到范围内的实体(damage_mortals):把射线表交给实体层做遮挡判定
+    if (ex.damage > 0 && r > 0) this.hooks.explosion?.(x, y, r, ex.damage, reach2, ex.power, ex.knockback)
+    const ms = ex.matSparks ? ex.matSparks[0] + Math.random() * (ex.matSparks[1] - ex.matSparks[0]) : 0
+    const ccId = ex.createCell?.mat ? mats.byName.get(ex.createCell.mat) : undefined
+    if (ex.hole && r > 0) {
+      for (let yy = Math.floor(y - r); yy <= Math.ceil(y + r); yy++) for (let xx = Math.floor(x - r); xx <= Math.ceil(x + r); xx++) {
+        const dx = xx + 0.5 - x, dy = yy + 0.5 - y, d2 = dx * dx + dy * dy
+        if (d2 > r * r) continue
+        if (d2 > reach2[angIdx(dx, dy)]) continue
+        const m = sim.get(xx, yy)
+        if (m < 0) continue
+        if (m === 0) {
+          // 坑内空格:create_cell_probability% 生成 create_cell_material(火球 → 火)
+          if (ccId !== undefined && Math.random() * 100 < ex.createCell.p) sim.set(xx, yy, ccId, sim.kind[ccId] === K_FIRE ? 10 + ((Math.random() * 14) | 0) : 0)
+          continue
+        }
+        const k = sim.kind[m]
+        if (k === K_GAS || k === K_FIRE) continue
+        if (this.durability[m] > maxDur) continue
         sim.set(xx, yy, 0)
         dug++
-        // 真材质碎屑(material_sparks):按数量上限,沿反射向喷回
-        if (ms > 0 && Math.random() < Math.min(0.6, ms / Math.max(4, r * r))) {
+        // 液体:抛飞(落回来还是液体);material_sparks:真材质碎屑沿反射向喷回
+        if (k === K_LIQUID) {
+          if (!ex.destroyLiquid) { const n = Math.sqrt(d2) || 1, s = 60 + Math.random() * 120; this.hooks.debris?.(xx + 0.5, yy + 0.5, (dx / n) * s, (dy / n) * s - 40, m, mats.color[m]) }
+        } else if (ms > 0 && Math.random() < Math.min(0.6, ms / Math.max(4, r * r))) {
           const a2 = back + (Math.random() - 0.5) * 1.6, s = 50 + Math.random() * 120
           this.hooks.debris?.(xx + 0.5, yy + 0.5, Math.cos(a2) * s, Math.sin(a2) * s - 30, m, mats.color[m])
-        }
-      }
-    }
-    // create_cell:坑里生成材质(火球 → 火)
-    if (ex.createCell?.mat) {
-      const id = mats.byName.get(ex.createCell.mat)
-      if (id !== undefined) {
-        const rr = Math.max(1, r * 0.8)
-        for (let yy = Math.floor(y - rr); yy <= Math.ceil(y + rr); yy++) for (let xx = Math.floor(x - rr); xx <= Math.ceil(x + rr); xx++) {
-          if ((xx - x) ** 2 + (yy - y) ** 2 > rr * rr) continue
-          if (sim.get(xx, yy) === 0 && Math.random() < ex.createCell.p / 100 * 0.6) sim.set(xx, yy, id, sim.kind[id] === K_FIRE ? 10 + ((Math.random() * 14) | 0) : 0)
         }
       }
     }
@@ -481,24 +930,7 @@ export class ProjectileSystem {
       for (let k = 0; k < 6; k++) { const a2 = back + (Math.random() - 0.5) * 1; const s = 80 + Math.random() * 120; this.fx.push({ x, y, vx: Math.cos(a2) * s, vy: Math.sin(a2) * s, life: 0.25, max: 0.25, col: 0xffe8af, g: 300, fade: true, air: 0 }) }
     }
     // LooseGroundComponent(崩塌大地):max_distance 内随机撒 min~max_radius 的圆块,把静态地面变成会掉的松散材质
-    if (this._lg) {
-      const lg = this._lg
-      const loose = (m) => { const n = mats.name(m); const t = /^sand_static/.test(n) ? 'sand' : /^soil/.test(n) ? 'soil' : /^coal/.test(n) ? 'coal' : /^gold/.test(n) ? 'gold' : /^snow|^ice/.test(n) ? 'snow' : /wood/.test(n) ? 'wood' : 'rock_loose'; return mats.byName.get(t) }
-      for (let k = 0; k < 24; k++) {
-        if (Math.random() > lg.prob) continue
-        const a = (Math.random() * 2 - 1) * lg.maxAngle, dist = Math.random() * lg.maxDist
-        const cx = x + Math.cos(a) * dist, cy = y + Math.sin(a) * dist
-        const m0 = sim.get(Math.floor(cx), Math.floor(cy))
-        if (m0 <= 0 || sim.kind[m0] !== K_STATIC) continue
-        const rr = lg.minR + Math.random() * (lg.maxR - lg.minR)
-        for (let yy = Math.floor(cy - rr); yy <= Math.ceil(cy + rr); yy++) for (let xx = Math.floor(cx - rr); xx <= Math.ceil(cx + rr); xx++) {
-          if ((xx - cx) ** 2 + (yy - cy) ** 2 > rr * rr) continue
-          const m = sim.get(xx, yy)
-          if (m > 0 && sim.kind[m] === K_STATIC) { const l = loose(m); if (l !== undefined) sim.set(xx, yy, l, 0) }
-        }
-      }
-      this.hooks.shake?.(0.25)
-    }
+    if (this._lg) { this._loosen(x, y, this._lg, 24); this.hooks.shake?.(0.25) }
     // 爆炸帧动画 / 闪光 / 震屏 / 声音
     if (ex.sprite?.image) {
       const img = this.images.get(ex.sprite.image)
@@ -517,6 +949,7 @@ export class ProjectileSystem {
       const a = f.fade ? Math.max(0, f.life / f.max) : 1
       ctx.globalAlpha = a
       ctx.fillStyle = `rgb(${(f.col >> 16) & 255},${(f.col >> 8) & 255},${f.col & 255})`
+      if (f.att) continue // 被吸的流光压在黑洞的雾和环上面画(见下)
       if (f.long) { // draw_as_long:按速度拉成一小段
         const l = Math.min(6, Math.hypot(f.vx, f.vy) / 60)
         const nx = f.vx / (Math.hypot(f.vx, f.vy) || 1), ny = f.vy / (Math.hypot(f.vx, f.vy) || 1)
@@ -542,7 +975,7 @@ export class ProjectileSystem {
       ctx.restore()
     }
     ctx.globalAlpha = 1
-    const drawSprite = (d, x, y, rot, frame, speed = 0) => {
+    const drawSprite = (d, x, y, rot, frame, speed = 0, anim = null) => {
       // 刚体弹:PhysicsImageShape 的图居中、按滚动角旋转
       if (d.type === 'PHYSICS' && d.physics?.image) {
         const img = this.images.get(d.physics.image)
@@ -562,22 +995,91 @@ export class ProjectileSystem {
       }
       const s = d.sprite
       const img = s?.image ? this.images.get(s.image) : null
-      if (!img?.image) { ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2); return }
-      const fw = s.fw || img.width, fh = s.fh || img.height
+      if (!img?.image) { if (!d.areaEffect) { ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2) } return } // 场类没精灵(雷霆之环 image_file="")就什么都不画,别在圈心留个白点
+      const a = anim || s // 当前动画(next_animation 切过去之后帧行不同)
+      const fw = a.fw || img.width, fh = a.fh || img.height
       ctx.save()
       ctx.globalCompositeOperation = d.additive || d.emissive ? 'lighter' : 'source-over'
       ctx.globalAlpha = d.spriteAlpha ?? 1
       ctx.translate(Math.round(x), Math.round(y))
       ctx.rotate(rot)
-      // velocity_sets_scale:沿飞行方向按速度拉长(Noita 的弹越快越"长")
-      if (d.velocitySetsScale && speed) ctx.scale(Math.max(0.5, Math.min(2.5, 0.4 + (speed / 450) * d.velocitySetsScaleCoeff)), 1)
-      ctx.drawImage(img.image, (s.posX || 0) + frame * fw, s.posY || 0, fw, fh, -s.offX, -s.offY, fw, fh)
+      // velocity_sets_scale(组件文档:"the sprite width is made equal to the distance traveled since last frame",coeff 放大):
+      // 精灵横向拉到"一帧(1/60s)飞过的像素 / 帧宽",只拉长不压扁(rocket 85px/s 也开着这个,原版火箭没被压成 1px 的点)——
+      // 快弹补出运动模糊:狙击弹 1550 → 26px/4px 拉 6.5 倍成一道长线;分裂弹 400~600 → 7~10px < 12px 帧宽 → 原大小
+      if (d.velocitySetsScale && speed) ctx.scale(Math.max(1, Math.min(8, ((speed / 60) * (d.velocitySetsScaleCoeff || 1)) / fw)), 1)
+      if (s.tint) ctx.drawImage(this._tint(img, { image: s.image, posX: a.posX, posY: a.posY }, frame, fw, fh, s.tint), -s.offX, -s.offY)
+      else ctx.drawImage(img.image, (a.posX || 0) + frame * fw, a.posY || 0, fw, fh, -s.offX, -s.offY, fw, fh)
       ctx.restore()
     }
     for (const s of this.stuck) drawSprite(s.d, s.x - ox, s.y - oy, s.rot, s.frame)
-    for (const p of this.list) drawSprite(p.d, p.x - ox, p.y - oy, p.rot, p.frame, Math.hypot(p.vx, p.vy))
+    // 带电的格子(电流走过的液体 / 金属):亮蓝白闪;电流头带一团蓝光(electricity.xml LightComponent r60 rgb 0/40/80)
+    if (this.elec.size) {
+      const now = this.time
+      for (const [k, t] of this.elec) {
+        const xo = Math.floor(k / KMUL), x = xo - KOFF, y = k - xo * KMUL - KOFF
+        const a = Math.min(1, (t - now) / 0.15)
+        ctx.globalAlpha = 0.4 + 0.6 * a
+        ctx.fillStyle = Math.random() < 0.35 ? '#ffffff' : '#8fd8ff'
+        ctx.fillRect(x - ox, y - oy, 1, 1)
+      }
+      ctx.globalAlpha = 1
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'
+      for (const z of this.zaps) {
+        const x = z.x - ox, y = z.y - oy
+        const g = ctx.createRadialGradient(x, y, 0, x, y, 14)
+        g.addColorStop(0, 'rgba(120,200,255,0.5)'); g.addColorStop(1, 'rgba(0,40,80,0)')
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.fill()
+      }
+      ctx.restore()
+    }
+    // 巨大黑洞:原版 sprite 是 black_hole_big_circle(暗紫圆盘 64 帧长大,alpha 0.1 additive emissive)—— 画面上就是一圈淡淡的紫环、里面稍微发亮,
+    // 洞本身不是黑的:看到的是被崩掉的地面后面的背景;真正的"黑"是中心那团正在湮灭的碎屑。这里按 wiki 演示 gif 的观感画:淡紫圆盘 + 1px 亮边
+    // 本体按 wiki 尺寸对比图取色:sprite black_hole_big_circle 是一个**暗紫黑、接近不透明**的圆盘(白底上呈 rgb≈70,60,80 → 底色 (20,14,30) 约 78% 不透明),
+    // 边上一圈 1px 细粉线;LightComponent(r128, 255/40/255)只是在圆盘外面给周围一点洋红光晕。黑洞是黑的,粉色只在细边 / 流光 / 光晕上
+    for (const p of this.list) {
+      if (p.bhR === undefined) continue
+      const x = p.x - ox, y = p.y - oy, r = p.bhR
+      ctx.save()
+      ctx.fillStyle = 'rgba(20,14,30,0.78)'; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+      // 圆盘外的洋红光晕(我们的光照图是 multiply,白天彩光没效果,所以在这儿 lighter 叠一层,只在盘外)
+      ctx.globalCompositeOperation = 'lighter'
+      const lr = r + 64
+      const g = ctx.createRadialGradient(x, y, r, x, y, lr)
+      g.addColorStop(0, 'rgba(255,40,255,0.16)'); g.addColorStop(1, 'rgba(255,40,255,0)')
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, lr, 0, Math.PI * 2); ctx.arc(x, y, r, 0, Math.PI * 2, true); ctx.fill()
+      ctx.restore()
+    }
+    // 黑洞崩出来的飞行像素(材质原色,绕着洞心旋进去;上面的洋红光会把它们染粉)
+    if (this.bhParts.length) {
+      let last = -1
+      for (const q of this.bhParts) {
+        if (q.col !== last) { last = q.col; ctx.fillStyle = `rgb(${(q.col >> 16) & 255},${(q.col >> 8) & 255},${q.col & 255})` }
+        ctx.fillRect(Math.floor(q.x - ox), Math.floor(q.y - oy), 1, 1)
+      }
+    }
+    // 细粉边压在碎屑上面(对比图:1px,≈ rgb 225,140,235)
+    for (const p of this.list) {
+      if (p.bhR === undefined) continue
+      const x = p.x - ox, y = p.y - oy, r = p.bhR
+      ctx.save()
+      ctx.strokeStyle = 'rgba(225,140,235,0.9)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
+      ctx.restore()
+    }
+    // 被吸的流光(黑洞 plasma_fading_pink,材质 gfx_glow 254):原版是 2px 粗、6~14px 长、发亮的粉紫条 —— lighter 画两层:粗的洋红 + 细的亮粉芯
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'
+    for (const f of this.fx) {
+      if (!f.att) continue
+      const a = f.fade ? Math.max(0, f.life / f.max) : 1
+      const sp = Math.hypot(f.vx, f.vy) || 1, l = Math.min(14, 3 + sp / 50), nx = f.vx / sp, ny = f.vy / sp
+      const x0 = f.x - ox, y0 = f.y - oy
+      ctx.globalAlpha = 0.85 * a
+      ctx.strokeStyle = 'rgb(255,70,230)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 - nx * l, y0 - ny * l); ctx.stroke()
+      ctx.strokeStyle = 'rgb(255,170,255)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 - nx * l * 0.6, y0 - ny * l * 0.6); ctx.stroke()
+    }
+    ctx.restore()
+    for (const p of this.list) if (p.bhR === undefined) drawSprite(p.d, p.x - ox, p.y - oy, p.rot, p.frame, Math.hypot(p.vx, p.vy), p.spr || null) // 黑洞本体上面画过了
     for (const a of this.anims) {
-      const frame = Math.min(a.frames - 1, Math.floor(a.t / a.wait))
+      const frame = a.loop ? Math.floor(a.t / a.wait) % a.frames : Math.min(a.frames - 1, Math.floor(a.t / a.wait))
       ctx.save()
       ctx.globalCompositeOperation = a.additive ? 'lighter' : 'source-over'
       ctx.translate(Math.round(a.x - ox), Math.round(a.y - oy))
@@ -590,7 +1092,7 @@ export class ProjectileSystem {
 
   /** 贴图染色缓存:同一帧同一色只算一次 */
   _tint(img, spr, frame, fw, fh, col) {
-    const key = `${spr.image}|${frame}|${(col[0] * 15) | 0},${(col[1] * 15) | 0},${(col[2] * 15) | 0}`
+    const key = `${spr.image || img.src || ''}|${spr.posX || 0},${spr.posY || 0}|${frame}|${(col[0] * 15) | 0},${(col[1] * 15) | 0},${(col[2] * 15) | 0}`
     this.tintCache ||= new Map()
     let cv = this.tintCache.get(key)
     if (cv) return cv

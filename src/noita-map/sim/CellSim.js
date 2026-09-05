@@ -143,21 +143,30 @@ export class CellSim {
       }
     }
     this.rxCount = n
+    // 会和空气反应的材质(蒸发类):这些格子不能睡
+    this.airRx = new Uint8Array(1024)
+    for (const k of this.rx.keys()) if ((k % 1024) === 0 && k > 0) this.airRx[k / 1024] = 1
   }
 
   // ── 窗口绑定 ──
-  /** 以世界矩形绑定激活窗口;返回 false 表示有 chunk 未就位 */
-  bind(x0, y0, x1, y1) {
+  /**
+   * 以世界矩形绑定激活窗口(最多 4×4 chunk);inner 是"必须就位"的子矩形(视口一圈),返回 false 表示 inner 里有 chunk 未就位。
+   * 窗口比屏幕大一圈(Noita 也是模拟玩家周围一整片加载区,不只屏幕):外圈没到的 chunk 当 -1,不拦着模拟跑
+   */
+  bind(x0, y0, x1, y1, inner = null) {
     this.cx0 = Math.floor(x0 / CHUNK) + WCX; this.cy0 = Math.floor(y0 / CHUNK) + WCY
     const cx1 = Math.floor(x1 / CHUNK) + WCX, cy1 = Math.floor(y1 / CHUNK) + WCY
     this.cw = Math.min(4, cx1 - this.cx0 + 1); this.ch = Math.min(4, cy1 - this.cy0 + 1)
     this.wx0 = Math.floor(x0); this.wy0 = Math.floor(y0); this.wx1 = Math.floor(x1); this.wy1 = Math.floor(y1)
+    const ix0 = inner ? Math.floor(inner.x0 / CHUNK) + WCX : this.cx0, ix1 = inner ? Math.floor(inner.x1 / CHUNK) + WCX : cx1
+    const iy0 = inner ? Math.floor(inner.y0 / CHUNK) + WCY : this.cy0, iy1 = inner ? Math.floor(inner.y1 / CHUNK) + WCY : cy1
     let ok = true
     for (let j = 0; j < this.ch; j++) for (let i = 0; i < this.cw; i++) {
-      const e = this.io.getChunk(this.cx0 + i, this.cy0 + j)
+      const cx = this.cx0 + i, cy = this.cy0 + j
+      const e = this.io.getChunk(cx, cy)
       if (e && !e.aux) e.aux = new Uint8Array(N)
       this.tbl[j * 4 + i] = e || null
-      if (!e) ok = false
+      if (!e && cx >= ix0 && cx <= ix1 && cy >= iy0 && cy <= iy1) ok = false
     }
     return ok
   }
@@ -373,10 +382,13 @@ export class CellSim {
   _react(x, y, e, li) {
     const m = e.mat[li]
     if (!m) return
+    // 和空气也会反应:[evaporable_fast] + air → air(45%,激光 / 等离子的 plasma_fading 落地几帧就没)、[evaporable] + air(15%,血 / 泥浆的水渍慢慢干掉);
+    // 这类格子要一直醒着,不然停在地上块睡了就永远留一片痕迹(用户:子弹和地图接触后物质不消失)
+    if (this.airRx[m]) this._markOne(x, y)
     for (let k = 0; k < 4; k++) {
       const nx = x + (k === 0 ? 1 : k === 1 ? -1 : 0), ny = y + (k === 2 ? 1 : k === 3 ? -1 : 0)
       const t = this.get(nx, ny)
-      if (t <= 0) continue
+      if (t < 0) continue
       const list = this.rx.get(m * 1024 + t)
       if (!list) continue
       for (const r of list) {

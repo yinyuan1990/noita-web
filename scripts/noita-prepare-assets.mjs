@@ -54,6 +54,9 @@ const NUM_FIELDS = {
   gas_speed: 0, gas_upwards_speed: 0, gas_horizontal_speed: 0, gas_downwards_speed: 0,
   solid_friction: 0, solid_restitution: 0, solid_gravity_scale: 1, solid_break_on_explosion_rate: 0,
   always_ignites_damagemodel: 0, liquid_slime: 0, liquid_solid: 0, liquid_stains: 0,
+  // wiki(Making a custom material):platform_type 0 = fall through / 1 = can stand on;solid_static_type 0 = 会掉、角色能穿、弹丸不能;1 = 静态全挡;2~5 = 静态、角色能穿、弹丸不能
+  // 树 / 蘑菇的 wood_loose / fungus_loose 都是 solid_static_type=0 platform_type=0 → 人和怪穿树走,子弹打得中
+  platform_type: 1, solid_static_type: 0,
 }
 const STR_FIELDS = ['cold_freezes_to_material', 'warmth_melts_to_material', 'solid_break_to_type', 'solid_on_collision_material', 'status_effects', 'stains', 'liquid_stains_custom_color']
 const materials = cells.map((c, id) => {
@@ -74,6 +77,8 @@ const materials = cells.map((c, id) => {
     wang: wang ? wang.toLowerCase() : null,
     color: color ? color.toLowerCase() : null,
     texture: tex ? path.basename(tex) : null,
+    // Graphics normal_mapped=1(gem_box2d 系:金块 / 宝石 / 药瓶玻璃):刚体的 png 不是颜色是法线图(红绿黄 = 朝向),显示色 = 材质 color 按法线打光
+    normalMapped: inherit(c, (x) => x.g.normal_mapped) === '1',
     wangNoise: +(inherit(c, (x) => x.a.wang_noise_percent) ?? 0),
     tags: inherit(c, (x) => x.a.tags) || '',
   }
@@ -88,6 +93,8 @@ const materials = cells.map((c, id) => {
     const camel = k.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase())
     m[camel] = v === undefined ? def : +v
   }
+  // 导电:materials.xml 里只有金属显式写 1、油 / 胶水显式写 0 —— 真液体(水 / 血 / 岩浆 …)缺省就是导电的(不然油写 0 没意义),粉末 / 静态不导电
+  if (inherit(c, (x) => x.a.electrical_conductivity) === undefined) m.electricalConductivity = kind === 'liquid' ? 1 : 0
   for (const k of STR_FIELDS) {
     const v = inherit(c, (x) => x.a[k])
     if (v) m[k.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase())] = v

@@ -83,6 +83,12 @@ export const BIOMES = {
   solid_wall_hidden_cavern: { color: 0x42244d, kind: 'solid', name: '隐洞' },
   boss_arena: { color: 0x14eed7, kind: 'air', name: '实验室(终)' },
   boss_arena_top: { color: 0x0da899, kind: 'air', name: '实验室顶' },
+  // roadblock.xml:_EMPTY_ wang + coarse_map_not_terrain,roadblock.png 全透明只有一个生成点(10 只 acidshooter 的天空陷阱)→ 空气。
+  // 之前没登记 → 走默认 solid,丘陵左上方(cx33,cy11)天上悬着一块 512 的岩石正方形
+  roadblock: { color: 0xf0d517, kind: 'air', name: '路障(空)' },
+  // 沙漠地表的静态图块(scale / watchtower):地表群系打底,整图另由 init 放;没图之前至少别在天上悬岩石块
+  scale: { color: 0xeba500, kind: 'surface', name: '天平' },
+  watchtower: { color: 0xb70000, kind: 'surface', name: '瞭望塔' },
 }
 
 export const BIOME_BY_COLOR = new Map(Object.entries(BIOMES).map(([n, b]) => [b.color, n]))

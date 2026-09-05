@@ -20,6 +20,18 @@
       #hp { top: 44px; } #hp i { background: #e0484f; }
       #fuel { top: 54px; } #fuel i { background: #7fd4ff; }
       #air { top: 64px; display: none; } #air i { background: #d8f0ff; }
+      /* 状态区(原版 HUD:血条 / 悬浮条下面一列 status_indicators 图标,旁边一条剩余量 + 数字:沾污 % / 着火秒) */
+      #status { position: fixed; left: max(8px, env(safe-area-inset-left)); top: 64px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; font-size: 10px; line-height: 12px; color: rgba(230,236,244,0.9); text-shadow: 0 1px 2px #000; }
+      #status.air { top: 76px; }
+      #status .st { display: flex; align-items: center; gap: 4px; height: 12px; }
+      #status .st img { width: 12px; height: 12px; image-rendering: pixelated; }
+      #status .st .sb { width: 40px; height: 4px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.3); }
+      #status .st .sb b { display: block; height: 100%; }
+      /* GamePrintImportant:屏幕中上方大字 + 一行说明(捡心 / 法术刷新 / 特权),3s 淡出 */
+      #important { position: fixed; left: 0; right: 0; top: 24%; text-align: center; pointer-events: none; opacity: 0; transition: opacity 0.4s; text-shadow: 0 2px 4px #000, 0 0 12px rgba(0,0,0,0.8); }
+      #important.on { opacity: 1; transition: opacity 0.1s; }
+      #important b { display: block; font-size: 20px; color: #fff4d6; letter-spacing: 1px; }
+      #important span { display: block; font-size: 12px; color: rgba(230,236,244,0.9); margin-top: 4px; }
       /* 死亡画面 */
       #death { position: fixed; inset: 0; background: rgba(6,2,4,0.86); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; z-index: 30; }
       #death.on { display: flex; }
@@ -97,6 +109,29 @@
       #editor .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
       #editor button { padding: 5px 12px; font-size: 11px; color: #cdd; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; }
       #editor .tip { color: #8a9aab; margin-top: 6px; }
+      #editor .libh { color: #cdd; margin: 8px 0 3px; display: flex; align-items: center; gap: 6px; }
+      #editor .libh i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+      #editor .libh span { color: #8a9aab; }
+      #editor .rules { color: #a8b4c0; line-height: 1.5; margin: 2px 0 6px; padding: 6px 8px; border-left: 2px solid #ffd050; background: rgba(255,255,255,0.04); }
+      #editor .wand { align-items: flex-start; }
+      #editor .wname { width: 120px; }
+      #editor .wname img { display: block; height: 14px; image-rendering: pixelated; margin-bottom: 3px; }
+      #editor .wname small { color: #ffd050; }
+      #editor .wbody { flex: 1; min-width: 0; }
+      #editor .wstats { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-bottom: 4px; }
+      #editor .stat { display: flex; align-items: center; gap: 4px; color: #8a9aab; }
+      #editor .stat .v { color: #e8e8e8; min-width: 54px; }
+      #editor .stat button { padding: 0 6px; font-size: 11px; line-height: 16px; border-radius: 4px; }
+      #editor .card { border-width: 2px; }
+      #editor #edLib .inv { border-style: solid; border-color: rgba(255,255,255,0.12); }
+      #editor #edLib .card { width: 26px; height: 26px; }
+      #editor .row { position: sticky; bottom: 0; background: rgba(4,6,10,0.92); padding: 6px 0; flex-wrap: wrap; }
+      #editor #edMsg { color: #ffd050; font-weight: bold; min-height: 1.4em; }
+      #editor #edMsg:not(:empty) + .tip { display: none; }
+      #editor .wname small.dim { color: #6a7a8b; }
+      #editor .wand:not(.sel) { cursor: pointer; }
+      #editor .wand:not(.sel):hover { border-color: rgba(255,208,80,0.5); }
+      body.touch #btnReport, body.touch #panel { display: none; }
     </style>
   </head>
   <body>
@@ -105,6 +140,8 @@
     <div class="bar" id="hp"><i style="width:100%"></i></div>
     <div class="bar" id="fuel"><i style="width:100%"></i></div>
     <div class="bar" id="air"><i style="width:100%"></i></div>
+    <div id="status"></div>
+    <div id="important"><b></b><span></span></div>
     <div id="death">
       <h2>你死了</h2>
       <p id="deathInfo"></p>
@@ -132,7 +169,13 @@
       <div id="edWands"></div>
       <h3>背包里的法术卡(点一张装进选中的法杖)</h3>
       <div class="inv" id="edInv"></div>
-      <div class="row"><button id="edClose">关闭</button><span class="tip">点法杖里的卡 = 取下放回背包 · 点背包的卡 = 装进选中法杖 · 只能在圣山里改</span></div>
+      <h3>法术库(全部开放 · 法力 / 次数无限;点一张装进选中的法杖)</h3>
+      <div class="rules">怎么组合(和 Noita 一样):每点一下,法杖从左到右抽「每次施放」张卡一起放出;放到最右边再从头开始。
+        <b style="color:#7c7ce8">修饰</b>卡改它右边那张弹 · <b style="color:#5ac86a">多重</b>卡再多抽 N 张、和它一起同一下放出(例:三重 + 火球 + 岩浆 + 酸 = 一下三样)·
+        名字带「触发 / 定时」的弹会带着右边一张卡,撞到东西 / 到时再放出(例:火花弹·触发 + 炸弹 = 打哪儿哪儿炸)·
+        <b style="color:#d8a24a">场</b>在杖尖原地生成,停留 2 分钟 · <b style="color:#5ab0d8">材质</b>喷出真材质。想一下全放:把「每次施放」调到卡的张数。</div>
+      <div id="edLib"></div>
+      <div class="row"><button id="edClose">关闭</button><span id="edMsg"></span><span class="tip">先点选一根法杖(黄框 = 选中)· 点法杖里的卡 = 取下 · 点法术库 / 背包的卡 = 装进选中的杖(顺序就是施法顺序)· 悬停 / 长按看说明</span></div>
     </div>
     <div id="pause">
       <h2>暂停</h2>

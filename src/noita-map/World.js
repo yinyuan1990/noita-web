@@ -37,6 +37,7 @@ const SURFACE_BANDS = {
   desert: { amp: 0.43, bands: [['sand_surface', 0.48], ['sandstone_surface', 0.6], ['sand_static_bright', 0.73], ['sand_static', 0.95]], deep: 'rock_static', mixFrom: 0.9 },
 }
 SURFACE_BANDS.hills2 = SURFACE_BANDS.mountain_tree = SURFACE_BANDS.hills
+SURFACE_BANDS.scale = SURFACE_BANDS.watchtower = SURFACE_BANDS.desert // 沙漠里的静态图块群系,地表按沙漠打底
 // mountain_hall / left_entrance / right / top .xml:soil → rock_hard 0.53~0.95 → rock_static(真值 chunk(0,−512):rock_static 29568 / rock_hard 20765,没有 sand_static);
 // left_stub / right_stub 是 sand_static 带,同 hills
 // 山体内部按真值校准(chunk(512,−512) hall:rock_static 102k / rock_hard 73k,coal 只有 56 格):rock_hard 带压到 0.75、不撒煤;
@@ -343,12 +344,36 @@ export class NoitaWorld {
    * 给 chunk 挂上全部"只画不进材质"的散件:布景标记色散件 + 藤蔓 + 植被贴图;并标 spillUp(有植被伸到上一 chunk)。
    * 材质被改过(挖掘)后重画时也要重新算(树站的地面可能没了)。
    */
-  attachDecor(chunk) {
+  attachDecor(chunk, { veg = null, stamp = true } = {}) {
     const { cx, cy, mat } = chunk
     chunk.decor = this._collectDecor(cx, cy, cx * CHUNK, cy * CHUNK)
     this._wireDecor(cx, cy, mat, chunk.decor)
-    chunk.spillUp = this._vegDecor(cx, cy, mat, chunk.decor)
+    // 植被落点只在第一次生成时算(veg = 主线程 / 存档带回来的落点:重画 / 读档都用它,别按被挖过的地面重算 —— 树不能"瞬移"到新地面上,
+    // 原作 is_visual=0 的树 / 蘑菇是 PixelSprite 实体,掉不掉由 SimplePhysicsComponent 决定,主线程 Vegetation.js 管)
+    if (veg) { for (const d of veg) chunk.decor.push(d); chunk.spillUp = veg.some((d) => d.y < cy * CHUNK) }
+    else {
+      const before = chunk.decor.length
+      chunk.spillUp = this._vegDecor(cx, cy, mat, chunk.decor)
+      // is_visual=0 的植被(tree_material=wood_loose / fungus_loose / cactus):把贴图的实心像素烙进材质格 —— 子弹打得中、火烧得着、爆炸炸得掉
+      if (stamp) for (let k = before; k < chunk.decor.length; k++) { const d = chunk.decor[k]; if (d.solid) this._stampVeg(chunk, d) }
+    }
     return chunk
+  }
+
+  /** 把一棵 is_visual=0 植被的不透明像素写进本 chunk 的材质(只写空气格;PixelSprite clean_overlapping_pixels=0) */
+  _stampVeg(chunk, d) {
+    const img = this.assets.veg(d.name)
+    if (!img?.data) return
+    const ax0 = chunk.cx * CHUNK, ay0 = chunk.cy * CHUNK, W = img.width, mat = chunk.mat
+    for (let py = 0; py < d.fh; py++) {
+      const wy = d.y + py; if (wy < ay0 || wy >= ay0 + CHUNK) continue
+      for (let px = 0; px < d.fw; px++) {
+        const wx = d.x + px; if (wx < ax0 || wx >= ax0 + CHUNK) continue
+        if (img.data[((py * W) + d.sx + px) * 4 + 3] < 128) continue
+        const li = (wy - ay0) * CHUNK + (wx - ax0)
+        if (mat[li] === 0) mat[li] = d.mat
+      }
+    }
   }
 
   /**
@@ -412,7 +437,9 @@ export class NoitaWorld {
           const sx = (v.img.frames > 1 ? v.img.frames - 1 : 0) * fw
           const dx = i - (v.img.fw ? v.img.offX : Math.floor(fw / 2))
           const dy = ceiling ? anchorY : anchorY - fh + (v.img.fw ? fh - v.img.offY : 0) + v.extraY
-          out.push({ kind: 'veg', name, sx, fw, fh, x: ax0 + dx, y: ay0 + dy })
+          // is_visual=0(树 / 蘑菇 / 仙人掌):原作是 PixelSprite 实体,像素烙进材质格(tree_material),带 SimplePhysics 会整体下落
+          const matId = !v.isVisual && v.material ? byName.get(v.material) : undefined
+          out.push({ kind: 'veg', name, sx, fw, fh, x: ax0 + dx, y: ay0 + dy, ...(matId ? { solid: true, mat: matId, id: `${name}@${ax0 + dx},${ay0 + dy}` } : {}) })
           j += fh
         }
       }

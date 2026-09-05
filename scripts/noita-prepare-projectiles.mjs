@@ -14,7 +14,7 @@ const NAMES = [
   'material_water', 'material_oil', 'material_acid', 'material_lava', 'material_gunpowder_explosive', 'chain_bolt', 'laser', 'meteor', 'firebomb', 'pebble_player',
   'rubber_ball', 'bouncy_orb', 'bounce_spark', 'glue_shot', 'grenade_large', 'disc_bullet_big',
   'circle_fire', 'circle_water', 'circle_oil', 'circle_acid', 'touch_water', 'touch_oil', 'touch_gold', 'crumbling_earth', 'luminous_drill', 'chainsaw', 'pink_orb', 'lance_holy',
-  'bomb', 'bomb_small', 'bomb_holy',
+  'bomb', 'bomb_small', 'bomb_holy', 'teleport_projectile', 'teleport_projectile_short', 'teleport_projectile_static', 'teleport_projectile_closer', 'teleport_cast',
   // level_1_wand.lua 会掷到的其余卡
   'light_bullet_air', 'tentacle_portal', 'black_hole_big', 'tnt', 'glitter_bomb', 'mine', 'cloud_water', 'xray', 'freeze_field', 'black_hole', 'shield_field', 'electrocution_field', 'chunk_of_soil',
 ]
@@ -41,11 +41,11 @@ function sprite(rel) {
   const sp = attrsOf((/<Sprite\b([^>]*)>/.exec(s) || [])[1])
   const anims = [...s.matchAll(/<RectAnimation\b([^>]*)>/g)].map((m) => attrsOf(m[1]))
   const a = anims.find((x) => x.name === (sp.default_animation || 'default')) || anims[0] || {}
-  return {
-    image: copyGfx(sp.filename), offX: num(sp.offset_x, 0), offY: num(sp.offset_y, 0),
-    fw: num(a.frame_width, 0), fh: num(a.frame_height, 0), frames: num(a.frame_count, 1), wait: num(a.frame_wait, 0.1), loop: num(a.loop, 1),
-    posX: num(a.pos_x, 0), posY: num(a.pos_y, 0), shrink: a.shrink_by_one_pixel === '1',
-  }
+  const anim = (x) => ({ fw: num(x.frame_width, 0), fh: num(x.frame_height, 0), frames: num(x.frame_count, 1), wait: num(x.frame_wait, 0.1), loop: num(x.loop, 1), posX: num(x.pos_x, 0), posY: num(x.pos_y, 0), shrink: x.shrink_by_one_pixel === '1' })
+  // loop=0 的动画播完接 next_animation(场类 blast:spawn 5 帧 → fireball 行一直脉动);Sprite 的 color_r/g/b 是整张图的染色(blast_frozen 淡蓝 / blast_shield 青)
+  const nx = a.next_animation ? anims.find((x) => x.name === a.next_animation) : null
+  const tint = sp.color_r !== undefined || sp.color_g !== undefined || sp.color_b !== undefined ? [num(sp.color_r, 1), num(sp.color_g, 1), num(sp.color_b, 1)] : null
+  return { image: copyGfx(sp.filename), offX: num(sp.offset_x, 0), offY: num(sp.offset_y, 0), ...anim(a), next: nx ? anim(nx) : null, tint }
 }
 
 // 敌人用的弹(AnimalAI attack_ranged_entity_file,在 projectiles/ 根目录,和 deck/ 同名的不是一回事):键名加 e_ 前缀
@@ -97,12 +97,14 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
   const bs = baseFile ? readFile(baseFile) || '' : ''
   const merged = (re) => ({ ...attrsOf((re.exec(bs) || [])[1]), ...attrsOf((re.exec(s) || [])[1]) })
   const vel = merged(/<VelocityComponent\b([^>]*)>/)
+  const hasVel = /<VelocityComponent\b/.test(s) || /<VelocityComponent\b/.test(bs)
   const pc = merged(/<ProjectileComponent\b([^>]*)>/)
   const ex = merged(/<config_explosion\b([^>]*)>/)
   // 刚体弹(炸弹/箱子):PhysicsBodyComponent + PhysicsImageShapeComponent 的图就是弹体
   const physShape = merged(/<PhysicsImageShapeComponent\b([^>]*)>/)
   const physics = /<PhysicsBodyComponent\b/.test(s + bs) ? { image: copyGfx(physShape.image_file) } : null
-  const spc = attrsOf((/<SpriteComponent\b([^>]*)>/.exec(s) || [])[1])
+  // 精灵也按 Base 打底(场类:base_field 给 alpha 0.25 + additive,子文件只换 image_file)
+  const spc = merged(/<SpriteComponent\b([^>]*)>/)
   const light = attrsOf((/<LightComponent\b([^>]*)>/.exec(s) || [])[1])
   const emitters = [...s.matchAll(/<ParticleEmitterComponent\b([^>]*)>/g)].map((m) => attrsOf(m[1])).filter((e) => e._enabled !== '0').map((e) => ({
     mat: e.emitted_material_name || null, trail: e.is_trail === '1', gap: num(e.trail_gap, 1),
@@ -167,9 +169,65 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
   const cellEater = ce.radius ? { radius: num(ce.radius, 4), prob: num(ce.eat_probability, 100), ignoredTag: ce.ignored_material_tag || null, ignoredMat: ce.ignored_material || null } : null
   const tags = (/<Entity\b([^>]*)>/.exec(s) || [])[1]
   // 没有 ProjectileComponent 的是"原地实体"(火圈/水圈:只有 LifetimeComponent + 发射器),不飞不撞
-  const lifeComp = attrsOf((/<LifetimeComponent\b([^>]*)>/.exec(s) || [])[1])
+  const lifeComp = merged(/<LifetimeComponent\b([^>]*)>/)
   const isStatic = !Object.keys(pc).length
   if (isStatic) { pc.speed_min = '0'; pc.speed_max = '0'; pc.lifetime = lifeComp.lifetime || '60'; pc.on_collision_die = '0'; pc.collide_with_world = '0'; pc.on_death_explode = '0'; pc.on_lifetime_out_explode = '0' }
+  // 两个都有(场类 base_field:ProjectileComponent lifetime=9999999 + LifetimeComponent 7200):实体寿命取小的那个
+  else if (lifeComp.lifetime && +lifeComp.lifetime > 0 && (!pc.lifetime || +pc.lifetime > +lifeComp.lifetime)) pc.lifetime = lifeComp.lifetime
+  // GameAreaEffectComponent(场):半径内的活物每 frame_length 帧吃一次 damage_game_effect_entities 的状态(电击 / 冻结)
+  const esh = merged(/<EnergyShieldComponent\b([^>]*)>/)
+  const shield = esh.radius ? { radius: num(esh.radius, 28), energy: num(esh.max_energy, 20) } : null
+  // BlackHoleComponent(巨大黑洞,引擎内置):半径内吞噬一切格子、圈内活物按 damage_probability 每帧吃伤害、拉粒子;
+  //   black_hole_big.lua 每 execute_every_n_frame 帧 radius = min(64, radius+1);black_hole_gravity.lua 每帧把 150px 内的弹丸 / 刚体往里拉(196 × (1 - d/150),刚体 ×0.2)
+  const bhc = merged(/<BlackHoleComponent\b([^>]*)>/)
+  let blackHole = null
+  if (bhc.radius) {
+    // damage_amount 文档默认 0.1(tools_modding/component_documentation.txt:BlackHoleComponent radius 16 / particle_attractor_force 2 / damage_probability 0.25 / damage_amount 0.1)
+    blackHole = { radius: num(bhc.radius, 16), damageProb: num(bhc.damage_probability, 0.25), damageAmount: num(bhc.damage_amount, 0.1), attractor: num(bhc.particle_attractor_force, 2), grow: null }
+    const lua = /<LuaComponent\b([^>]*script_source_file="([^"]*black_hole_big\.lua)"[^>]*)>/.exec(s)
+    if (lua) {
+      const src = readFile(lua[2]) || ''
+      const mx = /math\.min\(\s*(\d+)\s*,\s*radius\s*\+\s*(\d+)\s*\)/.exec(src), ap = /particle_attractor_force\s*=\s*radius\s*\*\s*([\d.]+)/.exec(src)
+      blackHole.grow = { every: num(attrsOf(lua[1]).execute_every_n_frame, 1), max: mx ? +mx[1] : 64, step: mx ? +mx[2] : 1, attrPerR: ap ? +ap[1] : 0.25 }
+      // 子实体的 LooseGroundComponent(黑洞周围的地面崩成松散块掉进去);lua 每次把 max_distance 改成 radius + 20
+      const lgm = /<LooseGroundComponent\b([^>]*)>/.exec(s)
+      if (lgm) {
+        const lg = attrsOf(lgm[1]), da = /vars\.max_distance\s*=\s*radius\s*\+\s*(\d+)/.exec(src)
+        blackHole.loose = { prob: num(lg.probability, 0.2), distAdd: da ? +da[1] : num(lg.max_distance, 80), minR: num(lg.min_radius, 6), maxR: num(lg.max_radius, 16), maxAngle: num(lg.max_angle, Math.PI), chunkProb: num(lg.chunk_probability, 0), chunkMaxAngle: num(lg.chunk_max_angle, Math.PI) }
+      }
+    }
+  }
+  let gravityWell = null
+  const gl = /<LuaComponent\b[^>]*script_source_file="([^"]*black_hole_gravity\.lua)"[^>]*>/.exec(s)
+  if (gl) {
+    const src = readFile(gl[1]) || ''
+    const dist = /distance_full\s*=\s*([\d.]+)/.exec(src), coeff = /gravity_coeff\s*=\s*([\d.]+)/.exec(src), bm = /fx\s*=\s*fx\s*\*\s*([\d.]+)\s*\*\s*body_mass/.exec(src)
+    gravityWell = { dist: dist ? +dist[1] : 150, coeff: coeff ? +coeff[1] : 196, bodyMul: bm ? +bm[1] : 0.2 }
+  }
+  // 雷霆之环:electrocution_blast.lua 每 execute_every_n_frame 帧在圈内随机点(Random(-28,28))朝随机方向 shoot 一个 misc/electricity.xml
+  //   —— 引擎内置 ElectricityComponent(文档默认 energy 1000 / speed 32 格每帧 / probability_to_heat 0):电流碰到导电材质(液体 / 金属)就在里面窜,碰到活物就电
+  let electricity = null
+  const el = /<LuaComponent\b([^>]*script_source_file="([^"]*electrocution_blast\.lua)"[^>]*)>/.exec(s)
+  if (el) {
+    const src = readFile(el[2]) || ''
+    const sp = /Random\(\s*-(\d+)\s*,\s*(\d+)\s*\)/.exec(src), ef = /"([^"]*electricity\.xml)"/.exec(src), spd = /local\s+length\s*=\s*(\d+)/.exec(src)
+    const ec = attrsOf((/<ElectricityComponent\b([^>]*)>/.exec(ef ? readFile(ef[1]) || '' : '') || [])[1])
+    electricity = { every: num(attrsOf(el[1]).execute_every_n_frame, 10), spread: sp ? +sp[2] : 28, shotSpeed: spd ? +spd[1] : 5000, energy: num(ec.energy, 1000), speed: num(ec.speed, 32), heat: num(ec.probability_to_heat, 0) }
+  }
+  // 雨云 cloud_position.lua(execute_times=1):出生时从杖尖往上 RaytraceSurfaces 40px,云挂到那儿(碰到天花板就停)
+  let riseTo = 0
+  const cpl = /<LuaComponent\b[^>]*script_source_file="([^"]*cloud_position\.lua)"/.exec(s)
+  if (cpl) { const src = readFile(cpl[1]) || ''; const up = /pos_y\s*-\s*(\d+)/.exec(src); riseTo = up ? +up[1] : 40 }
+  // 瞬移弹:TeleportProjectileComponent(引擎)—— 弹死在哪,射手就被传到哪(离墙 min_distance_from_wall,reset_shooter_y_vel 把 y 速度归零)
+  const tpc = merged(/<TeleportProjectileComponent\b([^>]*)>/)
+  const teleport = /<TeleportProjectileComponent\b/.test(s) ? { minWall: num(tpc.min_distance_from_wall, 16), resetY: tpc.reset_shooter_y_vel !== '0', actionable: num(tpc.actionable_lifetime, 3) } : null
+  // 瞬移施法 teleport_cast.lua:出生时跳到 96px 内随机一个 homing_target(敌人)身上,2 帧后死 → 载荷在那儿放
+  const castTo = /teleport_cast\.lua/.test(s) ? (() => { const src = readFile('data/scripts/projectiles/teleport_cast.lua') || ''; const r = /EntityGetInRadiusWithTag\([^,]+,[^,]+,\s*(\d+)/.exec(src); return { range: r ? +r[1] : 96 } })() : null
+  // 持续音(AudioLoopComponent event_name):场 / 电场 / 黑洞 各自的循环声,运行时用合成噪声近似
+  const loopM = /<AudioLoopComponent\b[^>]*event_name="([^"]+)"/.exec(s) || /<AudioLoopComponent\b[^>]*event_name="([^"]+)"/.exec(bs)
+  const loop = loopM ? loopM[1].replace(/^player_projectiles\//, '').replace(/\/loop$/, '') : null
+  const gae = merged(/<GameAreaEffectComponent\b([^>]*)>/)
+  const areaEffect = gae.radius ? { radius: num(gae.radius, 28), every: num(gae.frame_length, 100), effects: String(pc.damage_game_effect_entities || '').split(',').map((f) => f.trim()).filter(Boolean).map((f) => f.split('/').pop().replace(/^effect_/, '').replace('.xml', '')) } : null
   // 枪口火焰:是个小实体,SpriteComponent 的 image_file 可能是 $[1-5] 变体模板
   let muzzle = null
   if (pc.muzzle_flash_file) {
@@ -201,15 +259,24 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
     collideWorld: pc.collide_with_world !== '0' && pc.penetrate_world !== '1', groundPenetration: num(pc.ground_penetration_coeff, 0),
     leaveSprite: pc.on_death_gfx_leave_sprite === '1', velRotation: pc.velocity_sets_rotation !== '0', angularVelocity: num(pc.angular_velocity, 0),
     mass: num(vel.mass, 0.05),
-    gravity: num(vel.gravity_y, 0), airFriction: num(vel.air_friction, 0),
+    // VelocityComponent 引擎默认(component_documentation):gravity_y 400 / air_friction 0.55 / terminal_velocity 1000 / liquid_drag 1 —— 没写就是这些,不是 0
+    // (反 exe VelocitySystem::Update:v += g·dt;v −= v·air_friction·dt;液体里 v −= v·liquid_drag·dt·液体格数;|v| ≤ terminal)
+    // 没有 VelocityComponent 的实体(circle_* / touch_* 这类)根本不动
+    gravity: hasVel ? num(vel.gravity_y, 400) : 0, airFriction: hasVel ? num(vel.air_friction, 0.55) : 0, terminal: !hasVel || vel.apply_terminal_velocity === '0' ? 0 : num(vel.terminal_velocity, 1000), liquidDrag: hasVel ? num(vel.liquid_drag, 1) : 0,
     // 刚体弹没有 speed_*:是被"扔"出去的(PhysicsThrowableComponent),给个投掷速度
     speed: [num(pc.speed_min, physics ? 120 : 400), num(pc.speed_max, physics ? 140 : 400)], lifetime: num(pc.lifetime, 60), lifetimeRandom: num(pc.lifetime_randomness, 0),
     damage: num(pc.damage, 0), collisionDie: pc.on_collision_die !== '0', bounces: num(pc.bounces_left, 0), penetrate: pc.penetrate_world === '1',
+    // 反 exe / 文档:final_knockback = knockback_force × 弹速 × 弹 mass / 目标 mass;damage_scaled_by_speed → damage × min(1, 速度 / (damage_scale_max_speed || 初速))
+    knockback: num(pc.knockback_force, 0), dmgBySpeed: pc.damage_scaled_by_speed === '1', dmgMaxSpeed: num(pc.damage_scale_max_speed, 0),
+    penetrateEntities: pc.penetrate_entities === '1',
     friction: num(pc.friction, 1), lob: [num(pc.lob_min, 0), num(pc.lob_max, 0)], velocitySetsScale: pc.velocity_sets_scale === '1',
     deathExplode: pc.on_death_explode === '1', lifetimeExplode: pc.on_lifetime_out_explode === '1',
     muzzle, shootFlash: pc.shoot_light_flash_radius ? { r: num(pc.shoot_light_flash_r, 255), g: num(pc.shoot_light_flash_g, 255), b: num(pc.shoot_light_flash_b, 255), radius: num(pc.shoot_light_flash_radius, 0) } : null,
     explosion: Object.keys(ex).length ? {
       radius: num(ex.explosion_radius, 0), damage: num(ex.damage, 0), shake: num(ex.camera_shake, 0), hole: ex.hole_enabled !== '0',
+      // 反 exe ExplosionFactory::DamageMortals:击退冲量 = 方向 × lerp(physics_explosion_power.min, .max, 1 − d/r) × knockback_force × 3600(ConfigExplosion 默认 power [0,0.2] / knockback 1)
+      power: [num(ex['physics_explosion_power.min'], 0), num(ex['physics_explosion_power.max'], 0.2)], knockback: num(ex.knockback_force, 1),
+      destroyLiquid: ex.hole_destroy_liquid === '1', // 0 = 液体不是留着,是被抛飞
       holeLiquid: ex.hole_destroy_liquid === '1', rayEnergy: num(ex.ray_energy, 0), maxDurability: num(ex.max_durability_to_destroy, 0),
       sprite: sprite(ex.explosion_sprite), spriteLife: num(ex.explosion_sprite_lifetime, 0),
       sparks: ex.sparks_enabled === '1' ? [num(ex.sparks_count_min, 0), num(ex.sparks_count_max, 0)] : null,
@@ -221,7 +288,7 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
     sprite: sprite(spc.image_file), additive: spc.additive === '1', spriteAlpha: num(spc.alpha, 1), emissive: spc.emissive === '1',
     velocitySetsScaleCoeff: num(pc.velocity_sets_scale_coeff, 1),
     light: light.radius ? { r: num(light.r, 255), g: num(light.g, 255), b: num(light.b, 255), radius: num(light.radius, 0) } : null,
-    emitters, sprEmitters, converters, cellEater, looseGround,
+    emitters, sprEmitters, converters, cellEater, looseGround, areaEffect, shield, blackHole, gravityWell, electricity, loop, riseTo, teleport, castTo,
     tags: tags || '',
   }
 }

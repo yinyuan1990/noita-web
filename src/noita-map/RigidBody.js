@@ -94,6 +94,8 @@ export class RigidBody {
     if (this.linDamp) { const f = Math.exp(-this.linDamp * dt); this.vx *= f; this.vy *= f }
     if (this.angDamp) this.w *= Math.exp(-this.angDamp * dt)
     this.w *= Math.exp(-0.4 * dt) // 一点空气阻尼,别转个没完
+    this.w = Math.max(-12, Math.min(12, this.w)) // box2d 默认 max angular velocity 也就这个量级,别转成螺旋桨
+    if (this.fixedRot) { this.w = 0; this.rot = 0 } // SimplePhysics 类道具(心 / 法术刷新):只掉不转
     const sp = Math.hypot(this.vx, this.vy) + Math.abs(this.w) * this.r
     const sub = Math.max(1, Math.min(24, Math.ceil(sp * dt)))
     const h = dt / sub
@@ -103,11 +105,20 @@ export class RigidBody {
       if (this._resolve(solid)) touching = true
       if (this.ropes) this._ropes()
     }
+    // 快停下来的东西"坐实":慢速贴地时角速度再多耗一点;角度离最近的正放(0 / 90°)不到 4° 且几乎不转 → 直接摆正。
+    // 不然长凳 / 崩塌的石块这种细长件只有一条腿挨地时按点接触给扭矩,另一条腿落地又反过来,永远左右摇(用户反馈的板凳 / 石块被打后来回晃)
+    if (touching && Math.abs(this.vx) < 10 && Math.abs(this.vy) < 14 && !this.fixedRot) {
+      this.w *= 0.7
+      if (Math.abs(this.w) < 0.2) {
+        const Q = Math.PI / 2, q = Math.round(this.rot / Q) * Q
+        if (Math.abs(this.rot - q) < 0.07) { this.rot += (q - this.rot) * 0.35; this.w = 0 }
+      }
+    }
     // 睡眠判定:慢 + 贴着东西 0.5s
     // 静止:一帧重力 ≈ 6px/s,接触后弹回 ≈ 0~1,所以阈值给 8
     // (悬在地面上方半像素的帧也算,入睡前由 supported() 再确认脚下有东西)
     // vy 阈值给到 3 帧重力(推出半像素后会悬空几帧再落回,那几帧 vy 能到 12~18)
-    if (Math.abs(this.vx) < 6 && Math.abs(this.vy) < 20 && Math.abs(this.w) < 0.35) this.restT += dt
+    if (Math.abs(this.vx) < 6 && Math.abs(this.vy) < 28 && Math.abs(this.w) < 0.35) this.restT += dt
     else this.restT = 0
     return touching
   }
@@ -115,29 +126,43 @@ export class RigidBody {
   /** 接触处理:返回 true 表示有接触 */
   _resolve(solid) {
     const P = [0, 0]
-    let cx = 0, cy = 0, n = 0
+    let cx = 0, cy = 0, n = 0, ex = 0, ey = 0
     const cs = this._cs || (this._cs = new Float32Array(this.edge.length * 2))
     for (let e = 0; e < this.edge.length; e++) {
       this.worldOf(this.edge[e], P)
+      ex += P[0]; ey += P[1]
       if (!solid(Math.floor(P[0]), Math.floor(P[1]))) continue
       cs[n * 2] = P[0]; cs[n * 2 + 1] = P[1]
       n++; cx += P[0]; cy += P[1]
     }
     if (!n) return false
-    cx /= n; cy /= n
-    // 法线 = 接触点质心 → 刚体中心(平放在地上 = 正上;靠墙 = 水平;斜面 ≈ 斜面法线)。
+    cx /= n; cy /= n; ex /= this.edge.length; ey /= this.edge.length
+    // 全埋进去了(≥ 6 成边缘像素都在实心里):方向没意义,当作从上面掉进去的 —— 往上顶、速度清零,别按噪声法线往下推
+    // (桌子这种"桌面一排像素多、桌腿少"的形状,接触质心天然偏上,按"质心→刚体中心"算会算出朝下的法线,一路把桌子推穿地面)
+    const buried = n >= this.edge.length * 0.6
+    // 法线 = 接触点质心 → 边缘像素质心(不是刚体中心:边缘像素分布不对称时用刚体中心会偏;平放在地上 = 正上;靠墙 = 水平;斜面 ≈ 斜面法线)。
     // 比数 3×3 实心格稳:陷进去的接触像素周围全是实心,梯度法会给出噪声法线,箱子就一边抖一边自己转。
-    let nx = this.x - cx, ny = this.y - cy
+    let nx = ex - cx, ny = ey - cy
     let l = Math.hypot(nx, ny)
-    if (l < 0.5) { nx = 0; ny = -1; l = 1 }
+    // 几个像素的小块没有"形状",质心法线是噪声:按来向(速度反方向)当法线,从哪儿撞进去就从哪儿退出来
+    if (this.n < 12 && !buried) { const sp = Math.hypot(this.vx, this.vy); if (sp > 1) { nx = -this.vx / sp; ny = -this.vy / sp; l = 1 } }
+    if (buried || l < 0.5) { nx = 0; ny = -1; l = 1 }
     nx /= l; ny /= l
+    if (buried) { this.vx *= 0.5; this.vy = Math.min(this.vy, 0); this.w *= 0.5 }
     // 推出:沿法线主轴 1px 一步(斜面上沿斜法线推会产生"无速度的横向蠕动",箱子自己爬坡;按主轴推没有这个问题),最多 5px
     const ax = Math.abs(ny) >= Math.abs(nx) ? 0 : Math.sign(nx), ay = ax ? 0 : Math.sign(ny) || -1
-    for (let k = 0; k < 12; k++) {
-      this.x += ax * 0.5; this.y += ay * 0.5 // 半像素一步,别一下顶出去太多又落回来(那就是抖)
+    for (let k = 0, K = buried ? 48 : 12; k < K; k++) {
+      this.x += ax * 0.5; this.y += ay * 0.5 // 半像素一步,别一下顶出去太多又落回来(那就是抖);埋住的多顶几步(≤24px)
       let still = false
       for (let e = 0; e < this.edge.length; e++) { this.worldOf(this.edge[e], P); if (solid(Math.floor(P[0]), Math.floor(P[1]))) { still = true; break } }
-      if (!still) break
+      if (!still) {
+        // 再往回收 0.25px 试一次:顶出去多了半像素,东西就悬着掉回来再顶,永远小幅蹦(vy 每个来回能到 ±20,睡不着)
+        this.x -= ax * 0.25; this.y -= ay * 0.25
+        let hit = false
+        for (let e = 0; e < this.edge.length; e++) { this.worldOf(this.edge[e], P); if (solid(Math.floor(P[0]), Math.floor(P[1]))) { hit = true; break } }
+        if (hit) { this.x += ax * 0.25; this.y += ay * 0.25 }
+        break
+      }
     }
     this.w *= 0.92 // 贴着东西时角速度快速耗散(接触摩擦),免得躺在地上还在微微转
     // 慢速贴地:额外耗散,让它真的停下来(单接触点冲量法在斜面上天然有点蠕动)
@@ -147,7 +172,8 @@ export class RigidBody {
     const tx = -ny, ty = nx
     let tmin = Infinity, tmax = -Infinity
     for (let i = 0; i < n; i++) { const t = (cs[i * 2] - cx) * tx + (cs[i * 2 + 1] - cy) * ty; if (t < tmin) tmin = t; if (t > tmax) tmax = t }
-    const face = tmax - tmin > Math.min(this.w0, this.h0) * 0.6
+    // 几个像素的小块(尸块碎肉 3~10 像素):惯量极小,点接触的扭矩冲量会把它甩到 20 rad/s 以上乱转、转着钻进地里 —— 一律按面接触算(不给扭矩)
+    const face = this.n < 12 || tmax - tmin > Math.min(this.w0, this.h0) * 0.6
     // 冲量(接触点 C,法线 N)
     const rx = cx - this.x, ry = cy - this.y
     const vrx = this.vx - this.w * ry, vry = this.vy + this.w * rx
@@ -270,6 +296,32 @@ export class RigidBody {
 
   _idx(k) { return Math.round(this.py[k] + this.h0 / 2 - 0.5) * this.w0 + Math.round(this.px[k] + this.w0 / 2 - 0.5) }
 
+  /** 世界点 (wx,wy) 半径 r 内的像素抠掉(弹丸命中 / 小爆炸打掉刚体一块 —— 原版是 config_explosion 挖穿 box2d 像素),返回抠掉几个 */
+  carve(wx, wy, r) {
+    const P = [0, 0]
+    let lost = 0
+    for (let k = 0; k < this.n; k++) {
+      const idx = this._idx(k)
+      if (!this.mask[idx]) continue
+      this.worldOf(k, P)
+      if ((P[0] - wx) ** 2 + (P[1] - wy) ** 2 > r * r) continue
+      this.mask[idx] = 0; lost++
+    }
+    if (lost) { this.alive -= lost; this._rebuildEdge() }
+    return lost
+  }
+
+  /** 图内局部点 (lx,ly)(相对图心)周围 1px 还有没有像素 —— 钉子 / 链子挂在那儿,像素没了关节就断 */
+  hasPixelNear(lx, ly) {
+    const i0 = Math.round(lx + this.w0 / 2 - 0.5), j0 = Math.round(ly + this.h0 / 2 - 0.5)
+    if (i0 < -1 || j0 < -1 || i0 > this.w0 || j0 > this.h0) return true // 钉子点在图外(大灯笼 pos_y=-2 钉在顶上的墙里):不看像素,看墙
+    for (let j = j0 - 1; j <= j0 + 1; j++) for (let i = i0 - 1; i <= i0 + 1; i++) {
+      if (i < 0 || j < 0 || i >= this.w0 || j >= this.h0) continue
+      if (this.mask[j * this.w0 + i]) return true
+    }
+    return false
+  }
+
   _rebuildEdge() {
     const edge = []
     const has = (i, j) => (i < 0 || j < 0 || i >= this.w0 || j >= this.h0 ? 0 : this.mask[j * this.w0 + i])
@@ -293,6 +345,17 @@ export class RigidBody {
     if (!this.canvas) this.canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(this.w0, this.h0) : Object.assign(document.createElement('canvas'), { width: this.w0, height: this.h0 })
     const id = new ImageData(new Uint8ClampedArray(this.png.data), this.w0, this.h0)
     for (let i = 0; i < this.mask.length; i++) if (!this.mask[i]) id.data[i * 4 + 3] = 0
+    // 材质 normal_mapped=1(金块 / 宝石 / 药瓶玻璃 = gem_box2d 系):png 的红绿黄不是颜色,是法线(r,g → 朝向);显示 = 材质 color 按左上方来光打亮暗
+    if (this.baseColor !== undefined) {
+      const d = id.data, br = (this.baseColor >> 16) & 255, bg = (this.baseColor >> 8) & 255, bb = this.baseColor & 255
+      const LX = -0.5, LY = -0.6, LZ = 0.62 // 光从左上前方来
+      for (let i = 0; i < this.mask.length; i++) {
+        if (!d[i * 4 + 3]) continue
+        const nx = d[i * 4] / 127.5 - 1, ny = d[i * 4 + 1] / 127.5 - 1, nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny))
+        const k = 0.55 + 0.6 * Math.max(0, nx * LX + ny * LY + nz * LZ)
+        d[i * 4] = Math.min(255, br * k); d[i * 4 + 1] = Math.min(255, bg * k); d[i * 4 + 2] = Math.min(255, bb * k)
+      }
+    }
     this.canvas.getContext('2d').putImageData(id, 0, 0)
     this.canvasDirty = false
     return this.canvas
@@ -304,7 +367,7 @@ export class RigidBody {
     ctx.translate(Math.round(this.x - ox), Math.round(this.y - oy))
     ctx.rotate(this.rot)
     // skin:显示用的另一张图(药水 = 上色的瓶子,形状图是法线图;心/法术刷新 = 精灵本身)
-    const img = this.skin || this._canvas()
+    const img = this.frames ? this.frames[Math.floor(this.age / (this.animWait || 0.12)) % this.frames.length] : (this.skin || this._canvas())
     ctx.drawImage(img, -Math.floor(img.width / 2), -Math.floor(img.height / 2))
     ctx.restore()
   }

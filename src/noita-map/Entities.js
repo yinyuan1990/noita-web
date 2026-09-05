@@ -9,6 +9,7 @@
 
 import { RigidBody } from './RigidBody.js'
 import { NollaPrng } from './core/NollaPrng.js'
+import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from './core/coords.js'
 
 const K_LIQUID = 3
 const BODY_GRAVITY = 350 // 与角色 pixel_gravity 同量级(box2d 世界重力换算后 ≈ 这个数,炸弹刚体也用它)
@@ -34,11 +35,13 @@ export class Entities {
     this.worms = []        // 虫(WormComponent 节链)
     this.bodies = []       // 像素刚体(物理道具)
     this.pendingProps = [] // 形状图还没到的道具
-    this.spawnedChunks = new Set()
+    this.spawnedChunks = new Set() // 放过道具 / 物品的 chunk(只放一次)
+    this.liveChunks = new Set()    // 当前有怪在世界里的 chunk(卸载时清)
     this.pendingImages = new Map()
     this.stats = { spawned: 0, skipped: {}, killed: 0, bodies: 0, broken: 0 }
     this.time = 0
     this._solid = this._solid.bind(this)
+    this._solidB = this._solidB.bind(this)
     this._liqDensity = (x, y) => { const m = this.matAt(x, y); return m > 0 && this.mats.kind[m] === 'liquid' ? (this.mats.list[m]?.density ?? 3) : 0 }
   }
 
@@ -58,19 +61,26 @@ export class Entities {
     return null
   }
 
-  /** streamer 里某 chunk 首次就位 → 把它的生成点实例化(每 chunk 只做一次) */
+  /**
+   * streamer 里某 chunk 就位 → 把它的生成点实例化。道具 / 物品 / 圣山特殊物只在第一次就位时放(spawnedChunks,睡着的刚体已写进 chunk.mat,重放会重复);
+   * 怪 / 虫跟着区块走(liveChunks):区块被 LRU 卸载时 unloadChunk 收掉里面的怪,回来时按生成表重刷 —— 和原版"卸载区块不存活物"一致。
+   */
   spawnChunk(entry) {
-    if (!entry?.ready || !entry.spawns || this.spawnedChunks.has(entry.key)) return
-    this.spawnedChunks.add(entry.key)
+    if (!entry?.ready || !entry.spawns || this.liveChunks.has(entry.key)) return
+    const first = !this.spawnedChunks.has(entry.key)
+    this.spawnedChunks.add(entry.key); this.liveChunks.add(entry.key)
     for (const s of entry.spawns) {
+      const d = this.defs[s.entity]
+      const creature = d && (d.worm && d.parts?.length || d.kind === 'creature')
+      if (!creature && !first) continue
       if (/^wand_/.test(s.entity)) { this.hooks.spawnWand?.(s.entity, s.x, s.y); continue } // 法杖:交给 WandSystem 造,再当物品放回来
       // 圣山的特殊物:商店货 / 特权 / 传送门(temple_altar.lua),由 noitaPlay 按各自 lua 掷
       if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit') { this.hooks.spawnSpecial?.(s); continue }
-      const d = this.defs[s.entity]
       if (!d) { this.stats.skipped[s.entity] = (this.stats.skipped[s.entity] || 0) + 1; continue }
       if (d.kind === 'prop' && d.shape?.image) {
         // 像素刚体:形状图到了再建(见 update 里的 pendingProps)
         this._img(d.shape.image)
+        if (d.sprite?.image) this._img(d.sprite.image) // 皮肤图(灯笼火苗)不请求的话 pendingProps 永远等不到 → 矿里的灯笼一直没出来过
         this.pendingProps.push({ name: s.entity, d, x: s.x, y: s.y })
         continue
       }
@@ -78,10 +88,27 @@ export class Entities {
       if (d.worm && d.parts?.length) { for (const p of d.parts) this._img(p.image); this.worms.push(this._makeWorm(s.entity, d, s.x, s.y)); this.stats.spawned++; continue }
       if (d.kind !== 'creature' || !d.sprite?.image || !d.platforming || !d.character) { this.stats.skipped[s.entity] = (this.stats.skipped[s.entity] || 0) + 1; continue }
       this._preload(d)
-      this.list.push(this._make(s.entity, d, s.x, s.y))
+      const e = this._make(s.entity, d, s.x, s.y)
+      this._settle(e)
+      if (e.dead) continue // 生成点在我们的地形里是实心的,放不下
+      this.list.push(e)
       this.stats.spawned++
     }
-    if (this.list.length > 240) this.list.splice(0, this.list.length - 240)
+    // 安全上限:超了先删离玩家最远的(正常情况下 unloadChunk 已把卸载区块的怪收走,到不了这里)
+    if (this.list.length > 600) {
+      const p = this.player
+      this.list.sort((a, b) => (Math.abs(a.x - p.x) + Math.abs(a.y - p.y)) - (Math.abs(b.x - p.x) + Math.abs(b.y - p.y)))
+      this.list.length = 600
+    }
+  }
+
+  /** 区块被卸载:收掉落在这块里的怪 / 虫(醒着的刚体与物品留着),下次这块回来 spawnChunk 会重刷怪 */
+  unloadChunk(entry) {
+    this.liveChunks.delete(entry.key)
+    const x0 = (entry.cx - WCX) * CHUNK, y0 = (entry.cy - WCY) * CHUNK
+    const inside = (e) => e.x >= x0 && e.x < x0 + CHUNK && e.y >= y0 && e.y < y0 + CHUNK
+    for (let i = this.list.length - 1; i >= 0; i--) if (inside(this.list[i])) this.list.splice(i, 1)
+    for (let i = this.worms.length - 1; i >= 0; i--) if (inside(this.worms[i])) this.worms.splice(i, 1)
   }
 
   /** 一只怪要用到的全部贴图先排队解码(主精灵 / PhysicsAI 本体图 / lukki 的腿与叠层) */
@@ -98,6 +125,8 @@ export class Entities {
     if (!d?.sprite?.image || !d.platforming || !d.character) return null
     this._preload(d)
     const e = this._make(name, d, x, y)
+    this._settle(e)
+    if (e.dead) return null
     this.list.push(e); this.stats.spawned++
     return e
   }
@@ -114,6 +143,7 @@ export class Entities {
     this._img(image)
     if (d.sprite?.image && d.sprite.image !== image) this._img(d.sprite.image)
     const p = { name, d, x, y, item: true, vx: extra.vx || 0, vy: extra.vy || 0, w: extra.w || 0, pickCool: extra.pickCool || 0, nailed: name === 'perk_reroll' } // 重掷机是固定在地上的机器
+    const gv = /^goldnugget_(\d+)$/.exec(name); if (gv) p.gold = +gv[1] // VariableStorage gold_value
     if (name === 'potion') p.potion = extra.potion || this._rollPotion(x, y)
     this.pendingProps.push(p)
     return p
@@ -221,6 +251,7 @@ export class Entities {
     const d = this.defs[name]
     if (!d?.shape?.image) return null
     this._img(d.shape.image)
+    if (d.sprite?.image) this._img(d.sprite.image) // 有皮肤图(灯笼的火苗)也得先到,不然 pendingProps 一直等
     const p = { name, d, x, y }
     this.pendingProps.push(p)
     return p
@@ -252,13 +283,40 @@ export class Entities {
     return b
   }
 
+  /**
+   * 没有形状图、只有带动画的精灵表的道具(heart / heart_fullhp / spell_refresh:原版是 SimplePhysics + SpriteComponent 播帧):
+   * 形状用第一帧(不然整张 4 帧的表都当成实体,地上躺着"四颗心连成一排"),显示按帧播
+   */
+  _spriteFrames(d) {
+    const sp = d.sprite, an = sp?.anims?.[sp.def || 'default']
+    const sheet = this.images.get(sp?.image)
+    if (!an?.fw || !sheet?.image) return null
+    const key = `${sp.image}#${sp.def || 'default'}`
+    let fr = this._frameCache?.get(key)
+    if (fr) return fr
+    const n = Math.max(1, an.frames || 1), per = an.perRow || n, frames = []
+    let png = null
+    for (let i = 0; i < n; i++) {
+      const sx = an.x + (i % per) * an.fw, sy = an.y + Math.floor(i / per) * an.fh
+      const cv = new OffscreenCanvas(an.fw, an.fh), c = cv.getContext('2d')
+      c.drawImage(sheet.image, sx, sy, an.fw, an.fh, 0, 0, an.fw, an.fh)
+      frames.push(cv)
+      if (i === 0) png = { width: an.fw, height: an.fh, data: c.getImageData(0, 0, an.fw, an.fh).data }
+    }
+    fr = { png, frames, wait: an.wait || 0.12 }
+    ;(this._frameCache ||= new Map()).set(key, fr)
+    return fr
+  }
+
   _makeBody(p) {
-    const png = this.images.get(this._shapeImage(p.d))
+    const fr = !p.d.shape && p.d.sprite?.anims ? this._spriteFrames(p.d) : null
+    const png = fr ? fr.png : this.images.get(this._shapeImage(p.d))
     if (!png?.data) return null
     const matId = this.mats.byName.get(p.d.shape?.material || '') ?? this.mats.byName.get('wood_prop')
     const b = new RigidBody(p.d, png, p.x, p.y, matId)
     b.name = p.name; b.isBody = true
     b.density = this.mats.list[matId]?.density ?? 6
+    if (this.mats.list[matId]?.normalMapped) b.baseColor = this.mats.color[matId] // 金块 / 宝石:png 是法线图,按材质色打光
     b.vx = p.vx || 0; b.vy = p.vy || 0; b.w = p.w || 0
     b.isItem = !!p.item; b.gold = p.gold || 0; b.isRagdoll = !!p.ragdoll; b.wand = p.wand || null; b.shop = p.shop || null; b.spell = p.spell || null
     b.pickCool = p.pickCool || 0; b.thrown = !!p.thrown
@@ -279,7 +337,8 @@ export class Entities {
         c.fillStyle = `rgba(${(col >> 16) & 255},${(col >> 8) & 255},${col & 255},0.7)`; c.fillRect(0, Math.floor(sp.height * 0.35), sp.width, sp.height)
         b.skin = cv
       }
-    } else if (p.d.sprite?.image && p.d.sprite.image !== this._shapeImage(p.d)) { const sp = this.images.get(p.d.sprite.image); if (sp?.image) b.skin = sp.image }
+    } else if (fr) { b.frames = fr.frames; b.animWait = fr.wait; b.skin = fr.frames[0]; b.fixedRot = true } // SimplePhysics 的东西不打滚
+    else if (p.d.sprite?.image && p.d.sprite.image !== this._shapeImage(p.d)) { const sp = this.images.get(p.d.sprite.image); if (sp?.image) b.skin = sp.image }
     this.stats.bodies++
     return b
   }
@@ -343,6 +402,17 @@ export class Entities {
     }
     const sim = this.sim
     const pl = this.player
+    // 物品之间互相挤开(原版金块 / 药水是 Box2D 刚体会互相碰撞、堆成一小堆;我们的刚体不互撞,不挤的话一箱金块全叠在一个点上,心和金块糊成一团)
+    const items = []
+    for (const b of this.bodies) if (b.isItem && !b.dead && !b.nailed && b.x >= x0 && b.x <= x1 && b.y >= y0 && b.y <= y1) items.push(b)
+    for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+      const a = items[i], c = items[j]
+      const dx = c.x - a.x, dy = c.y - a.y, minD = (a.w0 + c.w0) * 0.35
+      if (Math.abs(dx) >= minD || Math.abs(dy) >= Math.max(a.h0, c.h0) * 0.6) continue
+      const push = (minD - Math.abs(dx)) * 0.5, s = dx === 0 ? (i & 1 ? 1 : -1) : Math.sign(dx)
+      if (a.asleep) a.asleep = false; if (c.asleep) c.asleep = false
+      a.x -= s * push; c.x += s * push; a.vx -= s * 12; c.vx += s * 12; a.restT = 0; c.restT = 0
+    }
     for (let i = this.bodies.length - 1; i >= 0; i--) {
       const b = this.bodies[i]
       if (b.dead) { this.bodies.splice(i, 1); continue }
@@ -351,14 +421,16 @@ export class Entities {
       if (b.isItem) {
         b.life -= dt
         if (b.life <= 0) { b.dead = true; continue }
+        // 金块的闪光(goldnugget_*.xml SpriteParticleEmitter shine_08:每 50~250 帧在 ±3px 内闪一颗 5×5 星,0.1~0.8s)—— 原版一眼认出是金子靠的就是这个
+        if (b.gold) { b.glintT = (b.glintT ?? (50 + Math.random() * 200) / 60) - dt; if (b.glintT <= 0) { b.glintT = (50 + Math.random() * 200) / 60; this.hooks.glint?.(b.x + (Math.random() - 0.5) * 6, b.y + (Math.random() - 0.5) * 6, 0.1 + Math.random() * 0.7) } }
         if (b.pickCool > 0) b.pickCool -= dt
         else if (Math.abs(b.x - pl.x) < 7 && Math.abs(b.y - (pl.y - 1)) < (b.nailed ? 12 : 9)) { b.dead = true; this.hooks.pickup?.(b); if (b.dead) continue }
-        if (b.asleep) { b.checkT -= dt; if (b.checkT <= 0) { b.checkT = 0.4; if (!b.supported(this._solid)) b.asleep = false } continue }
+        if (b.asleep) { b.age += dt; b.checkT -= dt; if (b.checkT <= 0) { b.checkT = 0.4; if (!b.supported(this._solidB)) b.asleep = false } continue }
         const before = Math.hypot(b.vx, b.vy)
-        const touching = b.step(dt, BODY_GRAVITY, this._solid, this._liqDensity, b.density)
+        const touching = b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
         // 药水:砸到东西(速度骤降 >100)就碎,洒一地(ExplodeOnDamage explode_on_death + MaterialInventory)
         if (b.potion && touching && before > 165 && before - Math.hypot(b.vx, b.vy) > 100) { this._destroyBody(b, b.x, b.y); continue } // 扔出去(180)会碎,从手边掉下去(~140)不碎
-        if (b.restT > 0.5 && b.supported(this._solid)) { b.asleep = true; b.vx = b.vy = b.w = 0 } // 物品睡着不写进世界(捡的时候好认)
+        if (b.restT > 0.5 && b.supported(this._solidB)) { b.asleep = true; b.vx = b.vy = b.w = 0 } // 物品睡着不写进世界(捡的时候好认)
         continue
       }
       // 链的锚点被挖掉 / 炸掉 → 断链(醒着睡着都查,便宜)
@@ -372,14 +444,28 @@ export class Entities {
           b.checkT = 0.4
           const lost = b.audit(sim)
           if (lost) this._bodyDamaged(b, 0, lost)
-          if (!b.dead && !b.supported(this._solid)) b.wake(sim)
+          if (!b.dead && !b.supported(this._solidB)) b.wake(sim)
         }
         continue
       }
       // 埋进实心太深(沙落上来 / 布景刚盖上)→ 顶出来;要在入睡前查,睡着后中心格是自己的像素
-      if (b.age > 1 && this._solid(Math.floor(b.x), Math.floor(b.y))) { for (let k = 0; k < 12 && this._solid(Math.floor(b.x), Math.floor(b.y)); k++) b.y -= 1 }
-      const vyBefore = b.vy
-      const touching = b.step(dt, BODY_GRAVITY, this._solid, this._liqDensity, b.density)
+      if (b.age > 1 && this._solidB(Math.floor(b.x), Math.floor(b.y))) { for (let k = 0; k < 12 && this._solidB(Math.floor(b.x), Math.floor(b.y)); k++) b.y -= 1 }
+      const vyBefore = b.vy, spBefore = Math.hypot(b.vx, b.vy)
+      const touching = b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
+      // PhysicsBodyCollisionDamageComponent:撞上东西时速度超过 speed_threshold(灯笼 120)→ 掉血 = 速度 × damage_multiplier(默认 1/60);灯笼掉下来砸地就碎、洒油、起火
+      // 材质 solid_on_collision_explode(concrete_collapsed 崩塌块):砸到东西按材质的 ExplosionConfig 炸一下 —— r4~20、震镜、concrete_sand 火花,块本身留着
+      if (b.collideExplode && touching && spBefore > 60 && !b.exploded) {
+        b.exploded = true
+        const sand = this.mats.byName.get('concrete_sand')
+        if (sand) for (let k = 0; k < 14; k++) this.hooks.debris?.(b.x + (Math.random() - 0.5) * b.w0, b.y + b.h0 / 2 - 1, (Math.random() - 0.5) * 120, -20 - Math.random() * 90, sand, this.mats.color[sand], true)
+        this.hooks.shake?.(0.25); this.hooks.sfx?.('impact', { vol: 0.6, rate: 0.5 + Math.random() * 0.2, minGap: 60 })
+      }
+      const CD = b.d.collisionDamage
+      const hanging = b.ropes?.some((r) => !r.broken)
+      if (CD && touching && !hanging && b.age > 0.3 && spBefore > CD.speed_threshold) { // 还挂着的不算(链子一拽速度会跳)
+        const spAfter = Math.hypot(b.vx, b.vy)
+        if (spBefore - spAfter > CD.speed_threshold * 0.5) { this._bodyDamaged(b, spBefore * CD.damage_multiplier, 0, b.x, b.y); if (b.dead) continue }
+      }
       // 摔落伤害(DamageModel falling_damages:高度 70~250px 线性给 0.1~1.2 伤,矿灯 0.15 血摔一下就碎):记下开始下落的高度,落地时算落差
       const D = b.d.damage
       if (D?.falling_damages) {
@@ -395,7 +481,11 @@ export class Entities {
           }
         }
       }
-      if (b.restT > 0.5 && b.supported(this._solid)) b.sleep(sim)
+      if (b.restT > 0.5 && b.supported(this._solidB)) {
+        b.sleep(sim)
+        // 材质 solid_on_sleep_convert(concrete_collapsed → solid_break_to_type concrete_static):睡着就化成静态混凝土,刚体撤掉
+        if (b.sleepConvert && b.cells) { for (let k = 0; k < b.cells.length; k += 2) sim.set(b.cells[k], b.cells[k + 1], b.sleepConvert, 0); b.cells = null; b.dead = true }
+      }
     }
   }
 
@@ -404,7 +494,8 @@ export class Entities {
     const ref = Object.values(this.projectiles?.defs || {}).find((p) => p.explosion?.sprite?.image?.includes(String(c.explosion_sprite || '').replace(/^.*\/(explosion_\d+).*$/, '$1')))
     const ex = {
       radius: +c.explosion_radius || 0, damage: +c.damage || 0, shake: +c.camera_shake || 0, hole: c.hole_enabled !== 0 && c.hole_enabled !== '0',
-      holeLiquid: c.hole_destroy_liquid === 1, rayEnergy: +c.ray_energy || 0, maxDurability: +c.max_durability_to_destroy || 0,
+      holeLiquid: c.hole_destroy_liquid === 1, destroyLiquid: c.hole_destroy_liquid === 1 || c.hole_destroy_liquid === '1', rayEnergy: +c.ray_energy || 0, maxDurability: +c.max_durability_to_destroy || 0,
+      power: [+c['physics_explosion_power.min'] || 0, +(c['physics_explosion_power.max'] ?? 0.2)], knockback: +(c.knockback_force ?? 1),
       sprite: ref?.explosion?.sprite || null, spriteLife: +c.explosion_sprite_lifetime || 0,
       sparks: c.sparks_enabled === 1 || c.sparks_enabled === '1' ? [+c.sparks_count_min || 0, +c.sparks_count_max || 0] : null,
       matSparks: null, light: { fade: 0.15, r: 255, g: 200, b: 120, radius: 1 },
@@ -430,10 +521,23 @@ export class Entities {
       if (Math.random() < (ex.physics_body_modified_death_probability ?? 1)) die = true
     }
     if (!die && ex && dmg > 0 && (ex.explode_on_damage_percent ?? 0) > 0 && Math.random() < ex.explode_on_damage_percent) die = true
-    // 漏:桶被打到 → 从伤口冒液体
-    if (!die && b.inventory && dmg > 0 && d.inventory?.leak_on_damage_percent !== undefined && dmg / Math.max(0.01, b.maxHp) >= d.inventory.leak_on_damage_percent * 0.5) this._leak(b, hx, hy, 12 + Math.round(Math.random() * 12))
+    // 漏(MaterialInventory leak_on_damage_percent:"if higher than 0 then it might leak when projectile damage happens" = 漏的概率):桶 / 灯笼被打到 → 从伤口冒液体
+    if (!die && b.inventory && dmg > 0 && (d.inventory?.leak_on_damage_percent ?? 0) > 0 && Math.random() < d.inventory.leak_on_damage_percent) this._leak(b, hx, hy, 6 + Math.round(Math.random() * 8))
+    // script_physics_body_modified = physics_lantern_damaged.lua:像素被打掉就在原地 EntityLoad(misc/fire.xml)—— 灯笼一被打中就起火,漏出来的油跟着烧
+    if (lost > 0 && d.scripts?.some((s) => s.endsWith('physics_lantern_damaged'))) this._fireAt(hx, hy, 3)
+    // 钉子 / 链子挂着的像素被打掉 → 关节断,掉下来(Box2D 关节锚在像素上;大灯笼钉在墙里的走地形检查)
+    if (lost > 0 && b.ropes) for (const r of b.ropes) if (!r.broken && !b.hasPixelNear(r.lx, r.ly)) { r.broken = true; if (b.asleep) b.wake(this.sim) }
     if (b.destroyed > 0.6) die = true
     if (die) this._destroyBody(b, hx, hy)
+  }
+
+  /** misc/fire.xml:在点上放几格火(空气格才放),旁边有油 / 木就烧起来 */
+  _fireAt(x, y, n) {
+    const sim = this.sim, F = sim.M_FIRE
+    for (let i = 0; i < n; i++) {
+      const px = Math.floor(x + (Math.random() - 0.5) * 4), py = Math.floor(y + (Math.random() - 0.5) * 4)
+      if (sim.get(px, py) === 0) sim.set(px, py, F, 8 + ((Math.random() * 10) | 0))
+    }
   }
 
   _leak(b, x, y, n) {
@@ -469,7 +573,7 @@ export class Entities {
       if (!b.mask[b._idx(k)]) continue
       b.worldOf(k, P)
       const px = b.png.data, ii = b._idx(k) * 4
-      const col = (px[ii] << 16) | (px[ii + 1] << 8) | px[ii + 2]
+      const col = b.baseColor !== undefined ? b.baseColor : (px[ii] << 16) | (px[ii + 1] << 8) | px[ii + 2]
       this.hooks.debris?.(P[0], P[1], (P[0] - b.x) * 6 + (Math.random() - 0.5) * 60, (P[1] - b.y) * 6 - 40 - Math.random() * 60, b.mat, col)
       n++
     }
@@ -489,8 +593,11 @@ export class Entities {
       climb: C.climb_over_y ?? 4, buoyOff: C.buoyancy_check_offset_y ?? -4,
       gravity: P.pixel_gravity ?? 600, run: P.run_velocity ?? 18, accel: P.accel_x ?? 0.15,
       vmax: Math.abs(P.velocity_max_x ?? 50), vyMin: P.velocity_min_y ?? -200, vyMax: P.velocity_max_y ?? 350,
-      // 原版敌人的 jump_velocity_y 大多只有 -12(那是"小跳"),真正跨障碍靠 PathFinding 的 can_jump;这里遇墙用 base_humanoid 的 -125
+      // 跳:原版敌人的 jump_velocity_y 大多只有 -12(小跳),跨障碍靠 PathFindingComponent 的 can_jump + initial_jump_max_distance_x/y
+      // (base_humanoid 100/60,miner 60/60),寻路里的跳边只在这个范围内找,起跳速度按 pixel_gravity 反算(_jumpTo)
       jumpV: (P.jump_velocity_y ?? -12) <= -60 ? P.jump_velocity_y : -125,
+      canJump: !!(d.path?.can_jump ?? 1), jumpMaxX: d.path?.initial_jump_max_distance_x ?? 100, jumpMaxY: d.path?.initial_jump_max_distance_y ?? 60,
+      reachX: Math.min(d.path?.distance_to_reach_node_x ?? 4, 6), reachY: Math.min(d.path?.distance_to_reach_node_y ?? 6, 8), stuckLimit: (d.path?.frames_to_get_stuck ?? 30) / 60, lobT: 0, stuckN: 0,
       helpless: d.genome?.herd_id === 'helpless', herd: d.genome?.herd_id || '',
       // 飞行(AnimalAI can_fly / PathFinding can_fly:蝙蝠、火骷髅、史莱姆射手、无人机):没有重力,朝目标点飞,悬在人上方
       flyer: !!(A.can_fly || d.path?.can_fly), flySpeed: d.ghost ? d.ghost.speed * 1.75 : Math.max(40, P.fly_velocity_x ?? 28) * 1.6, flyHover: -20 - Math.random() * 20, flySide: Math.random() < 0.5 ? -1 : 1,
@@ -645,21 +752,100 @@ export class Entities {
   }
 
   // ── 世界查询 ──
-  _solid(x, y) { const m = this.matAt(x, y); if (m < 0) return true; const k = this.mats.kind[m]; return k === 'static' || k === 'solid' || k === 'sand' }
+  /**
+   * 挡怪的格子:按材质 platform_type(materials.xml):0 = 角色穿过去(grass / moss / plant_material / mushroom / wood_loose 树 / rock_loose / meat 尸块 / item_box2d / wood_prop_noplayerhit),
+   * 1 = 站得住(rock_static / sand_static / wood / steel / concrete_collapsed / wood_prop…),2 = templebrick_box2d,没写 = 1。
+   * 所以原版怪和人都**穿树走**、踩不到尸块(用户:树把路挡了 / 怪挂在半空)。不能按 solid_static_type 判:wood / steel / brick 这些 cell_type=solid 的真地形 sst≠1 但 pt=1。
+   */
+  _solid(x, y) {
+    const m = this.matAt(x, y); if (m < 0) return true
+    const k = this.mats.kind[m]
+    if (k !== 'static' && k !== 'sand' && k !== 'solid') return false
+    return (this.mats.list[m]?.platformType ?? 1) !== 0
+  }
+  /** 刚体(原版 Box2D)撞的格子:platform_type 只管角色,箱子 / 尸块 / 金块照样落在树上、堆在尸块上 —— 不然尸块堆互相"穿"着一直醒来掉、睡不安稳 */
+  _solidB(x, y) {
+    const m = this.matAt(x, y); if (m < 0) return true
+    const k = this.mats.kind[m]
+    return k === 'static' || k === 'sand' || k === 'solid'
+  }
   /** 怪走路用:地形 + 醒着的刚体(物品 —— 货架上的法术卡 / 法杖 / 金块 —— 不挡怪) */
   _solidC(x, y) { if (this._solid(x, y)) return true; const b = this.bodySolidAt(x, y); return !!b && !b.isItem }
   _liquid(x, y) { const m = this.matAt(x, y); return m > 0 && this.mats.kind[m] === 'liquid' }
+  /**
+   * 碰撞盒放在 (cx,cy) 撞不撞:扫盒子的四条边(每格 1px)。移动都是 ≤1px 的子步,所以新碰到的格一定在边上;
+   * 之前只采左右两列、竖向每 2.2px 一点,1px 厚的地板 / 竹竿会漏(掉穿 / 穿墙)。盒子内部(被落沙埴住)由 _unstick 另查。
+   */
   _blocked(e, cx, cy) {
     const xl = Math.floor(cx + e.box.l), xr = Math.floor(cx + e.box.r - 0.01)
-    const h = e.box.b - e.box.t, n = Math.max(2, Math.ceil(h / 2.2))
-    for (let i = 0; i <= n; i++) { const y = Math.floor(cy + e.box.t + (h * i) / n); if (this._solidC(xl, y) || this._solidC(xr, y)) return true }
+    const yt = Math.floor(cy + e.box.t), yb = Math.floor(cy + e.box.b - 0.01)
+    for (let y = yt; y <= yb; y++) if (this._solidC(xl, y) || this._solidC(xr, y)) return true
+    for (let x = xl + 1; x < xr; x++) if (this._solidC(x, yt) || this._solidC(x, yb)) return true
     return false
   }
+  /** 盒子里(含内部)有没有实心:被落沙 / 塌方埴住时用 */
+  _buried(e, cx, cy) {
+    const xl = Math.floor(cx + e.box.l), xr = Math.floor(cx + e.box.r - 0.01)
+    const yt = Math.floor(cy + e.box.t), yb = Math.floor(cy + e.box.b - 0.01)
+    for (let y = yt; y <= yb; y++) for (let x = xl; x <= xr; x++) if (this._solidC(x, y)) return true
+    return false
+  }
+  /**
+   * 卡进实心里了:在 ±3px 内找最近的空位(先往上),挪过去;找不到 = 被埋住,原地不动(速度清零)。
+   * 之前是"每帧往上顶最多 16px 直到不撞",被沙埴住 / 堵在坑里的怪会一帧穿过头顶的石头冒出来——就是"本来出不来的怪突然跳出来"。
+   */
+  _unstick(e) {
+    if (!this._buried(e, e.x, e.y)) { e.buriedT = 0; return false }
+    if (this._freeNear(e, 3)) { e.buriedT = 0; return false }
+    e.vx = 0; e.vy = 0; e.lobT = 0
+    // 埋在石头里(不是沙):原版怪只会在生成点的空气里出现,不存在"长在岩石里"的怪;我们的地形和原版有出入 / 布景后盖 / 塌方压过来都可能把怪封进石头。
+    // 埋着超过 1s 就每秒往外找一次(±12px),3s 还在石头里就撤掉 —— 别让一只怪永远卡在墙里当靶子
+    e.buriedT = (e.buriedT || 0) + 1 / 60
+    const m = this.matAt(Math.floor(e.x), Math.floor(e.y + (e.box.t + e.box.b) / 2))
+    const inRock = m > 0 && this.mats.kind[m] === 'static'
+    if (e.buriedT > 1 && (e.buriedT * 60 | 0) % 60 === 0 && this._freeNear(e, 12)) { e.buriedT = 0; return false }
+    if (inRock && e.buriedT > 3) { e.dead = true; e.vanished = true; this.stats.unstuckRemoved = (this.stats.unstuckRemoved || 0) + 1 }
+    return true
+  }
+  /** 以当前位置为中心一圈圈往外找放得下盒子的空位(切比雪夫半径 ≤ R),找到就挪过去 */
+  _freeNear(e, R) {
+    for (let r = 1; r <= R; r++) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+        if (!this._buried(e, e.x + dx, e.y + dy)) { e.x += dx; e.y += dy; return true }
+      }
+    }
+    return false
+  }
+  /** 出生 / 巢里吐出来那一下:落点被卡在实心里就往上找 ≤24px 的空位,再一圈圈找 ≤32px;都没有 = 这个生成点在我们的地形里是实心的,不出这只怪 */
+  _settle(e) {
+    if (e.stationary || !this._buried(e, e.x, e.y)) return
+    if (!e.flyer) for (let k = 1; k <= 24; k++) if (!this._buried(e, e.x, e.y - k)) { e.y -= k; return }
+    if (this._freeNear(e, 32)) return
+    e.dead = true; e.vanished = true; this.stats.spawnSkipped = (this.stats.spawnSkipped || 0) + 1
+  }
+  /**
+   * 起跳到脚下目标点(PathFinding can_jump / initial_jump_lob):按 pixel_gravity 算抛物线——竖向速度刚好越过目标高度 +4px,
+   * 横向速度让落地时正好到 tx;空中(lobT)不再往 run_velocity 收,免得半空掉回来。
+   */
+  _jumpTo(e, tx, ty) {
+    const feet = e.y + e.box.b, g = e.gravity
+    const h = Math.max(6, feet - ty + 4)
+    const vy = Math.max(e.vyMin, -Math.sqrt(2 * g * h))
+    const dy = ty - feet // 落点相对起点(向下为正)
+    const disc = vy * vy + 2 * g * dy
+    const t = disc > 0 ? (-vy + Math.sqrt(disc)) / g : -vy / g
+    e.vy = vy
+    e.vx = Math.max(-140, Math.min(140, (tx - e.x) / Math.max(0.05, t)))
+    e.lobT = t + 0.1
+    e.onGround = false
+  }
 
-  /** 每帧:只更新激活窗口内的实体(视口 + 边距),窗口外冻结 */
+  /** 每帧:只更新激活窗口内的实体(rect = 模拟窗口,屏幕外一圈也在动;传 cam/VW/VH 的老写法照旧),窗口外冻结 */
   update(dt, cam, VW, VH) {
     this.time += dt
-    const x0 = cam.x - VW / 2 - 96, x1 = cam.x + VW / 2 + 96, y0 = cam.y - VH / 2 - 96, y1 = cam.y + VH / 2 + 96
+    const rect = cam && cam.x0 !== undefined ? cam : null
+    const x0 = rect ? rect.x0 : cam.x - VW / 2 - 96, x1 = rect ? rect.x1 : cam.x + VW / 2 + 96, y0 = rect ? rect.y0 : cam.y - VH / 2 - 96, y1 = rect ? rect.y1 : cam.y + VH / 2 + 96
     this._updateBodies(dt, x0, y0, x1, y1)
     const pl = this.player
     for (let i = this.worms.length - 1; i >= 0; i--) {
@@ -674,6 +860,8 @@ export class Entities {
       if (e.dead) { this.list.splice(i, 1); continue }
       if (e.x < x0 || e.x > x1 || e.y < y0 || e.y > y1) continue
       const f60 = dt * 60
+      // GameEffect FROZEN(effect_frozen 120 帧)/ ELECTROCUTION(effect_electricity 40 帧):定在原地什么都不做(场类法术 GameAreaEffectComponent 给的)
+      if (e.stunT > 0) { e.stunT -= dt; e.vx = 0; e.vy = 0; e.dir = 0; continue }
       // ── 感知 / 状态机 ──
       e.think -= dt; e.cool -= dt; e.hurtT -= dt; e.rangedCool -= dt
       const dx = pl.x - e.x, dy = pl.y - e.y, adx = Math.abs(dx), ady = Math.abs(dy)
@@ -878,104 +1066,184 @@ export class Entities {
 
   /** 走路(CharacterPlatforming):重力 / 目标速度插值 / 子步进 / 爬台阶 / 遇墙跳 / 卡住给放弃 */
   _walkStep(e, dt, f60, inLiq, dy) {
-    e.onGround = this._solidC(Math.floor(e.x + e.box.l), Math.floor(e.y + e.box.b + 1)) || this._solidC(Math.floor(e.x + e.box.r - 0.01), Math.floor(e.y + e.box.b + 1))
+    const xl = Math.floor(e.x + e.box.l), xr = Math.floor(e.x + e.box.r - 0.01), fy = Math.floor(e.y + e.box.b - 0.01) + 1
+    e.onGround = this._solidC(xl, fy) || this._solidC(xr, fy) || this._solidC((xl + xr) >> 1, fy)
+    if (e.onGround) {
+      // 抛物跳落地:没落到路点上(撞墙掉回来 / 跳短了)→ 从这儿重算路,别走回起跳点再来一遍
+      if (e.lobT > 0 && e.path && e.path[1] && (Math.abs(e.path[1][0] * 8 + 4 - e.x) > e.reachX || Math.abs(e.path[1][1] * 8 + 8 - (e.y + e.box.b)) > e.reachY)) e.pathT = 0
+      e.lobT = 0
+    }
+    if (e.lobT > 0) e.lobT -= dt
     e.vy += (inLiq ? e.gravity * 0.25 : e.gravity) * dt
     const target = e.dir * e.run
-    e.vx += (target - e.vx) * Math.min(1, e.accel * f60)
+    // 被黑洞吸着(pullT):这帧不按 AI 目标速度插值、不限速 —— 拉力说了算
+    const pulled = e.pullT > 0
+    if (pulled) e.pullT -= dt
+    else if (e.lobT <= 0 || e.onGround) e.vx += (target - e.vx) * Math.min(1, e.accel * f60) // 抛物跳(lob)途中保持水平速度
     if (inLiq) { e.vx *= Math.pow(0.2, dt); e.vy *= Math.pow(0.15, dt); if (e.state === 'chase' && dy < -4) e.vy -= 300 * dt }
-    e.vx = Math.max(-e.vmax, Math.min(e.vmax, e.vx))
-    e.vy = Math.max(e.vyMin, Math.min(e.vyMax, e.vy))
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(e.vx), Math.abs(e.vy)) * dt / 2))
+    if (!pulled) {
+      if (e.lobT <= 0) e.vx = Math.max(-e.vmax, Math.min(e.vmax, e.vx))
+      e.vy = Math.max(e.vyMin, Math.min(e.vyMax, e.vy))
+    }
+    // 1px 子步:2px 一步会跨过 1px 厚的墙 / 地板
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(e.vx), Math.abs(e.vy)) * dt))
     let blocked = false
     for (let s = 0; s < steps; s++) {
       const nx = e.x + (e.vx * dt) / steps
       if (!this._blocked(e, nx, e.y)) e.x = nx
       else {
         let ok = false
-        for (let c = 1; c <= e.climb; c++) if (!this._blocked(e, nx, e.y - c)) { e.x = nx; e.y -= c; ok = true; break }
-        if (!ok) { blocked = true; e.vx = 0 }
+        // 爬台阶:先竖直抬 c px(这一段在原地必须一路是空的,不然会从 1~2px 厚的地板 / 平台边缘"抬"上去 = 穿墙),再横移
+        for (let c = 1; c <= e.climb; c++) {
+          if (this._blocked(e, e.x, e.y - c)) break
+          if (!this._blocked(e, nx, e.y - c)) { e.x = nx; e.y -= c; ok = true; break }
+        }
+        if (!ok) { blocked = true; if (e.lobT <= 0) e.vx = 0 } // 抛物跳途中贴着墙上升,过了墙顶还要继续往前
       }
       const ny = e.y + (e.vy * dt) / steps
       if (!this._blocked(e, e.x, ny)) e.y = ny
       else e.vy = 0
     }
-    // 遇墙(追人/闲逛)跳一下;卡进墙里顶出去
-    if (blocked && e.onGround && e.dir && (e.state === 'chase' || e.state === 'flee' || Math.random() < 0.3)) e.vy = e.jumpV
-    else if (blocked && e.state === 'wander') e.dir = -e.dir
-    if (this._blocked(e, e.x, e.y)) { for (let k = 0; k < 16 && this._blocked(e, e.x, e.y); k++) e.y -= 1 }
-    // 追人时前方是坑:窄坑(≤24px)跳过去;闲逛不往悬崖走
-    if (e.onGround && e.dir) {
-      const gapAhead = !this._solid(Math.floor(e.x + e.dir * 6), Math.floor(e.y + e.box.b + 12))
-      if (gapAhead && e.state === 'wander') e.dir = -e.dir
-      else if (gapAhead && (e.state === 'chase' || e.state === 'flee')) {
-        let far = false
-        for (let k = 8; k <= 24; k += 4) if (this._solid(Math.floor(e.x + e.dir * k), Math.floor(e.y + e.box.b + 12))) { far = true; break }
-        if (far && dy <= 8) e.vy = e.jumpV // 对面有地就跳;人在下面就直接掉
-      }
-    }
-    // PathFinding(粗网格 BFS,PathFindingComponent 的替身):人不在同一层 / 被挡 → 每 0.4s 算一条 8px 网格路,照下一个路点走 / 跳
-    if (e.state === 'chase' && (Math.abs(dy) > 14 || blocked || e.stuckT > 0.3)) {
+    // 卡进实心里(落沙 / 塌方 / 刚体压过来):就近挪出 ≤3px,挪不出就是被埋住了,原地不动
+    if (this._unstick(e)) { e.lastX = e.x; return }
+    const chasing = e.state === 'chase' || e.state === 'flee'
+    // PathFinding(粗网格,PathFindingComponent 的替身):追人时人不在同一层 / 被挡 / 卡住 → 每 frames_between_searches 算一条 8px 网格路,照路点走 / 起跳
+    let onPath = false
+    if (e.state === 'chase' && (Math.abs(dy) > 14 || blocked || e.stuckT > 0.2 || e.path)) {
       e.pathT = (e.pathT || 0) - dt
-      if (e.pathT <= 0) { e.pathT = 0.4; e.path = this._findPath(e, this.player) }
+      if (e.pathT <= 0 && e.onGround) { e.pathT = 0.4; e.path = this._findPath(e, this.player) }
       const wp = e.path && e.path[1]
       if (wp) {
-        const wx = wp[0] * 8 + 4, wy = wp[1] * 8 + 8
-        if (Math.abs(wx - e.x) > 3) e.dir = Math.sign(wx - e.x)
-        if (wy < e.y - 6 && e.onGround) e.vy = e.jumpV
-        if (Math.abs(wx - e.x) <= 3 && Math.abs(wy - (e.y + e.box.b)) <= 8) e.path.shift()
-      }
+        onPath = true
+        const wx = wp[0] * 8 + 4, wy = wp[1] * 8 + 8, feet = e.y + e.box.b
+        if (wp[2]) {
+          // 跳边:先走到起跳格中心,再按抛物线起跳;空中保持
+          const ox = e.path[0][0] * 8 + 4
+          if (e.onGround && e.lobT <= 0) {
+            if (Math.abs(e.x - ox) > 2.5) e.dir = Math.sign(ox - e.x)
+            else this._jumpTo(e, wx, wy)
+          }
+        } else if (Math.abs(wx - e.x) > 2) e.dir = Math.sign(wx - e.x)
+        if (Math.abs(wx - e.x) <= e.reachX && Math.abs(wy - feet) <= e.reachY) e.path.shift()
+      } else if (e.path && e.path.length <= 1) e.path = null
+      // 找不到路又撞墙:别在墙根一直蹦,歇一下再看
+      if (!e.path && blocked && e.onGround && e.pathT > 0.35) { e.state = 'idle'; e.stateT = 1; e.dir = 0 }
     } else e.path = null
-    // PathFinding frames_to_get_stuck:追了 1s 没挪窝 → 跳;2.5s → 放弃一会儿
-    if (e.state === 'chase' && e.dir) {
-      if (Math.abs(e.x - e.lastX) < 0.5) { e.stuckT += dt; if (e.stuckT > 1 && e.onGround) e.vy = e.jumpV; if (e.stuckT > 2.5) { e.state = 'idle'; e.stateT = 1.5; e.stuckT = 0 } }
-      else e.stuckT = 0
+    if (!onPath && e.lobT <= 0) {
+      // 没有路可照着走的时候的本能:撞墙 → 追人 / 逃命就试着跳上墙顶(≤ jumpMaxY),闲逛就掉头
+      if (blocked && e.onGround && e.dir) {
+        if (chasing && e.canJump) {
+          const nx = e.x + e.dir * 3
+          for (let h = e.climb + 1; h <= e.jumpMaxY; h++) if (!this._blocked(e, nx, e.y - h)) { this._jumpTo(e, e.x + e.dir * 8, e.y + e.box.b - h); break }
+        } else if (e.state === 'wander') e.dir = -e.dir
+      }
+      // 前方是坑:追人时窄坑(≤24px)跳过去(人在下面就直接掉);闲逛不往悬崖走
+      if (e.onGround && e.dir && !blocked) {
+        const fy2 = Math.floor(e.y + e.box.b - 0.01) + 1
+        const groundAt = (px) => { const gx = Math.floor(px); for (let r = 0; r <= 12; r++) if (this._solid(gx, fy2 + r)) return true; return false }
+        const gapAhead = !groundAt(e.x + e.dir * 6)
+        if (gapAhead && e.state === 'wander') e.dir = -e.dir
+        else if (gapAhead && chasing && e.canJump && dy <= 8) {
+          for (let k = 8; k <= 24; k += 4) if (groundAt(e.x + e.dir * k)) { this._jumpTo(e, e.x + e.dir * (k + 4), e.y + e.box.b); break }
+        }
+      }
+    }
+    // frames_to_get_stuck:追人时原地没挪窝超过这么久 → 立刻重算路;连着几次还是卡 → 放弃一会儿
+    if (e.state === 'chase' && e.dir && e.onGround) {
+      if (Math.abs(e.x - e.lastX) < 0.3) {
+        e.stuckT += dt
+        if (e.stuckT > e.stuckLimit) { e.stuckT = 0; e.pathT = 0; e.stuckN++; if (e.stuckN > 3) { e.stuckN = 0; e.state = 'idle'; e.stateT = 1.5; e.path = null } }
+      } else { e.stuckT = 0; if (Math.abs(e.x - e.lastX) > 2) e.stuckN = 0 }
     } else e.stuckT = 0
     e.lastX = e.x
   }
 
   /**
-   * 粗网格寻路(8px 格,BFS):"能站的格" = 本格与上一格是空 / 下一格是实心;边 = 左右平走、跳(≤3 格高、水平 ≤2 格,目标格要空)、
-   * 掉(往下最多 10 格找到第一个能站的格)。范围 ±24×±16 格,最多展开 600 个节点,找不到返回 null。返回从起点到终点的格子列表 [[gx,gy],…](gy 是脚下那格的上一格)。
+   * 粗网格寻路(8px 格,Dijkstra 桶队列):格 (gx,gy) 的意思是"脚踩在这格的底边、身体居中在这格",
+   * "能站" = 整个碰撞盒放这里不撞(真正的 _blocked,不再只采格心那一个像素)且脚下一行有实心。
+   * 边:平走(1)、掉下去(≤12 格,途中每格都得能容身)、跳(can_jump:先直上 j 格再横移 i 格、再落下;i ≤ initial_jump_max_distance_x/8、j ≤ initial_jump_max_distance_y/8,
+   * 每格都得能容身,代价 2+i+j 所以能走就不跳)。范围 ±24×±16 格、最多 800 节点。返回 [[gx,gy,jump],…],jump=1 表示到这个点要起跳。
    */
   _findPath(e, pl) {
-    const S = 8
-    const solidG = (gx, gy) => this._solid(gx * S + 4, gy * S + 4)
-    const stand = (gx, gy) => !solidG(gx, gy) && !solidG(gx, gy - 1) && solidG(gx, gy + 1)
+    const S = 8, RX = 24, RY = 16, FALL = 12
     const sx = Math.floor(e.x / S), sy = Math.floor((e.y + e.box.b - 1) / S)
     const tx = Math.floor(pl.x / S), ty = Math.floor((pl.y + 1) / S)
-    if (Math.abs(tx - sx) > 24 || Math.abs(ty - sy) > 16) return null
-    // 起点 / 终点落到最近的能站格(往下找 6 格)
-    let sy2 = sy; for (let k = 0; k < 6 && !stand(sx, sy2); k++) sy2++
-    let ty2 = ty; for (let k = 0; k < 6 && !stand(tx, ty2); k++) ty2++
-    if (!stand(sx, sy2)) return null
-    const key = (x, y) => (x + 4096) * 8192 + (y + 4096)
-    const prev = new Map([[key(sx, sy2), null]])
-    const q = [[sx, sy2]]
-    let found = null, n = 0
-    while (q.length && n++ < 600) {
-      const [x, y] = q.shift()
-      if (x === tx && Math.abs(y - ty2) <= 1) { found = [x, y]; break }
-      const push = (nx, ny) => { const k = key(nx, ny); if (prev.has(k)) return; prev.set(k, [x, y]); q.push([nx, ny]) }
-      for (const d of [-1, 1]) {
-        const nx = x + d
-        if (solidG(nx, y) || solidG(nx, y - 1)) {
-          // 前面是墙:试着跳上去(1~3 格高,墙顶要能站,起跳路径上方要空)
-          for (let j = 1; j <= 3; j++) { if (solidG(x, y - j - 1)) break; if (stand(nx, y - j) && !solidG(nx, y - j - 1)) { push(nx, y - j); break } }
-          continue
-        }
-        if (stand(nx, y)) { push(nx, y); continue }
-        // 前面是坑:掉下去(找第一个能站的),或者跳过去(隔 2 格)
-        for (let j = 1; j <= 10; j++) { if (solidG(nx, y + j - 1)) break; if (stand(nx, y + j)) { push(nx, y + j); break } }
-        const fx = x + d * 2
-        if (!solidG(fx, y) && !solidG(fx, y - 1) && stand(fx, y)) push(fx, y)
-        else for (let j = 1; j <= 2; j++) if (!solidG(fx, y - j) && !solidG(fx, y - j - 1) && stand(fx, y - j)) { push(fx, y - j); break }
+    if (Math.abs(tx - sx) > RX || Math.abs(ty - sy) > RY) return null
+    // 网格缓存(以起点为中心,x ±(RX+12)、y −(RY+8)..+(RY+FALL)):0 没算 / 1 能 / 2 不能
+    const GW = (RX + 12) * 2 + 1, GH = RY + 8 + RY + FALL + 1, OX = sx - RX - 12, OY = sy - RY - 8
+    const G = this._pathGrid && this._pathGrid.length >= GW * GH * 2 ? this._pathGrid : (this._pathGrid = new Uint8Array(GW * GH * 2))
+    G.fill(0)
+    const idx = (gx, gy) => { const ix = gx - OX, iy = gy - OY; return ix < 0 || iy < 0 || ix >= GW || iy >= GH ? -1 : (iy * GW + ix) * 2 }
+    const free = (gx, gy) => {
+      const k = idx(gx, gy); if (k < 0) return false
+      let v = G[k]; if (!v) { v = this._blocked(e, gx * S + 4, gy * S + 8 - e.box.b) ? 2 : 1; G[k] = v }
+      return v === 1
+    }
+    const stand = (gx, gy) => {
+      const k = idx(gx, gy); if (k < 0) return false
+      let v = G[k + 1]
+      if (!v) {
+        v = 2
+        if (free(gx, gy)) { const cx = gx * S + 4, fy = gy * S + 8, xl = Math.floor(cx + e.box.l), xr = Math.floor(cx + e.box.r - 0.01); if (this._solidC(xl, fy) || this._solidC(xr, fy) || this._solidC((xl + xr) >> 1, fy)) v = 1 }
+        G[k + 1] = v
       }
-      // 原地起跳到上面的台子(头顶 2~3 格是空、再上去能站)
-      for (let j = 2; j <= 3; j++) { if (solidG(x, y - j)) break; if (stand(x, y - j)) { push(x, y - j); break } }
+      return v === 1
+    }
+    let sy2 = sy; for (let k = 0; k < 3 && !stand(sx, sy2); k++) sy2++
+    if (!stand(sx, sy2)) return null
+    let ty2 = ty; for (let k = 0; k < 8 && !stand(tx, ty2); k++) ty2++
+    if (!stand(tx, ty2)) return null
+    const jx = e.canJump ? Math.min(12, Math.floor(e.jumpMaxX / S)) : 0, jy = e.canJump ? Math.min(8, Math.floor(e.jumpMaxY / S)) : 0
+    // 升 j 格再落回同高度的滞空时间 × 横向速度上限(_jumpTo 的 140)= 这一跳横向最远几格
+    const reachX = []
+    for (let j = 0; j <= jy; j++) { const h = Math.max(6, j * S + 4), vy = Math.min(-e.vyMin, Math.sqrt(2 * e.gravity * h)); const t = (vy + Math.sqrt(Math.max(0, vy * vy - 2 * e.gravity * j * S))) / e.gravity; reachX.push(Math.min(jx, Math.floor((140 * t) / S))) }
+    const key = (x, y) => (x - OX) * GH + (y - OY)
+    const prev = new Map([[key(sx, sy2), null]])
+    const cost = new Map([[key(sx, sy2), 0]])
+    const buckets = [[[sx, sy2]]]
+    const push = (fx, fy, nx, ny, c, jump) => {
+      if (Math.abs(nx - sx) > RX || Math.abs(ny - sy) > RY) return
+      const k = key(nx, ny), old = cost.get(k)
+      if (old !== undefined && old <= c) return
+      cost.set(k, c); prev.set(k, [fx, fy, jump ? 1 : 0])
+      ;(buckets[c] || (buckets[c] = [])).push([nx, ny])
+    }
+    let found = null, n = 0
+    for (let c = 0; c < buckets.length && !found && n < 600; c++) {
+      const b = buckets[c]; if (!b) continue
+      for (let bi = 0; bi < b.length && n < 600; bi++) {
+        const [x, y] = b[bi]
+        if (cost.get(key(x, y)) !== c) continue // 过期项
+        n++
+        if (Math.abs(x - tx) <= 1 && Math.abs(y - ty2) <= 1) { found = [x, y]; break }
+        for (let di = 0; di < 2; di++) {
+          const d = di ? 1 : -1, nx = x + d
+          let walked = false
+          if (free(nx, y)) {
+            if (stand(nx, y)) { push(x, y, nx, y, c + 1, false); walked = true }
+            else for (let j = 1; j <= FALL; j++) { if (!free(nx, y + j)) break; if (stand(nx, y + j)) { push(x, y, nx, y + j, c + 1 + (j >> 1), false); walked = true; break } }
+          }
+          // 跳(只在这一侧走不通 / 人在上面时才枚举,省算):直上 j 格(0 = 平跳)再朝这侧横移 i 格,每格能容身;落在第一个能站的格,或者从那儿掉下去
+          if (!jx || (walked && ty2 >= y)) continue
+          for (let j = 0; j <= jy; j++) {
+            if (j > 0 && !free(x, y - j)) break
+            const ix = reachX[j]
+            for (let i = 1; i <= ix; i++) {
+              const jxg = x + d * i, jyg = y - j
+              if (!free(jxg, jyg)) break
+              if (j === 0 && i === 1) continue // 平走已经算过
+              if (stand(jxg, jyg)) { push(x, y, jxg, jyg, c + 3 + i + j, true); break }
+              if (!free(jxg, jyg + 1)) continue // 脚下是实心但站不住(半格)→ 继续往前
+              for (let k = 1; k <= FALL; k++) { if (!free(jxg, jyg + k)) break; if (stand(jxg, jyg + k)) { push(x, y, jxg, jyg + k, c + 3 + i + j + (k >> 1), true); break } }
+            }
+          }
+        }
+      }
     }
     if (!found) return null
     const path = []
-    for (let k = key(found[0], found[1]), cur = found; cur; cur = prev.get(k), k = cur ? key(cur[0], cur[1]) : 0) path.push(cur)
+    let cur = found
+    while (cur) { const p = prev.get(key(cur[0], cur[1])); path.push([cur[0], cur[1], p ? p[2] : 0]); cur = p ? [p[0], p[1]] : null }
     return path.reverse()
   }
 
@@ -1045,7 +1313,7 @@ export class Entities {
     e.vy += Math.sin(this.time * 5 + e.x) * 12 * dt
     if (Math.abs(e.vx) > 2) e.face = Math.sign(e.vx)
     if (e.d.ghost) { e.x += e.vx * dt; e.y += e.vy * dt; return } // 幽灵(GhostComponent):穿墙
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(e.vx), Math.abs(e.vy)) * dt / 2))
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(e.vx), Math.abs(e.vy)) * dt))
     // CellEaterComponent(lukki / lukki_tiny):挡住了就把前方 radius 内的格吃掉再过去(原作是一直吃身边 radius 内的格;这里只在被挡时吃,少挖些)。wiki:"要先在动才挖得动"
     const eat = e.eatR > 0 && Math.hypot(e.vx, e.vy) > 8 && e.state !== 'idle'
     for (let s = 0; s < steps; s++) {
@@ -1054,20 +1322,29 @@ export class Entities {
       else if (eat) { this._eatCells(nx, e.y, e.eatR); e.x = nx }
       else {
         // 斜坡 / 台阶:上下挪 ≤4px 能过就过(飞行体贴着 45° 斜顶滑),不行才弹回
-        let slid = false
-        for (let c = 1; c <= 4 && !slid; c++) { if (!this._blocked(e, nx, e.y - c)) { e.x = nx; e.y -= c; slid = true } else if (!this._blocked(e, nx, e.y + c)) { e.x = nx; e.y += c; slid = true } }
+        // 滑的那一段(原地竖着 / 横着挪 c px)必须一路是空的,只查终点会从 1~2px 厚的板子那边"滑"过去(穿墙)
+        let slid = false, upOk = true, dnOk = true
+        for (let c = 1; c <= 4 && !slid; c++) {
+          if (upOk && this._blocked(e, e.x, e.y - c)) upOk = false
+          if (dnOk && this._blocked(e, e.x, e.y + c)) dnOk = false
+          if (upOk && !this._blocked(e, nx, e.y - c)) { e.x = nx; e.y -= c; slid = true } else if (dnOk && !this._blocked(e, nx, e.y + c)) { e.x = nx; e.y += c; slid = true }
+        }
         if (!slid) { e.vx = -e.vx * 0.3; e.wanderTo = null; e.flyBlockT = 1.5 }
       }
       const ny = e.y + (e.vy * dt) / steps
       if (!this._blocked(e, e.x, ny)) e.y = ny
       else if (eat) { this._eatCells(e.x, ny, e.eatR); e.y = ny }
       else {
-        let slid = false
-        for (let c = 1; c <= 4 && !slid; c++) { if (!this._blocked(e, e.x - c, ny)) { e.y = ny; e.x -= c; slid = true } else if (!this._blocked(e, e.x + c, ny)) { e.y = ny; e.x += c; slid = true } }
+        let slid = false, lOk = true, rOk = true
+        for (let c = 1; c <= 4 && !slid; c++) {
+          if (lOk && this._blocked(e, e.x - c, e.y)) lOk = false
+          if (rOk && this._blocked(e, e.x + c, e.y)) rOk = false
+          if (lOk && !this._blocked(e, e.x - c, ny)) { e.y = ny; e.x -= c; slid = true } else if (rOk && !this._blocked(e, e.x + c, ny)) { e.y = ny; e.x += c; slid = true }
+        }
         if (!slid) { e.vy = -e.vy * 0.3; e.wanderTo = null; e.flyBlockT = 1.5 }
       }
     }
-    if (this._blocked(e, e.x, e.y)) { if (eat) this._eatCells(e.x, e.y, e.eatR); else for (let k = 0; k < 16 && this._blocked(e, e.x, e.y); k++) e.y -= 1 }
+    if (this._buried(e, e.x, e.y)) { if (eat) this._eatCells(e.x, e.y, e.eatR); else this._unstick(e) }
   }
 
   /** CellEater:圆内非 box2d 的格全变空气(虫 / lukki 共用) */
@@ -1213,7 +1490,7 @@ export class Entities {
     let mvx = horiz ? want * sp : 0, mvy = horiz ? 0 : want * sp
     e.vx = mvx; e.vy = mvy
     if (horiz && want) e.face = want
-    const stepN = Math.max(1, Math.ceil(sp * dt / 2))
+    const stepN = Math.max(1, Math.ceil(sp * dt)) // 1px 一步(2px 会跨过 1px 厚的墙)
     for (let s = 0; s < stepN && want; s++) {
       const nx = e.x + (mvx * dt) / stepN, ny = e.y + (mvy * dt) / stepN
       if (!this._blocked(e, nx, ny)) {
@@ -1231,7 +1508,7 @@ export class Entities {
           for (let k = 1; k <= 4 && !ok; k++) { const px = e.x + push[0], py = e.y + push[1]; if (this._blocked(e, px, py)) break; e.x = px; e.y = py; if (adhere()) ok = true }
           if (!ok) {
             let wrapped = false
-            for (let k = 1; k <= 3 && !wrapped; k++) { const px = e.x + push[0] * k, py = e.y + push[1] * k; if (!this._blocked(e, px, py)) { e.x = px; e.y = py; wrapped = true } }
+            for (let k = 1; k <= 3; k++) { const px = e.x + push[0], py = e.y + push[1]; if (this._blocked(e, px, py)) break; e.x = px; e.y = py; wrapped = true } // 1px 一步一路查,别隔着板子挪过去
             e.surf = wrapped ? (horiz ? (want > 0 ? 'l' : 'r') : (want > 0 ? 'u' : 'd')) : null
             break
           }
@@ -1240,14 +1517,18 @@ export class Entities {
         // 小坎(≤4px)直接跨;真墙才转上去(新 surf = 前方)
         let stepped = false
         const back = e.surf === 'd' ? [0, -1] : e.surf === 'u' ? [0, 1] : e.surf === 'l' ? [1, 0] : [-1, 0]
-        for (let c = 1; c <= 4 && !stepped; c++) { const px = nx + back[0] * c, py = ny + back[1] * c; if (!this._blocked(e, px, py)) { e.x = px; e.y = py; stepped = true } }
+        for (let c = 1; c <= 4 && !stepped; c++) {
+          if (this._blocked(e, e.x + back[0] * c, e.y + back[1] * c)) break // 原地先抬 c px 必须一路是空的(否则从薄板另一侧穿出去)
+          const px = nx + back[0] * c, py = ny + back[1] * c
+          if (!this._blocked(e, px, py)) { e.x = px; e.y = py; stepped = true }
+        }
         if (stepped) continue
         e.surf = horiz ? (want > 0 ? 'r' : 'l') : (want > 0 ? 'd' : 'u')
         if (e.state === 'wander') e.dir = -e.dir
         break
       }
     }
-    if (this._blocked(e, e.x, e.y)) { for (let k = 0; k < 12 && this._blocked(e, e.x, e.y); k++) { e.y -= 1 } }
+    this._unstick(e)
   }
 
   /** 视线:从眼睛到目标每 4px 采一格,碰到实心就看不见(sense_creatures_through_walls 的除外) */
@@ -1294,6 +1575,26 @@ export class Entities {
     for (const b of this.bodies) if (!b.dead && b.contains(x, y)) return b
     return null
   }
+  /** range 内最近(或随机一个)活着的怪的 hitbox 中心;los=true 要求中间没实心格挡着(RaytraceSurfaces) */
+  nearest(x, y, range, { random = false, los = false } = {}) {
+    const cands = []
+    let best = null, bd = Infinity
+    for (const e of this.list) {
+      if (e.dead || e.isBody) continue
+      const cx = e.x, cy = e.y + (e.hit.t + e.hit.b) / 2, d = Math.hypot(cx - x, cy - y)
+      if (d > range) continue
+      if (los && this._blockedLine(x, y, cx, cy)) continue
+      if (random) cands.push({ x: cx, y: cy, e })
+      else if (d < bd) { bd = d; best = { x: cx, y: cy, e } }
+    }
+    if (random) return cands.length ? cands[(Math.random() * cands.length) | 0] : null
+    return best
+  }
+  _blockedLine(x0, y0, x1, y1) {
+    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0))
+    for (let i = 1; i < n; i++) { const t = i / n, m = this.sim.get(Math.floor(x0 + (x1 - x0) * t), Math.floor(y0 + (y1 - y0) * t)); if (m > 0 && this.sim.kind[m] === 1) return true }
+    return false
+  }
   /** 只测刚体(敌人的弹不打自己人) */
   hitTestBodies(x, y) {
     for (const b of this.bodies) if (!b.dead && b.contains(x, y)) return b
@@ -1306,7 +1607,10 @@ export class Entities {
     if (e.isBody) {
       if (e.asleep && (Math.abs(ix) + Math.abs(iy) > 40 || src === 'explosion')) e.wake(this.sim)
       if (!e.asleep) { e.vx += ix * (10 / Math.max(10, e.m)); e.vy += iy * (10 / Math.max(10, e.m)); e.restT = 0 }
-      this._bodyDamaged(e, dmg, 0, hx, hy)
+      // 弹丸命中刚体:原版弹丸自带的小爆炸会把 box2d 像素挖掉一块(玻璃 / 木头的 durability 低)→ physics_body_modified;命中点抠 1.5px
+      let lost = 0
+      if (src === 'proj' && !e.isItem) { lost = e.carve(hx, hy, 1.5); if (lost && e.asleep) e.wake(this.sim) }
+      this._bodyDamaged(e, dmg, lost, hx, hy)
       if (src === 'proj') this.hooks.sfx?.('impact', { vol: 0.3, rate: 0.9, minGap: 60 })
       return
     }
@@ -1316,6 +1620,7 @@ export class Entities {
     if (mul) { const key = src === 'proj' ? 'projectile' : src; if (mul[key] !== undefined) dmg *= mul[key] }
     e.hp -= dmg
     e.vx += ix; e.vy += iy
+    if (src === 'black_hole' || src === 'electricity') e.hurtT = 0.1
     // lukki_eggs.lua damage_received:伤 >0.1 且(致死 或 10%)→ 出一只小蜘蛛
     if (e.d.eggs && dmg > 0.1 && (e.hp <= 0 || Math.random() < 0.1)) { this.spawnCreature(e.d.eggs, e.x + (Math.random() - 0.5) * 6, e.y); this.hooks.sfx?.('clash', { vol: 0.4, rate: 1.6, minGap: 100 }) }
     if (src === 'proj' || src === 'explosion') {
@@ -1391,32 +1696,103 @@ export class Entities {
     for (let k = 0; k < 2; k++) this.hooks.spark?.(e.x + (Math.random() - 0.5) * 6, e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t), (Math.random() - 0.5) * 24, -50 - Math.random() * 70, Math.random() < 0.5 ? '#ffb040' : '#ff6a20', 0.3 + Math.random() * 0.2)
   }
 
-  /** 爆炸:范围内实体按距离衰减掉血 + 冲量 */
-  explosion(x, y, r, dmg) {
+  /**
+   * 爆炸(反 exe ExplosionFactory::DamageMortals):实体中心在 radius 内、且 hitbox(中心 + 四角)有一点能被射线够到(reach2[角度] ≥ 距离²,墙挡住就没伤害)
+   * → 吃满额 damage,没有距离衰减;击退 = 方向 × lerp(power.min, power.max, 1 − d/r) × knockback_force(× 600 换成我们的 px/s)
+   */
+  static los(x, y, reach2, px, py, w, h) {
+    if (!reach2) return true
+    const pts = [[px, py], [px - w, py - h], [px + w, py - h], [px - w, py + h], [px + w, py + h]]
+    for (const [qx, qy] of pts) {
+      const dx = qx - x, dy = qy - y
+      let d = Math.round(Math.atan2(dy, dx) * 180 / Math.PI) % 360; if (d < 0) d += 360
+      if (reach2[d] >= dx * dx + dy * dy) return true
+    }
+    return false
+  }
+
+  explosion(x, y, r, dmg, reach2 = null, power = [0, 0.2], kb = 1) {
+    const kbOf = (t) => (power[0] + (power[1] - power[0]) * t) * kb * 120 // ×3600 是 box2d 冲量单位,换成我们的 px/s 取 ×120(炸弹 3.6 → 430 px/s)
     for (const e of this.list) {
       if (e.dead) continue
-      const dx = e.x - x, dy = (e.y + (e.hit.t + e.hit.b) / 2) - y, d = Math.hypot(dx, dy)
-      if (d > r + 6) continue
-      const k = 1 - Math.max(0, d - 4) / (r + 2)
-      const n = Math.max(1, d)
-      this.hurt(e, dmg * Math.max(0.35, k), (dx / n) * 120 * k, (dy / n) * 120 * k - 60 * k, 'explosion')
+      const cy = e.y + (e.hit.t + e.hit.b) / 2, dx = e.x - x, dy = cy - y, d = Math.hypot(dx, dy)
+      if (d > r) continue
+      if (!Entities.los(x, y, reach2, e.x, cy, (e.hit.r - e.hit.l) / 2, (e.hit.b - e.hit.t) / 2)) continue
+      const t = Math.max(0, 1 - d / r), n = Math.max(1, d), f = kbOf(t)
+      this.hurt(e, dmg, (dx / n) * f, (dy / n) * f - f * 0.5, 'explosion')
     }
     for (const w of this.worms) {
       if (w.dead) continue
-      let best = Infinity; for (const s of w.segs) best = Math.min(best, Math.hypot(s.x - x, s.y - y))
-      if (best <= r + w.r) this.hurt(w, dmg * Math.max(0.3, 1 - best / (r + w.r)), 0, 0, 'explosion')
+      let best = Infinity, bx = 0, by = 0
+      for (const s of w.segs) { const dd = Math.hypot(s.x - x, s.y - y); if (dd < best) { best = dd; bx = s.x; by = s.y } }
+      if (best <= r + w.r && Entities.los(x, y, reach2, bx, by, w.r, w.r)) this.hurt(w, dmg, 0, 0, 'explosion')
     }
     // 刚体:physics_throw —— 范围内的(含睡着的)醒过来被抛飞,再吃伤害
     for (const b of this.bodies) {
       if (b.dead) continue
       const dx = b.x - x, dy = b.y - y, d = Math.hypot(dx, dy)
       if (d > r + b.r) continue
-      const k = 1 - Math.max(0, d - 4) / (r + b.r)
-      const n = Math.max(1, d)
+      if (!Entities.los(x, y, reach2, b.x, b.y, b.r, b.r)) continue
+      const t = Math.max(0, 1 - Math.max(0, d - b.r) / r), n = Math.max(1, d)
       if (b.asleep) b.wake(this.sim)
-      const imp = 220 * k * (30 / Math.max(30, b.m))
-      b.vx += (dx / n) * imp; b.vy += (dy / n) * imp - imp * 0.5; b.w += (Math.random() - 0.5) * 6 * k; b.restT = 0
-      this._bodyDamaged(b, dmg * Math.max(0.3, k), 0, b.x, b.y)
+      const imp = kbOf(t) * 1.8 * (30 / Math.max(30, b.m))
+      b.vx += (dx / n) * imp; b.vy += (dy / n) * imp - imp * 0.5; b.w += (Math.random() - 0.5) * 6 * t; b.restT = 0
+      this._bodyDamaged(b, dmg, 0, b.x, b.y)
+    }
+  }
+
+  /**
+   * black_hole_gravity.lua PhysicsApplyForceOnArea:dist 内的刚体(箱子 / 桶 / 尸体道具)每帧 v += coeff × (1 − d/dist) 朝中心(coeff 已含 ×0.2)。
+   * 活物 / 玩家不是 box2d 刚体,原版不吸
+   */
+  pull(x, y, dist, coeff, dt) {
+    const f60 = dt * 60
+    for (const b of this.bodies) {
+      if (b.dead) continue
+      const dx = x - b.x, dy = y - b.y, d = Math.hypot(dx, dy)
+      if (d >= dist || d < 0.5) continue
+      if (b.asleep) b.wake(this.sim)
+      const f = coeff * (1 - d / dist) * f60
+      b.vx += (dx / d) * f; b.vy += (dy / d) * f; b.restT = 0
+    }
+  }
+
+  /**
+   * BlackHoleComponent 的吸力(反 noita_dev.exe BlackHoleSystem::Update):中心 ±radius 方框内的实体,每帧 mVelocity += attractor × 1.5 × (径向 + 径向旋转 π/2),
+   * 即一半拉向洞心、一半切向 —— 所以怪和玩家也是绕着掉进去的;走路怪这帧不按 AI 限速(pullT)。刚体走 black_hole_gravity.lua 的 pull(),这里不管
+   */
+  attract(x, y, R, attr, dt) {
+    const f = attr * 1.5 * dt * 60
+    for (const e of this.list) {
+      if (e.dead || e.isBody) continue
+      const ex = e.x, ey = e.y + (e.hit.t + e.hit.b) / 2
+      const dx = x - ex, dy = y - ey
+      if (Math.abs(dx) > R || Math.abs(dy) > R) continue
+      const d = Math.hypot(dx, dy)
+      if (d < 0.5) continue
+      const rx = dx / d, ry = dy / d
+      e.vx += (rx - ry) * f; e.vy += (ry + rx) * f
+      e.pullT = 0.1
+    }
+  }
+
+  /** BlackHoleComponent damage_probability:exe 里是每帧掷一次骰,中了就对半径内所有 mortal 实体扣 dmg(调用方掷好骰再来;黑洞伤害无视 damage_multipliers) */
+  blackHole(x, y, r, dmg) {
+    for (const e of this.list) {
+      if (e.dead) continue
+      if (Math.hypot(e.x - x, (e.y + (e.hit.t + e.hit.b) / 2) - y) > r + 2) continue
+      this.hurt(e, dmg, 0, 0, 'black_hole')
+    }
+    for (const w of this.worms) {
+      if (w.dead) continue
+      let best = Infinity; for (const s of w.segs) best = Math.min(best, Math.hypot(s.x - x, s.y - y))
+      if (best <= r + w.r) this.hurt(w, dmg, 0, 0, 'black_hole')
+    }
+    for (const b of this.bodies) {
+      if (b.dead) continue
+      if (Math.hypot(b.x - x, b.y - y) > r + b.r) continue
+      if (b.asleep) b.wake(this.sim)
+      this._bodyDamaged(b, dmg, 0, b.x, b.y)
     }
   }
 

@@ -35,7 +35,8 @@ self.onmessage = async (e) => {
       // 存档命中(玩家改过的区块):布景/群系照旧算(确定性),材质换成存的那份
       if (m.mat) {
         chunk = { ...chunk, mat: m.mat }
-        world.attachDecor(chunk) // 材质变了(挖过)/ 下一块刚生成 → 植被落点重算
+        // 重画 / 读档:植被落点用主线程 / 存档带来的(m.veg),不按被挖过的地面重算,也不再往材质里烙(材质里已经有了)
+        world.attachDecor(chunk, { veg: m.veg || chunk.decor?.filter((d) => d.kind === 'veg') || [], stamp: false })
         world.chunks.set(cx + ',' + cy, { ...chunk, t: ++world._tick })
       }
       const t2 = performance.now()

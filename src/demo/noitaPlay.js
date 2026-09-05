@@ -11,7 +11,8 @@ import { ProjectileSystem } from '../noita-map/ProjectileSystem.js'
 import { PlayerSprite } from '../noita-map/PlayerSprite.js'
 import { ParallaxSky } from '../noita-map/Sky.js'
 import { Entities } from '../noita-map/Entities.js'
-import { WandSystem } from '../noita-map/Wands.js'
+import { Vegetation } from '../noita-map/Vegetation.js'
+import { WandSystem, FREE_CAPACITY } from '../noita-map/Wands.js'
 import { PerkSystem } from '../noita-map/Perks.js'
 import { decodePngBrowser } from '../noita-map/assets.js'
 
@@ -31,8 +32,10 @@ const mats = assets.materials
 const KIND = mats.kind
 // 位图只画静态材质(skipDynamic),液体/沙/气/火每帧由主线程按模拟状态叠上去
 const client = await new WorldClient({ base: RES, seed: SEED, workers: 1, chunkCache: 24, paint: { skipDynamic: true } }).init()
+// 世界生成版本:改了生成 / 群系 / 植被烙格子就 +1,老存档里的旧区块自动作废重生成(不然手机上"看着没变化")
+const WORLD_REV = 2
 let store = null
-try { store = await new ChunkStore().open() } catch (e) { void e }
+try { store = await new ChunkStore().open(); const n = await store.ensureRev(SEED, WORLD_REV); if (n) console.info(`[world] 生成版本变了,作废旧区块 ${n} 块`) } catch (e) { void e }
 const streamer = new ChunkStreamer(client, { store, cache: 40, ahead: 2, behind: 1, side: 1, maxInFlight: 2, maxAcceptPerFrame: 2 })
 streamer.seed = SEED
 document.addEventListener('visibilitychange', () => { if (document.hidden) streamer.flush() })
@@ -68,7 +71,6 @@ function sampleAround(wx, wy, rx, ry) {
   return rows
 }
 
-const isSolidKind = (k) => k === 'static' || k === 'solid' || k === 'sand'
 /** 世界坐标 → 材质 id;区块未就位返回 -1(优先走模拟窗口,窗口外走 streamer) */
 function matAt(wx, wy) {
   if (simBound) { const m = sim.get(Math.floor(wx), Math.floor(wy)); if (m >= 0) return m }
@@ -79,7 +81,16 @@ function matAt(wx, wy) {
   return e.mat[ly * CHUNK + lx]
 }
 let entities = null // 实体层(后面 init;醒着的像素刚体也算实心)
-const solidAt = (wx, wy) => { const m = matAt(wx, wy); if (m < 0) return true; if (isSolidKind(KIND[m])) return true; return !!(entities && entities.bodySolidAt(wx, wy)) } // 没加载 = 当墙,别掉进虚空
+// 挡人的格子:看材质 platform_type(materials.xml:0 = 角色穿过去 —— grass / moss / plant_material / mushroom / wood_loose(树)/ rock_loose / meat(尸块)/ item_box2d / wood_prop_noplayerhit;
+// 1 = 站得住 —— rock_static / sand_static / wood / steel / concrete_collapsed / wood_prop…;2 = templebrick_box2d;没写 = 1)。原版人就是穿树走、踩不到尸块;子弹照样打得中(弹丸碰撞另算)。
+// 之前按 solid_static_type 判会把 wood / steel / brick / meteorite 这些 cell_type=solid 的真地形当成可穿(它们 solid_static_type≠1 但 platform_type=1)。
+// 醒着的刚体像素另算(bodySolidAt);没加载 = 当墙,别掉进虚空
+const solidAt = (wx, wy) => {
+  const m = matAt(wx, wy); if (m < 0) return true
+  const k = KIND[m]
+  if (k === 'static' || k === 'sand' || k === 'solid') return (mats.list[m]?.platformType ?? 1) !== 0
+  return !!(entities && entities.bodySolidAt(wx, wy))
+}
 const liquidAt = (wx, wy) => { const m = matAt(wx, wy); return m > 0 && KIND[m] === 'liquid' }
 
 // ── 玩家:数值全部来自 data/entities/player_base.xml(CharacterPlatformingComponent / CharacterDataComponent)──
@@ -99,17 +110,27 @@ const player = {
   x: 227, y: -120, vx: 0, vy: 0, onGround: false, thrusting: false, fuel: 100, hp: 4, maxHp: 4, face: 1, walkT: 0, iframe: 0,
   aimX: 300, aimY: -120, fireCd: 0, fly: P.flyTimeMax, airFrames: 0, sinceFly: 999, flyExhausted: false, upHeld: false,
   // 水:wasWet 上一帧碰着液体(入水一刻掀水花);wet = GameEffect WET 剩余秒(600 帧 = 10s,出水后滴水、精灵染色);headInLiq 头没在液体里
-  wasWet: false, wet: 0, wetMat: 0, stain: '', headInLiq: false, dripT: 0, fireT: 0, fireTick: 0, gold: 0,
+  wasWet: false, wet: 0, wetMat: 0, stain: '', headInLiq: false, dripT: 0, fireT: 0, fireDur: 4, fireTick: 0, gold: 0,
   air: 7, dead: false, kills: 0, // air_in_lungs(秒);dead = 死亡画面挂着
   kickCd: 0, kickT: 0, // 踢:冷却 / 出脚动画剩余
 }
-const flags = {} // 特权开的开关 / 倍率(Perks.js EFFECTS 写,各处读)
+// 自由模式(FREE,默认开,?free=0 关):法术全开(背包里有整个法术库、随处改法杖)、法力 / 次数无限 —— 玩家要的是玩材质效果,不是攒资源
+const FREE = Q.get('free') !== '0'
+const flags = { editAnywhere: FREE, wandSlots: FREE ? 8 : 4 } // 特权开的开关 / 倍率(Perks.js EFFECTS 写,各处读);自由模式 8 根杖 / 每杖 20 格
 const bubbles = [] // 水下呼吸气泡(particles/gas_bubble:向上加速 -200、最快 90,出水面即破)
-// 碰撞盒采样点:两侧竖线各取 4 个高度(含顶/底)
+// 碰撞盒采样点:两侧竖线各取 4 个高度(含顶/底);顶 / 底两行整行采样 —— 只测两个角的话,树尖 / 一根细枝正好落在两角之间会穿下去(用户:站树顶往下陷)
 const BOX_YS = [P.boxT, P.boxT + 2.2, P.boxT + 4.4, P.boxB]
 function bodyBlocked(cx, cy) {
   const xl = Math.floor(cx + P.boxL), xr = Math.floor(cx + P.boxR - 0.01)
   for (const oy of BOX_YS) { const y = Math.floor(cy + oy); if (solidAt(xl, y) || solidAt(xr, y)) return true }
+  const yt = Math.floor(cy + P.boxT), yb = Math.floor(cy + P.boxB)
+  for (let x = xl + 1; x < xr; x++) if (solidAt(x, yb) || solidAt(x, yt)) return true
+  return false
+}
+/** 脚下整行任一格实心即站着 */
+function groundUnder(cx, cy) {
+  const xl = Math.floor(cx + P.boxL), xr = Math.floor(cx + P.boxR - 0.01), y = Math.floor(cy + P.boxB + 1)
+  for (let x = xl; x <= xr; x++) if (solidAt(x, y)) return true
   return false
 }
 const HEAD = Math.round(P.boxT) - 4, FEET = Math.ceil(P.boxB) // 精灵绘制用(精灵 7×14,碰撞盒在其下半)
@@ -226,12 +247,18 @@ const debris = []    // 材质碎屑(pixelDemo 的 parts):带真材质飞出去,
 let shakeT = 0
 const projDefs = await (await fetch(`${RES}/projectiles.json`)).json()
 const PLAYER_TARGET = { isPlayer: true, name: 'player' }
+// 黑洞每次命中的伤害 = BlackHoleComponent damage_amount(component_documentation 默认 0.1,prepare 已抽进 d.blackHole.damageAmount);其余常量见 hooks.blackHole 注释(反 exe 得来)
+// 电流碰到活物一次的伤害也是引擎常量;取 wiki Damage Types 页电伤害示例 AreaDamageComponent damage_per_frame=0.4 —— 泡在电水里 10 帧一次 = 2.4/s(60 显示血/s),
+// 满血玩家 1.7s 死,和原版"电水几乎必死"的手感一致;僵尸(0.5)两下
+const ELEC_DMG = 0.4
+// 弹丸 AudioLoopComponent(event_name)→ 合成音色:黑洞 = 低沉轰鸣,场 = 中频嗡鸣,雷霆之环 = 高频滋滋;zap 是正在液体里窜的电流(game_effect/electrocution/loop)
+const PROJ_LOOPS = { black_hole_big: { vol: 0.5, freq: 70, q: 0.9 }, black_hole: { vol: 0.3, freq: 110, q: 0.9 }, field: { vol: 0.12, freq: 520, q: 3 }, field_electric: { vol: 0.2, freq: 3200, q: 1.5 }, zap: { vol: 0.3, freq: 4200, q: 1.2 } }
 const projectiles = new ProjectileSystem({
   defs: projDefs, mats, sim, res: RES, decodePng: (u) => decodePngBrowser(u),
   hooks: {
     // Noita 规则:静态材质(石头/砂岩/木头)被打碎只出"尘"——飞一下就没,不会在墙上/地上结成新像素;
-    // 沙/土/煤/液体这类本来就会动的材质,碎屑落地照旧沉积回去
-    debris: (x, y, vx, vy, m, col) => { const k = mats.kind[m]; if (debris.length < 900) debris.push({ x, y, vx, vy, m, col, dust: k === 'static' || k === 'solid' }) },
+    // 沙/土/煤/液体这类本来就会动的材质,碎屑落地照旧沉积回去;real = 原版"真粒子"(LooseGround 松脱的砖 / 石),静态材质也要落地沉积回去
+    debris: (x, y, vx, vy, m, col, real = false) => { const k = mats.kind[m]; if (debris.length < (real ? 3000 : 900)) debris.push({ x, y, vx, vy, m, col, dust: !real && (k === 'static' || k === 'solid') }) },
     shake: (t) => { shakeT = Math.max(shakeT, t) },
     sfx: (n, o) => sfx.play(n, o),
     // 命中实体(HitboxComponent)/ 爆炸伤害 → 实体层
@@ -239,8 +266,92 @@ const projectiles = new ProjectileSystem({
     hitTest: (x, y, p) => p.owner === 'enemy'
       ? (x >= player.x - 3 && x <= player.x + 3 && y >= player.y - 12 && y <= player.y + 3 ? PLAYER_TARGET : entities.hitTestBodies(x, y))
       : entities.hitTest(x, y),
-    hitEntity: (t, p, dmg) => { if (t === PLAYER_TARGET) damagePlayer(dmg, p.vx * 0.1, p.vy * 0.1 - 10, p.name); else entities.hurt(t, dmg * (p.owner === 'enemy' ? 1 : (flags.damageMul || 1) * effectMul.dmgOut), p.vx * 0.12, p.vy * 0.12 - 15, 'proj', p.x, p.y) },
-    explosion: (x, y, r, dmg) => { entities.explosion(x, y, r, dmg); const d = Math.hypot(player.x - x, player.y - 4 - y); if (d < r + 4) damagePlayer(dmg * Math.max(0.3, 1 - d / (r + 4)), (player.x - x) / Math.max(1, d) * 150, -90, 'explosion') },
+    // 击退(文档):final_knockback = knockback_force × 弹速 × 弹 mass / 目标 mass —— 目标 mass 我们没有,取 ×0.15 让 bullet(kb 1.8 / 500px/s)≈ 135 px/s;knockback_force 0 的(火花弹)不推人
+    hitEntity: (t, p, dmg) => {
+      const kb = ((p.d.knockback || 0) + (p.kbAdd || 0)) * 0.15
+      if (t === PLAYER_TARGET) { damagePlayer(dmg, p.vx * kb, p.vy * kb - (kb ? 10 : 0), p.name); return }
+      entities.hurt(t, dmg * (p.owner === 'enemy' ? 1 : (flags.damageMul || 1) * effectMul.dmgOut), p.vx * kb, p.vy * kb - (kb ? 15 : 0), 'proj', p.x, p.y)
+      // damage_game_effect_entities(修饰卡 game_effect_entities 或弹自带):命中时给目标状态
+      if (p.effects && !t.isBody && !t.dead) for (const f of p.effects) {
+        if (f === 'frozen') t.stunT = Math.max(t.stunT || 0, 120 / 60)
+        else if (f === 'electricity') { t.stunT = Math.max(t.stunT || 0, 40 / 60); for (let k = 0; k < 4 && sparks.length < 600; k++) sparks.push({ x: t.x + (Math.random() - 0.5) * 8, y: t.y - 4 + (Math.random() - 0.5) * 10, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, c: '#80c0ff', life: 0.2 }) }
+        else if (f === 'apply_on_fire') entities.ignite(t)
+      }
+    },
+    // 追踪 / 自动瞄准 / 瞬移施法 要找目标:玩家的弹找怪,怪的弹找玩家;shooter=true(homing_shooter)找射手自己
+    nearestTarget: (x, y, range, owner, { random = false, los = false, shooter = false } = {}) => {
+      if (shooter) return owner === 'player' ? { x: player.x, y: player.y - 4 } : null
+      if (owner === 'enemy') { const cy = player.y - 4; return Math.hypot(player.x - x, cy - y) <= range ? { x: player.x, y: cy } : null }
+      return entities.nearest(x, y, range, { random, los })
+    },
+    aimAngle: () => Math.atan2(player.aimY - (player.y - 2), player.aimX - player.x),
+    // TeleportProjectileComponent:玩家传到弹死的位置(reset_shooter_y_vel:y 速度归零)
+    teleport: (x, y, tp) => {
+      if (player.dead) return
+      // 落点是实心就往上找空位(min_distance_from_wall 已在弹层退过一步)
+      let ty = y; for (let k = 0; k < 24 && solidAt(Math.floor(x), Math.floor(ty)); k++) ty--
+      player.x = x; player.y = ty; player.vx = 0; if (tp.resetY) player.vy = 0
+      player.iframe = Math.max(player.iframe, 0.2)
+      for (let k = 0; k < 12 && sparks.length < 600; k++) sparks.push({ x: player.x + (Math.random() - 0.5) * 10, y: player.y - 6 + (Math.random() - 0.5) * 14, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, c: '#c080ff', life: 0.3 })
+      sfx.play('magic', { vol: 0.5, rate: 1.2, minGap: 100 }); oplog.ev('teleport_proj', { x: x | 0, y: ty | 0 })
+    },
+    // AreaDamageComponent(area_damage 修饰):每帧给 r 内的怪 dmg
+    areaDamage: (x, y, r, dmg, p) => { for (const e of entities.list) { if (e.dead || e.isBody) continue; if (Math.hypot(e.x - x, (e.y + (e.hit.t + e.hit.b) / 2) - y) <= r) entities.hurt(e, dmg, 0, 0, 'proj') } },
+    // 反 exe DamageMortals:中心在 r 内 + hitbox 能被射线够到 → 满额伤害(无衰减);击退 lerp(power) × knockback_force
+    explosion: (x, y, r, dmg, reach2, power = [0, 0.2], kb = 1) => {
+      entities.explosion(x, y, r, dmg, reach2, power, kb)
+      const cy = player.y - 4, d = Math.hypot(player.x - x, cy - y)
+      if (d <= r && Entities.los(x, y, reach2, player.x, cy, 3, 8)) { const t = 1 - d / r, f = (power[0] + (power[1] - power[0]) * t) * kb * 120; damagePlayer(dmg, (player.x - x) / Math.max(1, d) * f, -f * 0.75, 'explosion') }
+    },
+    // 场(静止之环 / 雷霆之环):半径内的怪吃 effect_frozen(120 帧)/ effect_electricity(40 帧)—— 定住;电击顺带冒蓝火花
+    areaEffect: (x, y, r, effects) => {
+      for (const e of entities.list) {
+        if (e.dead || Math.hypot(e.x - x, e.y - y) > r) continue
+        for (const f of effects) {
+          if (f === 'frozen') e.stunT = Math.max(e.stunT || 0, 120 / 60)
+          else if (f === 'electricity') { e.stunT = Math.max(e.stunT || 0, 40 / 60); for (let k = 0; k < 4; k++) if (sparks.length < 600) sparks.push({ x: e.x + (Math.random() - 0.5) * 8, y: e.y - 4 + (Math.random() - 0.5) * 10, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, c: '#80c0ff', life: 0.2 }) }
+        }
+      }
+    },
+    spark: (x, y, vx, vy, c, life) => { if (sparks.length < 600) sparks.push({ x, y, vx, vy, c, life }) },
+    // 巨大黑洞(BlackHoleComponent damage_probability 0.25 / damage_amount 0.1):圈内的怪 / 刚体 / 玩家每帧按概率吃一次伤害(玩家无视 0.5s 无敌帧,不然一秒只掉 0.5);
+    // 吸力(attr = radius × 0.25 px/s 每帧,150px 内按距离衰减)拉怪、拉玩家、拉飞着的碎屑 —— wiki:"attracts enemies",玩家 "trying to resist its pull"
+    // 反 noita_dev.exe BlackHoleSystem::Update:伤害每帧掷一次骰(rand < damage_probability)→ 半径内所有 mortal 扣 damage_amount;
+    // 吸力:±radius 方框内的实体每帧 v += attractor × 1.5 × (径向 + 切向);飞着的碎屑按粒子吸引器(范围 3R,力 attractor × 0.025)拉
+    blackHole: (x, y, r, prob, dmg, attr, dt, p) => {
+      const roll = Math.random() < prob
+      if (roll) entities.blackHole(x, y, r, dmg)
+      entities.attract(x, y, r, attr, dt)
+      const f60 = dt * 60
+      if (!player.dead) {
+        const dx = x - player.x, dy = y - (player.y - 4), d = Math.hypot(dx, dy)
+        if (roll && d <= r + 3) damagePlayer(dmg, 0, 0, 'black_hole')
+        if (Math.abs(dx) <= r && Math.abs(dy) <= r && d > 0.5) { const f = attr * 1.5 * f60, rx = dx / d, ry = dy / d; player.vx += (rx - ry) * f; player.vy += (ry + rx) * f; player.pullT = 0.1 }
+      }
+      const a = attr * 12 * dt, range = r * 3
+      for (const q of debris) { const dx = x - q.x, dy = y - q.y, d = Math.hypot(dx, dy); if (d < range && d > 0.5) { q.vx += (dx / d) * a; q.vy += (dy / d) * a } }
+    },
+    // black_hole_gravity.lua:150px 内的刚体每帧 v += coeff × (1 − d/150) 朝黑洞(coeff 已 ×0.2);玩家 / 怪不是刚体,原版不吸(用户也要求自己别被吸进去)
+    pull: (x, y, dist, coeff, dt) => entities.pull(x, y, dist, coeff, dt),
+    // 电流走过的格(cells = [x,y,x,y,…]):碰到谁谁被电 —— 怪 / 玩家 都算(电水不认人),每个目标 10 帧最多电一次:
+    //   ELECTROCUTION 40 帧定身(effect_electricity.xml)+ 电伤害 ELEC_DMG;玩家吃电不走 0.5s 无敌帧(wiki:湿身时电击没有无敌帧,泡在水里必然是湿的)
+    shock: (cells) => {
+      const now = performance.now()
+      for (let i = 0; i < cells.length; i += 2) {
+        const x = cells[i], y = cells[i + 1]
+        const e = entities.hitTest(x, y)
+        if (e && !e.dead && !(e.shockAt > now - 167)) {
+          e.shockAt = now; e.stunT = Math.max(e.stunT || 0, 40 / 60)
+          entities.hurt(e, ELEC_DMG, 0, 0, 'electricity', x, y)
+          for (let k = 0; k < 6 && sparks.length < 600; k++) sparks.push({ x: e.x + (Math.random() - 0.5) * 8, y: e.y - 4 + (Math.random() - 0.5) * 10, vx: (Math.random() - 0.5) * 80, vy: (Math.random() - 0.5) * 80, c: Math.random() < 0.5 ? '#ffffff' : '#80c0ff', life: 0.25 })
+        }
+        if (!player.dead && !(player.shockAt > now - 167) && x >= player.x - 3 && x <= player.x + 3 && y >= player.y - 12 && y <= player.y + 3) {
+          player.shockAt = now; player.stunT = Math.max(player.stunT || 0, 40 / 60)
+          damagePlayer(ELEC_DMG, 0, 0, 'electricity')
+          for (let k = 0; k < 6 && sparks.length < 600; k++) sparks.push({ x: player.x + (Math.random() - 0.5) * 6, y: player.y - 6 + (Math.random() - 0.5) * 10, vx: (Math.random() - 0.5) * 80, vy: (Math.random() - 0.5) * 80, c: Math.random() < 0.5 ? '#ffffff' : '#80c0ff', life: 0.25 })
+        }
+      }
+    },
   },
 })
 // ── 实体层(敌人 / 动物):定义 entities.json,生成点由 Worker 按 lua 掷骰挂在 chunk.spawns ──
@@ -248,8 +359,10 @@ entities = await new Entities({
   res: RES, decodePng: decodePngBrowser, mats, sim, matAt, player, projectiles, seed: SEED,
   hooks: {
     // 血 / 油落地留下(真材质);箱子木屑 / 石块碎片(box2d 材质)是尘,飞一下就散
-    debris: (x, y, vx, vy, m, col) => { const k = mats.kind[m]; if (debris.length < 900) debris.push({ x, y, vx, vy, m, col, dust: k === 'static' || k === 'solid' }) },
+    debris: (x, y, vx, vy, m, col, real = false) => { const k = mats.kind[m]; if (debris.length < (real ? 3000 : 900)) debris.push({ x, y, vx, vy, m, col, dust: !real && (k === 'static' || k === 'solid') }) },
     sfx: (n, o) => sfx.play(n, o),
+    shake: (t) => { shakeT = Math.max(shakeT, t) },
+    glint: (x, y, life) => shine('08', x, y, { life }),
     damagePlayer: (dmg, ix, iy, src) => damagePlayer(dmg, ix, iy, src?.name || 'melee'),
     onDeath: (e) => {
       player.kills++; oplog.ev('kill', { e: e.name, x: e.x | 0, y: e.y | 0 })
@@ -262,16 +375,16 @@ entities = await new Entities({
       if (b.shop) {
         const cost = flags.shopFree ? 0 : b.shop.cost
         if (player.gold < cost) { b.dead = false; b.pickCool = 0.8; sfx.play('clash', { vol: 0.15, rate: 2.2, minGap: 400 }); return }
-        if (b.wand && player.wands.length >= (flags.wandSlots || 4)) { b.dead = false; b.pickCool = 1; return }
+        if (b.wand && player.wands.length >= (flags.wandSlots || 4) && !(FREE && player.wands.some((x) => !x.debug && !x.cards.length))) { b.dead = false; b.pickCool = 1; return }
         player.gold -= cost
         oplog.ev('buy', { what: b.shop.spell || b.wand?.key, cost: b.shop.cost, gold: player.gold })
         if (b.shop.spell) { player.spells.push(b.shop.spell); sfx.play('magic', { vol: 0.5, rate: 1.2 }); return }
       }
-      if (b.wand) { if (!pickWand(b.wand)) { b.dead = false; b.pickCool = 1; toast('法杖背包满了(4 根)') } else tut.show('wand'); return } // 背包满:留在地上
+      if (b.wand) { if (!pickWand(b.wand)) { b.dead = false; b.pickCool = 1; toast(FREE ? `法杖 ${flags.wandSlots} 根都装了卡,没空杖可换(背包里取空一根再捡)` : '法杖背包满了(4 根)') } else tut.show('wand'); return } // 背包满:留在地上
       if (b.spell) { player.spells.push(b.spell); sfx.play('magic', { vol: 0.5, rate: 1.2 }); oplog.ev('pick_spell', { id: b.spell }); tut.show('spell'); return } // 散卡(工具箱掉的 / 偷来的商店卡)
       if (b.name === 'utility_box') { entities.openUtilityBox(b); oplog.ev('utility_box', { x: b.x | 0, y: b.y | 0 }); return }
       if (b.perk) { pickPerk(b); return }
-      if (b.name === 'heart_fullhp_temple') { player.hp = player.maxHp; sfx.play('magic', { vol: 0.6, rate: 0.9 }); oplog.ev('fullhp', {}); return } // 圣山回满血
+      if (b.name === 'heart_fullhp_temple') { player.hp = player.maxHp; player.hpGrowT = 1.2; sfx.play('magic', { vol: 0.6, rate: 0.9 }); heartBurst(b.x, b.y - 12); printImportant('生命回满!', `${Math.round(player.maxHp * 25)} / ${Math.round(player.maxHp * 25)}`); oplog.ev('fullhp', {}); return } // 圣山回满血(heart_fullhp:heal_entity 到满 + 同一套心形特效)
       if (b.name === 'perk_reroll') {
         // 特权重掷机(perk_reroll.xml ItemCostComponent 400,每用一次翻倍):钱够 → 把摆着的特权全换一批(牌堆从尾往前发),机器留在原地
         const cost = perks.rerollCost()
@@ -288,10 +401,18 @@ entities = await new Entities({
       }
       if (b.potion) { if (player.items.length >= (flags.itemSlots || 4)) { b.dead = false; b.pickCool = 1; return } player.items.push({ potion: b.potion, name: '药水·' + (mats.list[mats.byName.get(b.potion.mat)]?.name || b.potion.mat) }); sfx.play('magic', { vol: 0.4, rate: 1.3 }); oplog.ev('pick_potion', { mat: b.potion.mat }); tut.show('potion'); return }
       if (b.name === 'chest_random') { entities.openChest(b); oplog.ev('chest', { x: b.x | 0, y: b.y | 0 }); return }
-      if (b.name === 'heart') { const add = flags.heartMul || 1; if (!flags.hpCap) player.maxHp += add; player.hp = Math.min(player.maxHp, player.hp + add); sfx.play('magic', { vol: 0.6, rate: 0.9 }); oplog.ev('heart', { maxHp: player.maxHp }); return } // heart.xml:+25 最大生命并回 25(HEARTS_MORE_EXTRA_HP 加倍;GLASS_CANNON 封顶)
-      if (b.name === 'spell_refresh') { for (const w of player.wands) if (!w.debug) wands.refresh(w); sfx.play('magic', { vol: 0.5, rate: 1.5 }); toast('法术刷新:所有法杖法力回满,有限次数的法术(炸弹等)补满', 5); return }
+      if (b.name === 'heart') {
+        // heart.lua:max_hp += 1×HEARTS_MORE_EXTRA_HP(封顶 max_hp_cap),引擎把加的量也补进 hp;heart_effect.xml 红火花描一颗心 + heart_out 动画;GamePrintImportant $log_heart
+        const add = flags.heartMul || 1, capped = !!flags.hpCap
+        if (!capped) player.maxHp += add
+        player.hp = Math.min(player.maxHp, player.hp + add); player.hpGrowT = 1.2
+        sfx.play('magic', { vol: 0.6, rate: 0.9 }); heartBurst(b.x, b.y - 12)
+        printImportant('最大生命提升!', capped ? `最大生命已封顶(${Math.round(player.maxHp * 25)})` : `你的最大生命现在是 ${Math.round(player.maxHp * 25)}`)
+        oplog.ev('heart', { maxHp: player.maxHp }); return
+      }
+      if (b.name === 'spell_refresh') { for (const w of player.wands) if (!w.debug) wands.refresh(w); sfx.play('magic', { vol: 0.5, rate: 1.5 }); shine('06', b.x, b.y - 6, { life: 0.56 }); for (let k = 0; k < 10; k++) shine('08', b.x, b.y - 6, { life: 0.2 + Math.random() * 0.4, vx: (Math.random() - 0.5) * 120, vy: (Math.random() - 0.5) * 120 }); printImportant('法术刷新!', '所有法杖法力回满,有限次数的法术补满'); player.manaFlashT = 1; return }
       player.gold += Math.round((b.gold || 0) * (flags.goldMul || 1)); sfx.play('magic', { vol: 0.35, rate: 1.6 + Math.random() * 0.3, minGap: 60 }); oplog.ev('gold', { v: b.gold, total: player.gold })
-      if (b.gold) tut.show('gold')
+      if (b.gold) { goldBurst(b.x, b.y, b.gold); tut.show('gold') }
     },
     // 煤矿祭坛的法杖(wand_001~017 固定数值 + level_1_wand.lua 掷卡 / wand_level_01 随机)→ 造好放在祭坛上
     spawnWand: (key, x, y) => { const w = wands.make(key, x, y); if (w) entities.spawnWandItem(w.def.sprite, x, y - 2, w) },
@@ -299,7 +420,7 @@ entities = await new Entities({
     ghostWand: (key, x, y) => { const w = wands.make(key, x, y); return w ? { image: w.def.sprite, wand: w } : null },
     dropWand: (w, x, y) => entities.spawnWandItem(w.def.sprite, x, y, w),
     // utility_box.lua make_random_utility_card:在全部法术里随机抽,直到抽到 UTILITY / MODIFIER 且没上锁(spawn_requires_flag)的
-    utilityCard: () => { const all = Object.values(wands.spells).filter((s) => (s.type === 'UTILITY' || s.type === 'MODIFIER') && !s.flag && s.icon); const s = all[Math.floor(Math.random() * all.length)]; return s ? { id: s.id, icon: s.icon } : null },
+    utilityCard: () => { const all = Object.values(wands.spells).filter((s) => (s.type === 'UTILITY' || s.type === 'MODIFIER') && (!s.flag || wands.allUnlocked) && s.icon); const s = all[Math.floor(Math.random() * all.length)]; return s ? { id: s.id, icon: s.icon } : null },
     // 圣山:商店货(generate_shop_item / generate_shop_wand 掷法术与标价)、特权祭坛、传送门
     spawnSpecial: (s) => {
       const area = () => guard.areas.find((a) => s.x >= a.x0 && s.x <= a.x1 && s.y >= a.y0 && s.y <= a.y1) || null // shop_hitbox:出了这个框 = 偷
@@ -317,6 +438,10 @@ entities = await new Entities({
     },
   },
 }).init()
+// 区块被 LRU 卸载 → 收掉里面的怪;回来时 spawnChunk 按生成表重刷(原版卸载区块也不保留活物)
+// 实心植被(树 / 大蘑菇):像素在材质里,这里只管 SimplePhysics 整株下落
+const veg = new Vegetation({ sim, mats, streamer, decodePng: decodePngBrowser, res: RES })
+streamer.onEvict = (entry) => { entities.unloadChunk(entry); veg.unloadChunk(entry) }
 const temple = {} // 特权 / 传送门在下面挂上
 // ── 特权(perk.lua):牌堆 SetRandomSeed(1,2) 全世界一份,每座圣山按 TEMPLE_NEXT_PERK_INDEX 顺着发 3 个,拿一个其余消失 ──
 const perks = await new PerkSystem({ res: RES, seed: SEED }).init()
@@ -388,7 +513,6 @@ const collapsed = new Set() // 已崩的出口 "x,y"(存档)
 const collapses = [] // 进行中:{ cx, cy, t, spawned, curse:[aabb], curseT }
 temple.exits = []
 temple.exit = (x, y) => temple.exits.push({ x, y })
-const isTempleBrick = (m) => m > 0 && KIND[m] === 'static' && /^temple/.test(mats.list[m]?.name || '')
 /** 写一格材质:模拟窗口内走 sim(自动重画),窗口外直接改 chunk.mat 并排重画 */
 function setCell(x, y, m) {
   if (simBound && sim.get(x, y) >= 0) { sim.set(x, y, m, 0); return true }
@@ -401,7 +525,7 @@ function setCell(x, y, m) {
 function startCollapse(ex, ey) {
   collapsed.add(ex + ',' + ey)
   const cx = ex - 144, cy = ey + 70 // workshop_collapse 落点 (x−144, y+82) 的 loose_chunks (·, y−12)
-  collapses.push({ cx, cy, t: 0, spawned: 0, next: 1.0, curseT: 1240 / 60, curse: [[ex - 143 - 391, ey + 47 - 99, ex - 143 + 63, ey + 47 + 78], [ex - 543 - 391, ey + 47 - 99, ex - 543 + 63, ey + 47 + 78]] })
+  collapses.push({ cx, cy, t: 0, spawned: 0, life: (320 + (Math.random() * 100 - 50)) / 60, curseT: 1240 / 60, curse: [[ex - 143 - 391, ey + 47 - 99, ex - 143 + 63, ey + 47 + 78], [ex - 543 - 391, ey + 47 - 99, ex - 543 + 63, ey + 47 + 78]] })
   shakeT = Math.max(shakeT, 0.7)
   // 魔法符号(magical_symbol 粒子):紫色一圈
   for (let k = 0; k < 60 && sparks.length < 600; k++) { const a = (k / 60) * 6.283; sparks.push({ x: cx + Math.cos(a) * 20, y: cy - 58 + Math.sin(a) * 20, vx: Math.cos(a) * 30, vy: Math.sin(a) * 30 - 20, c: k & 1 ? '#c080ff' : '#ffffff', life: 0.9 }) }
@@ -411,25 +535,36 @@ function startCollapse(ex, ey) {
   toast('圣山在你身后崩塌了 —— 众神的诅咒:别再回去', 8)
   oplog.ev('collapse', { x: ex | 0, y: ey | 0 })
 }
-/** 一块松脱的地面:以 (x,y) 为中心、半径 r 的不规则团里所有圣山砖 → 抠掉,变 concrete_collapsed 刚体落下 */
-function looseChunk(x, y, r) {
-  const R = Math.ceil(r + 3), w = R * 2 + 1, h = w
-  const mask = new Uint8Array(w * h), colors = new Uint32Array(w * h)
-  const seedA = Math.random() * 6.283, k1 = 2 + Math.floor(Math.random() * 2), k2 = 3 + Math.floor(Math.random() * 3), a1 = Math.random() * 0.3 + 0.15, a2 = Math.random() * 0.2 + 0.1
+/**
+ * LooseGroundComponent 的 box2d 块(chunk_probability):形状取 procedural_gfx/collapse_big/0~14.png 之一(2×8 到 47×33 的不规则块),
+ * 盖在射线打到的顶上,图里有像素且那格是静态地面的 → 抠掉,变 chunk_material = concrete_collapsed 的刚体(灰色 brick 纹理,不是砖色 —— 原版塌下来的是灰混凝土块)。
+ * concrete_collapsed 材质:solid_on_collision_explode=1(砸到东西按它的 ExplosionConfig 炸一下:r4~20、震镜 15、concrete_sand 火花)、solid_on_sleep_convert=1 → 睡着变 concrete_static。
+ */
+const COLLAPSE_IMGS = []
+for (let i = 0; i < 15; i++) decodePngBrowser(`${RES}/ent/collapse_big/${i}.png`).then((im) => { COLLAPSE_IMGS.push(im) }).catch(() => {})
+function looseChunk(x, y) {
+  if (!COLLAPSE_IMGS.length) return null
+  const img = COLLAPSE_IMGS[(Math.random() * COLLAPSE_IMGS.length) | 0], w = img.width, h = img.height
+  const mask = new Uint8Array(w * h)
+  const x0 = Math.floor(x - w / 2), y0 = Math.floor(y - h / 2)
   let n = 0
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-    const dx = i - R, dy = j - R, d = Math.hypot(dx, dy), a = Math.atan2(dy, dx)
-    const rr = r * (1 + a1 * Math.sin(k1 * a + seedA) + a2 * Math.cos(k2 * a - seedA))
-    if (d > rr) continue
-    const m = matAt(x - R + i, y - R + j)
-    if (!isTempleBrick(m)) continue
-    mask[j * w + i] = 1; colors[j * w + i] = mats.color[m]; n++
+    if (img.data[(j * w + i) * 4 + 3] < 128) continue
+    const m = matAt(x0 + i, y0 + j)
+    if (!(m > 0 && KIND[m] === 'static')) continue
+    mask[j * w + i] = 1; n++
   }
-  if (n < 30) return null
-  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (mask[j * w + i]) setCell(x - R + i, y - R + j, 0)
-  const b = entities.spawnLooseChunk(x + 0.5, y + 0.5, w, h, mask, colors)
-  if (b) { b.vy = 10 + Math.random() * 20; b.w = (Math.random() - 0.5) * 2 }
+  if (n < 12) return null
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (mask[j * w + i]) setCell(x0 + i, y0 + j, 0)
+  const b = entities.spawnLooseChunk(x0 + w / 2, y0 + h / 2, w, h, mask, null, 'concrete_collapsed')
+  if (b) { b.vy = 10 + Math.random() * 20; b.w = (Math.random() - 0.5) * 2; b.collideExplode = true; b.sleepConvert = mats.byName.get('concrete_static') }
   return b
+}
+/** LooseGround 的射线:从 (cx,cy) 绕上方向 ±maxAngle 射 ≤180px,返回打到的第一块静态地面 */
+function looseRay(cx, cy, maxAngle) {
+  const a = -Math.PI / 2 + (Math.random() * 2 - 1) * maxAngle, ca = Math.cos(a), sa = Math.sin(a)
+  for (let t = 1; t <= 180; t++) { const x = Math.floor(cx + ca * t), y = Math.floor(cy + sa * t), m = matAt(x, y); if (m < 0) return null; if (m > 0 && KIND[m] === 'static') return [x, y] }
+  return null
 }
 function updateCollapse(dt) {
   // 踩到出口触发器(52×52,只认玩家)
@@ -442,18 +577,13 @@ function updateCollapse(dt) {
     c.t += dt
     if (c.t >= 0.67 && !c.shook1) { c.shook1 = true; shakeT = Math.max(shakeT, 0.7); for (const b of entities.bodies) if (b.nailed && !b.motor && Math.abs(b.x - c.cx) < 80 && Math.abs(b.y - c.cy) < 80) { b.nailed = false; b.restT = 0 } } // PhysicsRemoveJoints
     if (c.t >= 1.0 && !c.shook2) { c.shook2 = true; shakeT = Math.max(shakeT, 0.9); sfx.play('explosion', { vol: 0.9, rate: 0.4 }) }
-    // 松脱:1.0s 起 2.5s 内掉 44 块(半径 180 圆内随机点,偏顶部 / 两侧;打在砖上才成块)
-    while (c.t >= c.next && c.spawned < 44) {
-      c.next += 2.5 / 44
-      let ok = false
-      for (let tries = 0; tries < 12 && !ok; tries++) {
-        const a = Math.random() * 6.283, d = Math.sqrt(Math.random()) * 180
-        const x = Math.floor(c.cx + Math.cos(a) * d), y = Math.floor(c.cy + Math.sin(a) * d * 0.8)
-        if (!isTempleBrick(matAt(x, y))) continue
-        if (looseChunk(x, y, 9 + Math.random() * 10)) { ok = true; c.spawned++; if (Math.random() < 0.3) sfx.play('impact', { vol: 0.5, rate: 0.6 + Math.random() * 0.3, minGap: 80 }) }
-      }
-      c.miss = ok ? 0 : (c.miss || 0) + 1
-      if (c.miss > 30) c.spawned = 44 // 周围没砖可掉了就算完
+    // loose_chunks_workshop.xml(1.0s 时 EntityLoad,LifetimeComponent 320±50 帧):LooseGroundComponent 每帧
+    //   probability 0.25 → 绕上方向 ±2.1 rad 射一条 ≤180px 的线,打到的地面 3~8px 一团松脱成同材质的飞行像素(落地堆成砖色的渣);
+    //   chunk_probability 0.15 → 绕上方向 ±0.7 rad(只打顶)射线,打到的顶按 collapse_big 形状抠一块 concrete_collapsed 灰混凝土刚体掉下来(砸地炸一下,睡着变 concrete_static)
+    if (c.t >= 1.0 && c.t < 1.0 + c.life && simBound) {
+      const f60 = dt * 60
+      if (Math.random() < 0.25 * f60) projectiles._loosen(c.cx, c.cy, { prob: 1, maxAngle: 2.1, maxDist: 180, minR: 3, maxR: 8, particles: true }, 1)
+      if (Math.random() < 0.15 * f60) { const hit = looseRay(c.cx, c.cy, 0.7); if (hit && looseChunk(hit[0], hit[1])) { c.spawned++; if (Math.random() < 0.5) sfx.play('impact', { vol: 0.5, rate: 0.6 + Math.random() * 0.3, minGap: 80 }) } }
     }
     // 神山诅咒:留在两块区域里掉血 + 红火星
     if (c.curseT > 0) {
@@ -466,7 +596,7 @@ function updateCollapse(dt) {
       }
       for (let k = 0; k < 3 && sparks.length < 600; k++) { const [x0, y0, x1, y1] = c.curse[k & 1]; const x = x0 + Math.random() * (x1 - x0), y = y0 + Math.random() * (y1 - y0); if (Math.abs(x - cam.x) < VW && Math.abs(y - cam.y) < VH) sparks.push({ x, y, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, c: '#ff3030', life: 0.5 + Math.random() * 1.5 }) }
     }
-    if (c.spawned >= 44 && c.curseT <= 0) collapses.splice(i, 1)
+    if (c.t >= 1.0 + c.life && c.curseT <= 0) collapses.splice(i, 1)
   }
 }
 // ── 圣山入口:顶部漏斗底的传送门(altar_top.png 0xbf26a6 → teleport_liquid_powered.xml)──
@@ -546,16 +676,58 @@ function stainKindOf(m) {
   if (t.includes('[blood]')) return 'BLOODY'
   return 'WET'
 }
-/** 着火(DamageModel fire_probability_of_ignition=1):4s,每 0.5s 扣 fire_damage_amount 0.2,身上往外冒火;进水 / 湿了就灭 */
+// ── GamePrintImportant(原版捡心 / 法术刷新 / 拿特权:屏幕中上方一行大字 + 一行说明,几秒淡出;heart.lua:"$log_heart" / "$logdesc_heart"(你的最大生命现在是 N))──
+let importantT = 0
+function printImportant(title, desc = '') {
+  const el = $('important'); el.firstElementChild.textContent = title; el.lastElementChild.textContent = desc
+  el.classList.add('on'); importantT = 3.5
+}
+// ── 闪光精灵粒子(particles/shine_08.xml 5×5×6 帧 0.09s 循环;shine_06.xml 13×13×8 帧 0.08s):金块的 SpriteParticleEmitter 用它 ──
+const SHINE = { '08': { fw: 5, fh: 5, frames: 6, wait: 0.09, off: 2.5 }, '06': { fw: 13, fh: 13, frames: 8, wait: 0.08, off: 6.5 } }
+for (const k of Object.keys(SHINE)) decodePngBrowser(`${RES}/proj/particles_shine_${k}.png`).then((im) => { SHINE[k].img = im }).catch(() => {})
+function shine(kind, x, y, { life = 0.3, vx = 0, vy = 0, slow = 6, emissive = false } = {}) {
+  const s = SHINE[kind]
+  if (!s?.img) return
+  projectiles.anims.push({ img: s.img, fw: s.fw, fh: s.fh, frames: s.frames, wait: s.wait * (0.667 + Math.random() * 0.333), loop: true, life, x, y, vx, vy, slow, angle: Math.random() * Math.PI * 2, offX: s.off, offY: s.off, t: 0, additive: true })
+}
+/** 捡金特效(gold_pickup.lua → particles/gold_pickup(_large/_huge).xml):6 帧内每帧一颗 shine_08 朝 ±50 飞出并减速,外加一颗 shine_06 的大闪(0.56s);>40 金 / >500 金的版本更多更大 */
+function goldBurst(x, y, value) {
+  const n = value > 500 ? 18 : value > 40 ? 10 : 6, sp = value > 500 ? 90 : value > 40 ? 70 : 50
+  for (let i = 0; i < n; i++) shine('08', x + (Math.random() - 0.5) * 2, y + (Math.random() - 0.5) * 2, { life: 0.1 + Math.random() * 0.4, vx: (Math.random() - 0.5) * 2 * sp, vy: (Math.random() - 0.5) * 2 * sp })
+  shine('06', x + (Math.random() - 0.5) * 4, y + (Math.random() - 0.5) * 4, { life: 0.56, vx: (Math.random() - 0.5) * 20, vy: (Math.random() - 0.5) * 20, emissive: true })
+}
+/**
+ * 捡心特效(particles/image_emitters/heart_effect.xml):spark_red 沿 heart_effect.png 的心形从中心往外描(image_animation_raytrace_from_center,
+ * 速度 5、每帧 8 颗、寿命 8~15 帧、按寿命淡出),这里用心形曲线代替描图:0.5s 内分批往外飞出一颗 ~24px 的红心
+ */
+function heartBurst(x, y) {
+  const N = 72
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2
+    // 心形参数方程(缩到 ±12px)
+    const hx = 16 * Math.sin(t) ** 3, hy = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t))
+    const r = Math.hypot(hx, hy) * 0.75, ang = Math.atan2(hy, hx)
+    const SPEED = 40, reach = r / SPEED // 从中心以同一速度往外飞,到心形轮廓就停(离中心越远越晚到)
+    sparks.push({ x, y, vx: Math.cos(ang) * SPEED, vy: Math.sin(ang) * SPEED, c: i & 1 ? '#ff4060' : '#ff8090', life: reach + 0.2 + Math.random() * 0.12, stopAt: reach })
+  }
+}
+const FIRE_PROTECT = new Set(['WET', 'BLOODY', 'SLIMY', 'RADIOACTIVE']) // status_list.lua protects_from_fire=true(OILED 表里也是 true,但实际是"更易燃、烧更久",按 wiki 处理)
+/**
+ * 着火(DamageModel fire_probability_of_ignition=1):碰到火时先看身上的沾污 —— 防火沾污被火烤掉(updateWet 里每秒 4 成),烤光才点着;
+ * 点着后 mFireDurationFrames:4s(OILED ×3,"烧得久得多"),每 0.5s 一跳伤害 = 2% 最大血(wiki:2% of max HP per second),泡进任何液体立刻灭
+ */
 function ignitePlayer() {
-  if (player.fireT > 0 || (player.wet > 0 && player.stain === 'WET') || flags.protFire) return
-  player.fireT = 4; player.fireTick = 0
+  if (player.fireT > 0 || flags.protFire) return
+  if (player.wet > 0 && FIRE_PROTECT.has(player.stain)) return
+  player.fireDur = player.stain === 'OILED' && player.wet > 0 ? 12 : 4
+  player.fireT = player.fireDur; player.fireTick = 0
   sfx.play('fire', { vol: 0.5, rate: 1.2, minGap: 200 })
   oplog.ev('ignite', { x: player.x | 0, y: player.y | 0 })
 }
 /** 玩家掉血(DamageModel):0.5s 无敌帧;死了回出生点(先这么处理,死亡画面后补) */
 function damagePlayer(dmg, ix = 0, iy = 0, src = '') {
-  if (player.iframe > 0 || dmg <= 0) return
+  const noIframe = src === 'black_hole' || src === 'electricity' // 黑洞是每帧按概率的持续伤害;电击(湿身)原版也没有无敌帧 —— 都不吃 0.5s 无敌
+  if ((player.iframe > 0 && !noIframe) || dmg <= 0) return
   // 特权免伤:PROTECTION_MELEE / PROTECTION_EXPLOSION / PROTECTION_FIRE / PROTECTION_RADIOACTIVITY
   if ((flags.protMelee && src === 'melee') || (flags.protExplosion && src === 'explosion') || (flags.protFire && src === 'fire') || (flags.protRadioactive && /radioactive/.test(src))) return
   dmg *= effectMul.dmgIn // 喝了无敌药 0 / 虚弱药 ×2
@@ -563,9 +735,10 @@ function damagePlayer(dmg, ix = 0, iy = 0, src = '') {
   if (flags.savingGrace && player.hp - dmg <= 0 && player.hp > 1 / 25) { flags.savingGrace--; dmg = player.hp - 1 / 25; toast('特权:垂死一搏 —— 保住了 1 点血') } // SAVING_GRACE:致命一击留 1 血,用一次
   player.hp -= dmg
   player.vx += ix; player.vy += iy
-  player.iframe = 0.5; player.hurtFlash = 0.25
+  if (!noIframe) player.iframe = 0.5
+  player.hurtFlash = 0.25
   shakeT = Math.max(shakeT, 0.15)
-  sfx.play('clash', { vol: 0.5, rate: 1.1, minGap: 80 })
+  sfx.play(src === 'electricity' ? 'electric' : 'clash', { vol: 0.5, rate: 1.1, minGap: noIframe ? 300 : 80 })
   oplog.ev('hurt', { dmg: +dmg.toFixed(3), src, hp: +player.hp.toFixed(2) })
   if (player.hp <= 0) {
     oplog.ev('death', { x: player.x | 0, y: player.y | 0, src }); oplog.flush('death')
@@ -575,7 +748,7 @@ function damagePlayer(dmg, ix = 0, iy = 0, src = '') {
   }
 }
 // ── 死亡画面:停掉玩家,显示这一局(深度 / 金 / 击杀 / 死因),"回出生点"保留身上东西继续,"重开一局"刷新 ──
-const DEATH_SRC = { melee: '被近战打死', explosion: '被炸死', fire: '烧死', drown: '淹死', acid: '被酸腐蚀', lava: '被熔岩烧死' }
+const DEATH_SRC = { melee: '被近战打死', explosion: '被炸死', fire: '烧死', drown: '淹死', acid: '被酸腐蚀', lava: '被熔岩烧死', black_hole: '被黑洞吞了', electricity: '被电死' }
 function showDeath(src) {
   player.dead = true; player.hp = 0
   $('deathInfo').textContent = `死因:${DEATH_SRC[src] || src || '未知'} · 深度 ${Math.max(0, player.y | 0)} · 金 ${player.gold} · 击杀 ${player.kills} · 特权 ${player.perks.length}`
@@ -583,13 +756,26 @@ function showDeath(src) {
   sfx.play('clash', { vol: 0.8, rate: 0.6 })
   saveGame('death')
 }
-function respawn() {
-  player.dead = false; player.hp = player.maxHp; player.air = 7; player.fireT = 0; player.wet = 0; player.iframe = 1.5
+/**
+ * 回出生点 = 原版的"新一局":Noita 死亡后世界整个重新生成(没有"接着上一局的地形"这回事),上一局炸开的坑 / 还在烧的火 / 连锁反应全没了。
+ * 我们保留身上的东西(法杖 / 特权 / 金 —— 手机自由模式要的),但世界重置:清掉本种子的地形存档(IndexedDB)+ 圣山崩塌 / 守卫状态,然后整页重载,
+ * 材质模拟 / 实体 / 弹丸全部从零起。不整页重载的话 streamer / sim / entities 里的旧 chunk 引用清不干净。
+ */
+let respawning = false
+async function respawn() {
+  if (respawning) return
+  respawning = true
+  player.dead = false; player.hp = player.maxHp; player.air = 7; player.fireT = 0; player.wet = 0; player.stain = ''; player.iframe = 1.5
   player.x = 227; player.y = -120; player.vx = 0; player.vy = 0; player.fly = P.flyTimeMax
   cam.x = player.x; cam.y = player.y
+  collapsed.clear(); guard.angered = false; guard.deaths = 0
   $('death').classList.remove('on')
-  oplog.ev('respawn', {})
-  saveGame('respawn')
+  $('deathInfo').textContent = '重新生成世界…'
+  oplog.ev('respawn', { worldReset: true })
+  lastSave = ''; saveGame('respawn')
+  streamer.store = null // 别让卸载 / flush 把上一局的脏 chunk 又写回去
+  try { if (store) await store.clear(SEED) } catch (err) { console.warn('store.clear', err) }
+  location.reload()
 }
 $('btnRespawn').addEventListener('click', (e) => { e.stopPropagation(); respawn() })
 $('btnRestart').addEventListener('click', (e) => { e.stopPropagation(); clearSave(); location.replace(location.pathname + location.search.replace(/[?&]new=1/, '')) })
@@ -639,6 +825,7 @@ const sky = await new ParallaxSky(RES, decodePngBrowser, { phase: Q.has('tod') ?
 // ── 真法杖(gun.lua 施法模型):开局 Bolt staff + Bomb wand(player.xml),煤矿祭坛捡到的加进背包(最多 4 根)──
 // ?debugwands=1 用上面那张每弹一根的测试表
 const wands = await new WandSystem({ res: RES, seed: SEED, projectiles }).init()
+wands.infinite = FREE; wands.allUnlocked = FREE
 const DEBUG_WANDS = Q.get('debugwands') === '1'
 WANDS.forEach((w, i) => { w.wandIdx = [6, 1, 12, 20, 33, 3, 9, 41, 14, 15, 27, 2, 50, 61, 17, 44, 55, 38, 70, 22, 23, 8, 31, 66, 47, 73, 60, 80][i] ?? (i * 7); w.debug = true })
 player.wands = DEBUG_WANDS ? WANDS : [wands.make('starting_wand', 227, -120), wands.make('starting_bomb_wand', 227, -120)]
@@ -680,7 +867,7 @@ function loadGame() {
   for (const sw of s.wands || []) {
     const w = wands.make(sw.key, sw.x, sw.y) || wands.make('starting_wand', 227, -120)
     if (!w) continue
-    Object.assign(w, { name: sw.name, cards: sw.cards || [], uses: sw.uses || {}, deckCapacity: sw.deckCapacity, actionsPerRound: sw.actionsPerRound, reloadTime: sw.reloadTime, shuffle: sw.shuffle, fireRateWait: sw.fireRateWait, spread: sw.spread, speedMul: sw.speedMul, manaMax: sw.manaMax, manaCharge: sw.manaCharge, mana: sw.mana ?? sw.manaMax })
+    Object.assign(w, { name: sw.name, cards: sw.cards || [], uses: sw.uses || {}, deckCapacity: FREE ? Math.max(FREE_CAPACITY, sw.deckCapacity || 0) : sw.deckCapacity, actionsPerRound: sw.actionsPerRound, reloadTime: sw.reloadTime, shuffle: sw.shuffle, fireRateWait: sw.fireRateWait, spread: sw.spread, speedMul: sw.speedMul, manaMax: sw.manaMax, manaCharge: sw.manaCharge, mana: sw.mana ?? sw.manaMax })
     w.deck = w.cards.slice(); w.reloadT = 0
     ws.push(w)
   }
@@ -746,7 +933,7 @@ function renderSlots() {
   }
   // 法力条实时
   const els = slotsEl.children
-  for (let i = 0; i < s.length && i < els.length; i++) { const w = s[i], m = els[i].firstElementChild; if (!m) continue; m.style.transform = `scaleX(${w.potion ? Math.min(1, w.potion.left / 1000) : w.debug ? 1 : Math.max(0, w.mana / w.manaMax)})`; m.style.background = w.potion ? '#a0e0ff' : w.reloadT > 0 ? '#e0a040' : '#7fd4ff' }
+  for (let i = 0; i < s.length && i < els.length; i++) { const w = s[i], m = els[i].firstElementChild; if (!m) continue; m.style.transform = `scaleX(${w.potion ? Math.min(1, w.potion.left / 1000) : w.debug ? 1 : Math.max(0, w.mana / w.manaMax)})`; m.style.background = w.potion ? '#a0e0ff' : w.reloadT > 0 ? '#e0a040' : player.manaFlashT > 0 && (player.manaFlashT * 8 | 0) % 2 ? '#ffffff' : '#7fd4ff' } // 法术刷新后法力条闪白
 }
 let wandTip = { x: 0, y: 0 }
 function fire() {
@@ -768,7 +955,9 @@ function fire() {
     player.fireCd = w.cd
     return
   }
-  const r = wands.cast(w, a, (name, off, sm) => projectiles.spawn(name, wandTip.x, wandTip.y, a + off, { speedMul: sm }))
+  const r = wands.cast(w, a, (name, off, c, payload) => projectiles.spawn(name, wandTip.x, wandTip.y, a + off, { c, payload }))
+  // shot_effects.recoil_knockback(反 exe GunSystem::ShootShot):射手 mVelocity −= 瞄准方向 × recoil —— 后座力卡 +200,朝下打就能一直浮着
+  if (r?.recoil > 0) { player.vx -= Math.cos(a) * r.recoil; player.vy -= Math.sin(a) * r.recoil; player.pullT = 0.1 }
   if (r?.noMana) sfx.play('clash', { vol: 0.12, rate: 2.4, minGap: 250 })
   if (r?.empty) {
     // 有限次数的法术(炸弹 3 次 / 黑洞 …)用光了,杖是空的:原版就是这样,圣山的"法术刷新"补满,或者装别的卡
@@ -851,9 +1040,31 @@ window.addEventListener('keydown', (e) => { if (e.key === 'f' && !editor.open) d
 $('btnDrink').addEventListener('click', (e) => { e.stopPropagation(); drink() })
 $('btnDrink').addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true })
 
-/** 捡法杖:背包没满就收(原版 4 格),满了不捡 */
+/** 自由模式:空法杖(借 17 根固定杖之一的外形,清空卡 / 不洗牌 / 20 格 / 施法延迟 5f),把背包补满到 wandSlots 根 —— 底栏每一格都是一根能装卡的杖,不然玩家看到 8 个格子却只有 2 根杖能装 */
+const BLANK_KEYS = ['wand_006', 'wand_010', 'wand_013', 'wand_003', 'wand_009', 'wand_001', 'wand_016', 'wand_008']
+function blankWand(i) {
+  const w = wands.make(BLANK_KEYS[i % BLANK_KEYS.length], 0, 0)
+  if (!w) return null
+  Object.assign(w, { name: `空法杖 ${i + 1}`, cards: [], uses: {}, deck: [], shuffle: false, actionsPerRound: 1, deckCapacity: FREE_CAPACITY, fireRateWait: 5, spread: 0, reloadTime: 0 })
+  return w
+}
+function fillWands() {
+  if (!FREE || DEBUG_WANDS) return
+  while (player.wands.length < (flags.wandSlots || 4)) { const w = blankWand(player.wands.length); if (!w) break; player.wands.push(w) }
+}
+fillWands() // 新局 / 读档之后都补满(老存档只有 2 根也补到 8)
+/** 捡法杖:背包没满就收(原版 4 格),满了不捡;自由模式满了就顶掉一根还没装卡的空杖 */
 function pickWand(w) {
-  if (player.wands.length >= (flags.wandSlots || 4) || DEBUG_WANDS) return false
+  if (DEBUG_WANDS) return false
+  if (player.wands.length >= (flags.wandSlots || 4)) {
+    const k = FREE ? player.wands.findIndex((x) => !x.debug && !x.cards.length) : -1
+    if (k < 0) return false
+    if (flags.noShuffle) w.shuffle = false
+    player.wands[k] = w; payload = k
+    sfx.play('magic', { vol: 0.5, rate: 1.1 })
+    oplog.ev('pick_wand', { key: w.key, cards: w.cards, replaced: k })
+    return true
+  }
   if (flags.noShuffle) w.shuffle = false
   if (flags.fasterWands) for (let i = 0; i < flags.fasterWands; i++) { w.reloadTime = w.reloadTime * 0.8 - 5; w.fireRateWait = w.fireRateWait * 0.8 - 5; w.manaCharge += 30 }
   player.wands.push(w); payload = player.wands.length - 1
@@ -871,45 +1082,129 @@ const editor = {
   toggle(on) {
     this.open = on ?? !this.open
     $('editor').classList.toggle('on', this.open); $('btnBag').classList.toggle('on', this.open)
-    if (this.open) { this.canEdit = inTemple(); $('editor').classList.toggle('readonly', !this.canEdit); $('edTitle').textContent = this.canEdit ? '圣山 · 法杖编辑' : '背包'; this.render(); if (!this.canEdit) tut.show('bagRO') }
+    if (this.open) { if (payload < player.wands.length && !player.wands[payload].debug) edSel = payload; this._scrollSel = true; this.canEdit = inTemple(); $('editor').classList.toggle('readonly', !this.canEdit); $('edTitle').textContent = FREE ? '法杖编辑' : this.canEdit ? '圣山 · 法杖编辑' : '背包'; this.render(); if (!this.canEdit) tut.show('bagRO') }
+  },
+  /** 自由模式的法术库:所有能放出东西的法术(按类型分组),点一张装进选中法杖;只建一次 DOM */
+  renderLib() {
+    const L = $('edLib'); if (!L || L.childElementCount) return
+    const all = wands.usableSpells()
+    for (const type of ['PROJECTILE', 'STATIC_PROJECTILE', 'MATERIAL', 'DRAW_MANY', 'MODIFIER', 'UTILITY', 'OTHER']) {
+      const list = all.filter((s) => s.type === type)
+      if (!list.length) continue
+      const T = this.TYPES[type]
+      const h = document.createElement('div'); h.className = 'libh'; h.innerHTML = `<i style="background:${T[1]}"></i>${T[0]} ${list.length}${T[2] ? ` <span>— ${T[2]}</span>` : ''}`; L.appendChild(h)
+      const grid = document.createElement('div'); grid.className = 'inv'
+      for (const s of list) grid.appendChild(this.cardEl(s.id, () => this.addLib(s.id)))
+      L.appendChild(grid)
+    }
+  },
+  addLib(id) {
+    const w = player.wands[edSel]
+    if (!w || w.debug) { this.msg('先点选上面的一根法杖'); return }
+    if (w.cards.length >= w.deckCapacity) { this.msg(`${w.name} 满了(容量 ${w.deckCapacity}):点杖里的卡取下,或把「容量」+`); sfx.play('clash', { vol: 0.15, rate: 2.2 }); return }
+    w.cards.push(id)
+    this.msg(`${wands.spell(id)?.name || id} → ${w.name}(第 ${w.cards.length} 张)`)
+    this.after(w)
+  },
+  /** 编辑器里的提示(#tip 在遮罩下面看不见,单独一行) */
+  msg(s) { const el = $('edMsg'); if (!el) return; el.textContent = s; clearTimeout(this._msgT); this._msgT = setTimeout(() => { el.textContent = '' }, 4000) },
+  // 法术类型(gun_actions.lua ACTION_TYPE_*)→ 卡框颜色 / 中文 / 一句话规则
+  TYPES: {
+    PROJECTILE: ['弹丸', '#d86a6a', '飞出去的弹'], STATIC_PROJECTILE: ['场', '#d8a24a', '在杖尖原地生成、停留一段时间的场'], MATERIAL: ['材质', '#5ab0d8', '喷出 / 生成真材质'],
+    MODIFIER: ['修饰', '#7c7ce8', '改同一次放出的弹(和它一起抽到的那一组)'], DRAW_MANY: ['多重', '#5ac86a', '再多抽 N 张,和它一起同一下放出'], UTILITY: ['工具', '#bdbdbd', ''], OTHER: ['其他', '#b070c8', ''], PASSIVE: ['被动', '#888', ''],
+  },
+  // gun_actions.lua 里这张卡对 c 的改动 → 人话
+  opsText(s) {
+    const F = { fire_rate_wait: ['施法延迟', 'f'], speed_multiplier: ['速度', '×'], spread_degrees: ['散射', '°'], damage_projectile_add: ['伤害', ''], damage_explosion_add: ['爆炸伤害', ''], damage_explosion: ['爆炸伤害', ''], explosion_radius: ['爆炸半径', 'px'], lifetime_add: ['寿命', 'f'], bounces: ['反弹', '次'], gravity: ['重力', ''], knockback_force: ['击退', ''], recoil_knockback: ['后座力', ''], reload_time: ['充能', 'f'], damage_critical_chance: ['暴击率', '%'], friendly_fire: ['友伤', ''], damage_electricity_add: ['电伤害', ''], damage_fire_add: ['火伤害', ''], damage_ice_add: ['冰伤害', ''] }
+    const EX = { homing: '追踪敌人', homing_short: '短距追踪', homing_shooter: '绕着自己转', anti_homing: '躲开敌人', homing_rotate: '缓慢转向敌人', homing_accelerating: '越追越快', homing_cursor: '跟着法杖朝向', autoaim: '出手就瞄向最近敌人', piercing_shot: '穿过敌人', clipping_shot: '穿墙(墙里变慢)', fly_upwards: '20 帧后竖直向上', fly_downwards: '20 帧后竖直向下', sinewave: '走波浪线', chaotic_arc: '乱抖', floating_arc: '贴地面漂', avoiding_arc: '避开墙', lifetime_infinite: '永不消失', remove_bounce: '不反弹', nolla: '立刻消失', accelerating_shot: '越飞越快', decelerating_shot: '越飞越慢', area_damage: '周围 16px 持续伤害', effect_frozen: '命中冻住', effect_electricity: '命中电击', effect_apply_on_fire: '命中点燃', effect_disintegrated: '命中尸体化灰' }
+    const out = []
+    for (const o of s.ops || []) {
+      if (o.op === 'append') { for (const f of o.v.split(',')) { const k = f.trim().split('/').pop().replace('.xml', ''); if (EX[k]) out.push(EX[k]) } continue }
+      const d = F[o.f]; if (!d) continue
+      const v = o.f === 'damage_projectile_add' || /damage_/.test(o.f) ? Math.round(o.v * 25) : o.v
+      out.push(o.op === 'mul' ? `${d[0]} ×${o.v}` : o.op === 'add' ? `${d[0]} ${v > 0 ? '+' : ''}${v}${d[1] === '×' ? '' : d[1]}` : o.op === 'set' ? `${d[0]} = ${o.v}` : '')
+    }
+    return out.filter(Boolean).join(' · ')
   },
   cardEl(id, onClick, badge) {
     const s = wands.spell(id), el = document.createElement('div')
-    el.className = 'card'; el.title = s ? `${s.name}  法力 ${s.mana}${s.maxUses > 0 ? ' 次数 ' + s.maxUses : ''}` : id
+    const T = s ? this.TYPES[s.type] || this.TYPES.OTHER : null
+    el.className = 'card'
+    const ops = s ? this.opsText(s) : ''
+    el.title = s ? `${s.name}(${T[0]})\n法力 ${s.mana}${s.maxUses > 0 ? ' · 次数 ' + s.maxUses : ''}${ops ? '\n' + ops : ''}${s.trigger ? '\n触发弹:带着右边一张卡,' + (s.trigger === 'timer' ? '到时' : s.trigger === 'death' ? '消失时' : '撞到东西时') + '放出' : ''}${s.drawMany > 0 ? '\n再抽 ' + s.drawMany + ' 张一起放' : s.type === 'DRAW_MANY' ? '\n把剩下的全抽出来一起放' : ''}${s.desc ? '\n' + s.desc : ''}` : id
+    if (T) el.style.borderColor = T[1]
     if (s?.icon) el.style.backgroundImage = `url(${RES}/ent/${s.icon})`
     if (badge) { const i = document.createElement('i'); i.textContent = badge; el.appendChild(i) }
     el.addEventListener('click', (e) => { e.stopPropagation(); onClick() })
     return el
   },
+  /** 法杖属性面板(原版法杖提示框那几行):洗牌 / 每次施放 / 施法延迟 / 充能时间 / 法力上限 / 法力恢复 / 容量 / 散射;自由模式可以 −/+ 调 */
+  statsEl(w) {
+    const box = document.createElement('div'); box.className = 'wstats'
+    const f = (n) => (n / 60).toFixed(2) + 's'
+    const rows = [
+      ['洗牌', w.shuffle ? '是' : '否', FREE ? () => { w.shuffle = !w.shuffle } : null, FREE ? () => { w.shuffle = !w.shuffle } : null],
+      ['每次施放', `${w.actionsPerRound} 张`, () => { w.actionsPerRound = Math.max(1, w.actionsPerRound - 1) }, () => { w.actionsPerRound = Math.min(w.deckCapacity, w.actionsPerRound + 1) }],
+      ['施法延迟', `${w.fireRateWait}f ${f(w.fireRateWait)}`, () => { w.fireRateWait = Math.max(0, w.fireRateWait - 5) }, () => { w.fireRateWait = Math.min(180, w.fireRateWait + 5) }],
+      ...(FREE ? [] : [['充能时间', `${w.reloadTime}f ${f(w.reloadTime)}`, null, null], ['法力上限', `${w.manaMax}`, null, null], ['法力恢复', `${w.manaCharge}/s`, null, null]]),
+      ['容量', `${w.deckCapacity}`, () => { w.deckCapacity = Math.max(Math.max(1, w.cards.length), w.deckCapacity - 1); w.actionsPerRound = Math.min(w.actionsPerRound, w.deckCapacity) }, () => { w.deckCapacity = Math.min(26, w.deckCapacity + 1) }],
+      ['散射', `${w.spread}°`, () => { w.spread = Math.max(-30, w.spread - 1) }, () => { w.spread = Math.min(60, w.spread + 1) }],
+    ]
+    for (const [label, val, dec, inc] of rows) {
+      const r = document.createElement('div'); r.className = 'stat'
+      const l = document.createElement('span'); l.className = 'k'; l.textContent = label
+      const v = document.createElement('span'); v.className = 'v'; v.textContent = val
+      r.append(l, v)
+      if (FREE && dec && inc) {
+        const b1 = document.createElement('button'); b1.textContent = '−'; b1.addEventListener('click', (e) => { e.stopPropagation(); dec(); this.after(w) })
+        const b2 = document.createElement('button'); b2.textContent = '+'; b2.addEventListener('click', (e) => { e.stopPropagation(); inc(); this.after(w) })
+        r.append(b1, b2)
+      }
+      box.appendChild(r)
+    }
+    return box
+  },
   render() {
     const W = $('edWands'); W.innerHTML = ''
-    $('edGold').textContent = `金 ${player.gold} · 散卡 ${player.spells.length}`
+    $('edGold').textContent = `金 ${player.gold} · 散卡 ${player.spells.length} · 法杖 ${player.wands.filter((w) => !w.debug).length}/${flags.wandSlots || 4}`
     player.wands.forEach((w, i) => {
       if (w.debug) return
       const row = document.createElement('div'); row.className = 'wand' + (i === edSel ? ' sel' : '')
-      row.addEventListener('click', () => { edSel = i; this.render() })
+      row.addEventListener('click', () => { if (edSel !== i) { edSel = i; this.msg(`选中 ${w.name}:点法术库的卡装进去`); this.render() } })
       const nm = document.createElement('div'); nm.className = 'wname'
-      nm.innerHTML = `${w.name}<small>容量 ${w.deckCapacity} · 每次 ${w.actionsPerRound} 张 · 延迟 ${w.fireRateWait}f · 充能 ${w.reloadTime}f · 法力 ${w.manaMax}/+${w.manaCharge}${w.shuffle ? ' · 洗牌' : ''}</small>`
+      const u = wands.spriteUrl(w)
+      nm.innerHTML = `${u ? `<img src="${u}" alt="">` : ''}<b>${i < 9 ? i + 1 : i === 9 ? '0' : ''}. ${w.name}</b>${i === edSel ? '<small>← 选中:点下面法术库的卡装进这根</small>' : `<small class="dim">${w.cards.length}/${w.deckCapacity} 张 · 点这行选中</small>`}`
+      const body = document.createElement('div'); body.className = 'wbody'
       const cards = document.createElement('div'); cards.className = 'cards'
       w.cards.forEach((c, k) => cards.appendChild(this.cardEl(c, () => { this.removeCard(w, k) }, c in w.uses ? String(w.uses[c]) : '')))
-      for (let k = w.cards.length; k < w.deckCapacity; k++) { const e = document.createElement('div'); e.className = 'card empty'; cards.appendChild(e) }
-      row.append(nm, cards); W.appendChild(row)
+      // 空格:选中的杖全画出来(点了也是选中这根);没选中的只画前几个,省屏幕
+      const emptyN = i === edSel ? w.deckCapacity - w.cards.length : Math.min(3, w.deckCapacity - w.cards.length)
+      for (let k = 0; k < emptyN; k++) { const e = document.createElement('div'); e.className = 'card empty'; cards.appendChild(e) }
+      // 只有选中的那根展开属性面板(8 根杖全展开手机上要翻好几屏)
+      if (i === edSel) body.append(this.statsEl(w), cards); else body.append(cards)
+      row.append(nm, body); W.appendChild(row)
     })
+    if (this._scrollSel) { this._scrollSel = false; W.querySelector('.wand.sel')?.scrollIntoView({ block: 'nearest' }) }
     const I = $('edInv'); I.innerHTML = ''
     player.spells.forEach((c, k) => I.appendChild(this.cardEl(c, () => { this.addCard(k) })))
+    if (FREE) this.renderLib()
   },
-  /** 取下第 k 张:回背包;有限次数的卡把剩余次数一起带走(按张均分) */
+  /** 取下第 k 张:回背包(自由模式直接丢掉,法术库里无限);有限次数的卡把剩余次数一起带走(按张均分) */
   removeCard(w, k) {
-    if (!this.canEdit) { toast('只能在圣山里改法杖'); sfx.play('clash', { vol: 0.15, rate: 2.2 }); return }
+    if (!this.canEdit) { this.msg('只能在圣山里改法杖'); sfx.play('clash', { vol: 0.15, rate: 2.2 }); return }
     const c = w.cards[k]
+    edSel = player.wands.indexOf(w)
     w.cards.splice(k, 1)
+    this.msg(`取下 ${wands.spell(c)?.name || c}`)
     if (c in w.uses) { const left = w.cards.filter((x) => x === c).length; if (!left) delete w.uses[c]; else w.uses[c] = Math.round((w.uses[c] * left) / (left + 1)) }
-    player.spells.push(c); this.after(w)
+    if (!FREE) player.spells.push(c)
+    this.after(w)
   },
   addCard(k) {
-    if (!this.canEdit) { toast('只能在圣山里改法杖'); sfx.play('clash', { vol: 0.15, rate: 2.2 }); return }
+    if (!this.canEdit) { this.msg('只能在圣山里改法杖'); sfx.play('clash', { vol: 0.15, rate: 2.2 }); return }
     const w = player.wands[edSel]
-    if (!w || w.debug || w.cards.length >= w.deckCapacity) { sfx.play('clash', { vol: 0.15, rate: 2.2 }); return }
+    if (!w || w.debug) { this.msg('先点选上面的一根法杖'); return }
+    if (w.cards.length >= w.deckCapacity) { this.msg(`${w.name} 满了(容量 ${w.deckCapacity})`); sfx.play('clash', { vol: 0.15, rate: 2.2 }); return }
     const c = player.spells.splice(k, 1)[0]
     w.cards.push(c)
     const s = wands.spell(c); if (s && s.maxUses > 0) w.uses[c] = (w.uses[c] ?? 0) + s.maxUses
@@ -1022,22 +1317,11 @@ function updateQuest(dt) {
     break
   }
 }
-/** 指引箭头:人头顶一枚大箭头(带距离)指向目标 + 屏边一枚小箭头;目标在屏内就画在目标上 */
+/** 指引:顶部横幅文字 + 屏边一枚小箭头(目标在屏内就画在目标上)。头顶不再放导航箭头 —— 原版头顶什么都没有,头顶那块留给状态图标 */
 function drawQuest() {
   if (!quest || paused) { questEl.textContent = ''; return }
   const dist = Math.hypot(quest.x - player.x, quest.y - player.y) | 0
-  questEl.textContent = quest.label + (quest.hint ? '\n' + quest.hint : '')
-  // 头顶导航箭头(手游式):方向 + 距离
-  {
-    const [px, py] = toScreen(player.x, player.y - 16)
-    const a = Math.atan2(quest.y - player.y, quest.x - player.x), s = Math.max(1.2, SCALE * 0.75), pulse = 0.65 + 0.35 * Math.sin(performance.now() / 220)
-    gctx.save(); gctx.translate(px, py - 10 * s); gctx.rotate(a)
-    gctx.fillStyle = `rgba(255,220,120,${pulse.toFixed(2)})`; gctx.strokeStyle = 'rgba(0,0,0,0.8)'; gctx.lineWidth = 2
-    gctx.beginPath(); gctx.moveTo(9 * s, 0); gctx.lineTo(-6 * s, -6 * s); gctx.lineTo(-3 * s, 0); gctx.lineTo(-6 * s, 6 * s); gctx.closePath(); gctx.fill(); gctx.stroke()
-    gctx.restore()
-    gctx.font = `${Math.round(6 * s)}px sans-serif`; gctx.textAlign = 'center'; gctx.fillStyle = 'rgba(255,233,176,0.95)'; gctx.strokeStyle = 'rgba(0,0,0,0.9)'; gctx.lineWidth = 3
-    const t = `${quest.short || '目标'} ${dist}`; gctx.strokeText(t, px, py - 21 * s); gctx.fillText(t, px, py - 21 * s)
-  }
+  questEl.textContent = `${quest.label.replace(/还有 \d+/, `还有 ${dist}`)}${quest.hint ? '\n' + quest.hint : ''}`
   let [sx, sy] = toScreen(quest.x, quest.y)
   const W = game.width, H = game.height, m = 26, mb = 76 // 下边距大一点,别压在物品栏上
   const dx = sx - W / 2, dy = sy - H / 2
@@ -1113,17 +1397,25 @@ function splash(speed, dy = 0) {
   if (done) sfx.play('water', { vol: Math.min(0.9, 0.25 + speed / 250), rate: 0.9 + Math.random() * 0.2, minGap: 120 })
   return done
 }
-/** WET 状态:出水后身上的液体往下滴(SpriteStains 掉落),10 秒内越来越少 */
+/**
+ * 沾污量(SpriteStainsComponent + StatusEffectDataComponent.stain_effects):player.wet 是 0~10 的"沾了多少"(原作 = 精灵被染色像素的占比),
+ * 状态只要还剩 1% 就全额生效(wiki);泡进液体很快沾满、只湿脚最多沾四成;掉的方式是"晃掉"(stain_shaken_drop_chance:动得越快掉得越快,站着不动几乎不干),
+ * 碰火时 WET / BLOODY / SLIMY / RADIOACTIVE 这些 protects_from_fire 的沾污被火"烤掉"(每秒烤掉 4 成)而不是直接着火 —— 烤完才点得着
+ */
 function updateWet(dt, inLiq, feetWet = false) {
   if ((inLiq || feetWet) && !flags.stainless) {
-    // 泡着 / 踩水洼都算沾上(原作 SpriteStains 是身体像素碰到液体就沾);STAINLESS_ARMOUR 不沾
-    player.wet = 10
     const m = inLiq ? matAt(player.x, player.y + P.boxB + P.buoyancyOffsetY) : matAt(player.x, player.y + P.boxB - 0.5)
-    if (m > 0 && KIND[m] === 'liquid') { player.wetMat = m; player.stain = stainKindOf(m) }
+    if (m > 0 && KIND[m] === 'liquid') {
+      const k = stainKindOf(m)
+      if (k !== player.stain) player.wet = Math.min(player.wet, 2) // 换了另一种液体:旧的被冲掉大半
+      player.wetMat = m; player.stain = k
+    }
+    player.wet = Math.min(inLiq ? 10 : Math.max(player.wet, 4), player.wet + dt * (inLiq ? 40 : 12))
     return
   }
-  if (player.wet <= 0) { player.stain = ''; return }
-  player.wet -= dt
+  if (player.wet <= 0) { player.stain = ''; player.wet = 0; return }
+  const speed = Math.hypot(player.vx, player.vy)
+  player.wet -= dt * (0.12 + Math.min(1, speed / 90) * 0.9) // 站着 ~80s 才干,一路跑 ~10s
   player.dripT -= dt
   if (player.dripT <= 0 && player.wetMat > 0 && simBound) {
     player.dripT = 0.08 + (1 - player.wet / 10) * 0.6 + Math.random() * 0.15
@@ -1181,7 +1473,10 @@ function step(dt) {
   // 混乱药:左右反;醉了:方向偶尔自己打漂
   let dir = ((keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + (Math.abs(touch.mx) > 0.25 ? Math.sign(touch.mx) : 0)) * effectMul.dir
   if (hasEffect('ALCOHOLIC') && Math.sin(performance.now() / 380) > 0.6) dir = -dir
-  const wantUp = keys.has('w') || keys.has(' ') || keys.has('arrowup') || touch.my < -0.55 || touch.jump
+  let wantUp = keys.has('w') || keys.has(' ') || keys.has('arrowup') || touch.my < -0.55 || touch.jump
+  // 被电(effect_electricity ELECTROCUTION disable_movement=1):40 帧动不了、也开不了火
+  player.stunT = Math.max(0, (player.stunT || 0) - dt)
+  if (player.stunT > 0) { dir = 0; wantUp = false }
   tickEffects(dt)
   player.kickCd = Math.max(0, player.kickCd - dt); player.kickT = Math.max(0, player.kickT - dt)
   if (touch.aim) {
@@ -1194,7 +1489,7 @@ function step(dt) {
   } else if (!IS_TOUCH) { const [wx, wy] = toWorld(mouse.x, mouse.y); player.aimX = wx; player.aimY = wy }
   else if (dir) { player.aimX = player.x + dir * 40; player.aimY = player.y - 2 } // 手机没按瞄准时:瞄准点跟着走的方向(PC 有鼠标常驻,手机没有)
   else { player.aimX = player.x + player.face * 40; player.aimY = player.y - 2 } // 站着不动:瞄准点跟着人走,别留在世界某个老位置
-  const wantFire = mouse.down || !!touch.aim
+  const wantFire = (mouse.down || !!touch.aim) && player.stunT <= 0
   // Noita 规则:身体永远面朝瞄准方向,和走的方向无关(倒着走播 walk_backwards);之前按移动方向翻身,一边走一边瞄就来回抽
   player.face = player.aimX < player.x ? -1 : 1
   // 输入状态变化才记(不刷屏);位置每秒一条
@@ -1230,13 +1525,19 @@ function step(dt) {
   if (simBound) {
     const mc2 = matAt(player.x, player.y - 2), mf = matAt(player.x, player.y + P.boxB - 1)
     const nearFire = mc2 === sim.M_FIRE || mf === sim.M_FIRE
-    if (nearFire) ignitePlayer()
+    if (nearFire) {
+      // 防火沾污先被火烤(wiki:Wet "is depleted by contact with Fire"),烤干才着;冒一点蒸汽
+      if (player.wet > 0 && FIRE_PROTECT.has(player.stain) && player.fireT <= 0) {
+        player.wet -= dt * 4
+        if (Math.random() < dt * 8 && simBound) { const x = Math.floor(player.x + (Math.random() - 0.5) * 5), y = Math.floor(player.y - 9); if (sim.get(x, y) === 0 && sim.M_STEAM) sim.set(x, y, sim.M_STEAM, 0) }
+      } else ignitePlayer()
+    }
     if (player.stain === 'OILED' && !nearFire && player.fireT <= 0) { for (const [dx, dy] of [[-3, 0], [3, 0], [0, -6], [0, 3]]) if (matAt(player.x + dx, player.y + dy) === sim.M_FIRE) { ignitePlayer(); break } }
     if (player.fireT > 0) {
       player.fireT -= dt
-      if (inLiq && stainKindOf(player.wetMat) !== 'OILED') player.fireT = 0
+      if (inLiq) player.fireT = 0 // 泡进任何液体(包括油)都灭(wiki)
       player.fireTick += dt
-      if (player.fireTick >= 0.5) { player.fireTick = 0; player.hp -= 0.2; player.hurtFlash = 0.15; if (player.hp <= 0) { player.iframe = 0; damagePlayer(0.001, 0, 0, 'fire') } }
+      if (player.fireTick >= 0.5) { player.fireTick = 0; player.hp -= 0.01 * player.maxHp; player.hurtFlash = 0.15; if (player.hp <= 0) { player.iframe = 0; damagePlayer(0.001, 0, 0, 'fire') } }
       if (Math.random() < 0.7) { const x = Math.floor(player.x + (Math.random() - 0.5) * 5), y = Math.floor(player.y - 6 + Math.random() * 9); if (sim.get(x, y) === 0) sim.set(x, y, sim.M_FIRE, 0) }
       for (let k = 0; k < 2 && sparks.length < 600; k++) sparks.push({ x: player.x + (Math.random() - 0.5) * 6, y: player.y - 8 + Math.random() * 10, vx: (Math.random() - 0.5) * 24, vy: -50 - Math.random() * 70, c: Math.random() < 0.5 ? '#ffb040' : '#ff6a20', life: 0.3 + Math.random() * 0.2 })
       if (player.fireT <= 0) player.stain = player.wet > 0 ? player.stain : ''
@@ -1252,7 +1553,7 @@ function step(dt) {
   } else player.air = Math.min(7, player.air + dt * 3)
   sfx.setUnderwater(headInLiq)
   const wasGround = player.onGround
-  player.onGround = solidAt(Math.floor(player.x + P.boxL), Math.floor(player.y + P.boxB + 1)) || solidAt(Math.floor(player.x + P.boxR - 0.01), Math.floor(player.y + P.boxB + 1))
+  player.onGround = groundUnder(player.x, player.y)
   const landed = player.onGround && !wasGround && player.vy > 60
   if (player.onGround && !wasGround && player.vy > 120) { sfx.play('impact', { vol: Math.min(1, player.vy / 300) }); oplog.ev('land', { vy: player.vy | 0 }) }
   player.landed = landed
@@ -1288,7 +1589,9 @@ function step(dt) {
   player.fuel = (player.fly / P.flyTimeMax) * 100
   // 水平:目标 ±57(地面)/ ±52(空中),accel_x 0.15 每帧向目标插值;松手也是同样的减速
   const target = dir * (player.onGround ? P.runMax : P.flyVx) * (player.stain === 'SLIMY' && player.wet > 0 ? 0.6 : 1) * effectMul.move // SLIMY:动作变慢;疾跑药 ×2
-  player.vx += (target - player.vx) * Math.min(1, P.accelX * f60)
+  // 被黑洞吸着(pullT)且没按方向:不往 0 收速度,不然拉力被"松手减速"抵消掉;按着方向才是"trying to resist its pull"
+  player.pullT = Math.max(0, (player.pullT || 0) - dt)
+  if (!(player.pullT > 0 && !dir)) player.vx += (target - player.vx) * Math.min(1, P.accelX * f60)
   if (dir && player.onGround) player.walkT += dt
   if (inLiq) { player.vx *= Math.pow(0.2, dt); player.vy *= Math.pow(0.15, dt) }
   else if (feetWet) player.vx *= Math.pow(0.6, dt)
@@ -1356,11 +1659,13 @@ function step(dt) {
   spraying = wantFire && !!curWand().debug && curWand().proj.startsWith('material_')
   for (const w of player.wands) if (!w.debug) wands.update(w, dt)
   if (simBound) projectiles.update(dt)
-  if (simBound) entities.update(dt, cam, VW, VH)
+  if (simBound) entities.update(dt, simWindow())
+  if (simBound) { if ((veg.frame & 15) === 0) veg.sync(); veg.update(dt, simWindow()) }
   if (simBound) { updateGuard(dt); updateCollapse(dt); updatePortals(dt) }
   for (let i = sparks.length - 1; i >= 0; i--) {
     const p = sparks[i]
     p.life -= dt; if (p.g) p.vy += 300 * dt
+    if (p.stopAt !== undefined) { p.stopAt -= dt; if (p.stopAt <= 0) { p.vx = 0; p.vy = 0 } } // 描图形的火花:飞到轮廓就停
     p.x += p.vx * dt; p.y += p.vy * dt
     if (p.life <= 0) sparks.splice(i, 1)
   }
@@ -1384,9 +1689,13 @@ function drawPlayer(ctx, ox, oy) {
     const oxo = player.x - 24, oyo = player.y - 28
     tip = sprite.draw(wc, player.x, player.y, player.face, a, oxo, oyo)
     tip = { x: tip.x + oxo - ox, y: tip.y + oyo - oy }
+    // SpriteStainsComponent:染的是精灵像素本身(材质色),fade_stains_towards_srite_top=1 → 越靠头顶越淡;量越大越深(原版是染色像素占比)
     const c = mats.color[player.wetMat], frac = Math.min(1, player.wet / 10)
     wc.globalCompositeOperation = 'source-atop'
-    wc.fillStyle = `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},${(0.08 + 0.3 * frac).toFixed(2)})`
+    const g = wc.createLinearGradient(0, 28 + HEAD, 0, 28 + FEET)
+    const rgb = `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`
+    g.addColorStop(0, `rgba(${rgb},${(0.05 + 0.15 * frac).toFixed(2)})`); g.addColorStop(1, `rgba(${rgb},${(0.15 + 0.5 * frac).toFixed(2)})`)
+    wc.fillStyle = g
     wc.fillRect(0, 0, 48, 48)
     ctx.drawImage(wetCv, Math.round(player.x - ox) - 24, Math.round(player.y - oy) - 28)
   } else tip = sprite.draw(ctx, player.x, player.y, player.face, a, ox, oy)
@@ -1397,6 +1706,49 @@ function drawPlayer(ctx, ox, oy) {
     for (const b of bubbles) ctx.fillRect(Math.round(b.x - ox) - 1, Math.round(b.y - oy) - 1, b.f ? 2 : 1, b.f ? 2 : 1)
   }
   if (player.thrusting) { ctx.fillStyle = Math.random() < 0.5 ? '#ffb040' : '#ff7020'; ctx.fillRect(Math.round(player.x - ox) - 1, Math.round(player.y - oy) + FEET, 2, 2) }
+  drawStatusIcons(ctx, ox, oy)
+}
+// ── 状态图标(ui_gfx/status_indicators/*.png 12×12,原版画在 HUD 血条下;手机屏小,直接挂在头顶):图标 + 下面一条剩余量(stain_effects 的占比 / 着火剩余时间)──
+const STATUS_ICONS = {}
+for (const n of ['wet', 'oiled', 'bloody', 'slimy', 'radioactive', 'on_fire', 'poisoned', 'hp_regeneration', 'protection_all']) { const im = new Image(); im.src = `${RES}/ui/status/${n}.png`; STATUS_ICONS[n] = im }
+const STAIN_NAME = { WET: '湿', OILED: '沾油', BLOODY: '沾血', SLIMY: '黏液', RADIOACTIVE: '辐射' }
+const STAIN_COL = { WET: '#7fb8ff', OILED: '#c8a850', BLOODY: '#e04040', SLIMY: '#80e060', RADIOACTIVE: '#a0ff40' }
+function activeStatuses() {
+  const out = []
+  // 原版状态区:着火显示剩余秒(release notes "Fire status duration displayed in the status area"),沾污显示量("Stain status amount is displayed next to icon")
+  if (player.fireT > 0) out.push({ icon: 'on_fire', frac: player.fireT / (player.fireDur || 4), col: '#ff7a20', text: `着火 ${player.fireT.toFixed(1)}s` })
+  if (player.wet > 0 && player.stain) out.push({ icon: player.stain.toLowerCase(), frac: Math.min(1, player.wet / 10), col: STAIN_COL[player.stain] || '#7fb8ff', text: `${STAIN_NAME[player.stain] || player.stain} ${Math.ceil(Math.min(1, player.wet / 10) * 100)}%` })
+  // 喝药来的效果(effects: id → 剩余秒):有图标的显示剩余秒
+  for (const [id, left] of Object.entries(effects)) {
+    if (!(left > 0)) continue
+    const icon = { HP_REGENERATION: 'hp_regeneration', PROTECTION_ALL: 'protection_all', POISONED: 'poisoned', FROZEN: 'frozen' }[id]
+    if (!icon) continue
+    const d = EFFECT_DEFS[id]
+    out.push({ icon, frac: d?.dur ? Math.min(1, left / d.dur) : 1, col: '#ffe080', text: `${d?.name || id} ${Math.ceil(left)}s` })
+  }
+  return out
+}
+/** HUD 状态区(血条 / 悬浮条下面):图标 + 剩余量条 + 数字 */
+const statusEl = $('status')
+let statusHtml = ''
+function updateStatusHud() {
+  const list = activeStatuses()
+  const html = list.map((s) => `<div class="st"><img src="${RES}/ui/status/${s.icon}.png" alt=""><i class="sb"><b style="width:${Math.round(Math.min(1, s.frac) * 100)}%;background:${s.col}"></b></i><span>${s.text}</span></div>`).join('')
+  if (html !== statusHtml) { statusHtml = html; statusEl.innerHTML = html }
+  statusEl.classList.toggle('air', $('air').style.display === 'block')
+}
+function drawStatusIcons(ctx, ox, oy) {
+  const list = activeStatuses()
+  if (!list.length) return
+  const S = 12, gap = 2, x0 = Math.round(player.x - ox) - ((list.length * (S + gap) - gap) >> 1), y0 = Math.round(player.y - oy) + HEAD - 16 // 原图 12×12 原大小画,缩放会糊
+  ctx.imageSmoothingEnabled = false
+  list.forEach((s, i) => {
+    const im = STATUS_ICONS[s.icon], x = x0 + i * (S + gap)
+    if (im?.complete && im.naturalWidth) ctx.drawImage(im, x, y0, S, S)
+    else { ctx.fillStyle = s.col; ctx.fillRect(x, y0, S, S) }
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x, y0 + S + 1, S, 1)
+    ctx.fillStyle = s.col; ctx.fillRect(x, y0 + S + 1, Math.max(1, Math.round(S * Math.min(1, s.frac))), 1)
+  })
 }
 
 function render() {
@@ -1487,6 +1839,7 @@ function render() {
       vctx.fillStyle = '#ff9030'; vctx.fillRect(lx - 1, ly - 18, 4, 5); vctx.fillStyle = '#ffe080'; vctx.fillRect(lx, ly - 17, 2, 2)
     } else { vctx.fillStyle = '#6a4a20'; vctx.fillRect(lx, ly - 6, 2, 6); vctx.fillStyle = '#ff9030'; vctx.fillRect(lx - 1, ly - 9, 4, 4) }
   }
+  veg.render(vctx, ox, oy)
   entities.render(vctx, ox, oy)
   renderPortals(vctx, ox, oy)
   drawPlayer(vctx, ox, oy)
@@ -1536,16 +1889,24 @@ function render() {
   return missing
 }
 
+// 模拟窗口:视口外再各留 SIM_MARGIN(≈ 一个 chunk),但整窗跨度 < 1536 才能保证落在 CellSim 的 4×4 chunk 表里(跨度 S 最多碰 floor(S/512)+2 个 chunk)
+const SIM_MARGIN = 512
+function simWindow() {
+  const mx = Math.min(SIM_MARGIN, Math.floor((1530 - VW) / 2)), my = Math.min(SIM_MARGIN, Math.floor((1530 - VH) / 2))
+  return { x0: cam.x - VW / 2 - mx, y0: cam.y - VH / 2 - my, x1: cam.x + VW / 2 + mx, y1: cam.y + VH / 2 + my }
+}
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now
-  // 区块流:以相机为中心的一屏 + 边距
+  // 区块流:以相机为中心的一屏 + 边距;再加上模拟窗口那一圈
   const half = { x: VW / 2 + 32, y: VH / 2 + 32 }
-  streamer.update({ x0: cam.x - half.x, y0: cam.y - half.y, x1: cam.x + half.x, y1: cam.y + half.y }, dt * 1000)
+  const simRect = simWindow()
+  streamer.update({ x0: cam.x - half.x, y0: cam.y - half.y, x1: cam.x + half.x, y1: cam.y + half.y }, dt * 1000, simRect)
   // 新就位的 chunk:把它的生成点实例化(每 chunk 一次)
-  for (const e of streamer.entries.values()) if (e.ready && e.spawns?.length && !entities.spawnedChunks.has(e.key)) entities.spawnChunk(e)
-  // 材质模拟:激活窗口 = 视口 + 24px 边距;窗口内 chunk 齐了才跑
+  for (const e of streamer.entries.values()) if (e.ready && e.spawns?.length && !entities.liveChunks.has(e.key)) entities.spawnChunk(e)
+  // 材质模拟:激活窗口 = 视口 + SIM_MARGIN(Noita 模拟的是玩家周围一整片加载区,不只屏幕 —— 屏幕外的爆炸 / 崩塌 / 流水照常进行,走过去不会"忽然开始动");
+  // 视口那一圈的 chunk 齐了就跑,外圈没到的先当 -1
   const t0 = performance.now()
-  simBound = sim.bind(cam.x - VW / 2 - 24, cam.y - VH / 2 - 24, cam.x + VW / 2 + 24, cam.y + VH / 2 + 24)
+  simBound = sim.bind(simRect.x0, simRect.y0, simRect.x1, simRect.y1, { x0: cam.x - VW / 2 - 24, y0: cam.y - VH / 2 - 24, x1: cam.x + VW / 2 + 24, y1: cam.y + VH / 2 + 24 })
   if (simBound && !paused) sim.step()
   simMs = simMs * 0.9 + (performance.now() - t0) * 0.1
   // 静态材质变了的 chunk,节流后让 Worker 重画位图
@@ -1562,11 +1923,20 @@ function loop(now) {
   sfx.loop('jet', player.thrusting, { vol: 0.22, freq: 900, q: 0.6 })
   sfx.loop('spray', spraying, { vol: 0.14, freq: 1800, q: 0.5 }) // 材质喷射法术的 sound_spray 循环
   sfx.loop('fire', fireCells > 0, { vol: Math.min(0.3, 0.05 + fireCells / 400), freq: 2400, q: 0.4 })
+  // 弹丸的 AudioLoopComponent(黑洞 / 场 / 雷霆之环 / 电水):原版是 FMOD 事件,这里按名字配合成噪声的音色;离得越远越小
+  for (const [name, cfg] of Object.entries(PROJ_LOOPS)) {
+    let near = 0
+    if (projectiles.loops.get(name)) for (const p of projectiles.list) if (p.d.loop === name) near = Math.max(near, 1 - Math.min(1, Math.hypot(p.x - player.x, p.y - player.y) / 260))
+    if (name === 'zap' && projectiles.zaps.length) for (const z of projectiles.zaps) near = Math.max(near, 1 - Math.min(1, Math.hypot(z.x - player.x, z.y - player.y) / 200))
+    sfx.loop('pl_' + name, near > 0.02, { vol: cfg.vol * (0.3 + 0.7 * near), freq: cfg.freq, q: cfg.q })
+  }
   sfx.setDepth(Math.max(0, Math.min(1, (player.y + 40) / 240)), dt)
   fpsAcc += dt; fpsN++
   if (fpsAcc >= 0.5) { fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0 }
-  const status = [player.fireT > 0 ? '着火' : '', player.wet > 0 ? ({ WET: '湿', OILED: '沾油', BLOODY: '沾血', SLIMY: '黏液', RADIOACTIVE: '辐射' })[player.stain] || '' : '',
-    ...Object.keys(effects).filter((k) => !k.startsWith('_') && effects[k] > 0 && !['WET', 'OILED', 'BLOODY', 'SLIMY', 'RADIOACTIVE'].includes(k)).map((k) => `${EFFECT_DEFS[k]?.name || k} ${Math.ceil(effects[k])}s`)].filter(Boolean).join(' ')
+  // 着火 / 沾污 / 有图标的药效走血条下面的状态区;剩下没图标的药效仍在文字行里
+  const shown = new Set(['WET', 'OILED', 'BLOODY', 'SLIMY', 'RADIOACTIVE', 'HP_REGENERATION', 'PROTECTION_ALL', 'POISONED', 'FROZEN'])
+  const status = Object.keys(effects).filter((k) => !k.startsWith('_') && effects[k] > 0 && !shown.has(k)).map((k) => `${EFFECT_DEFS[k]?.name || k} ${Math.ceil(effects[k])}s`).join(' ')
+  updateStatusHud()
   if (IS_TOUCH) $('btnDrink').style.display = curWand()?.potion ? 'flex' : 'none'
   const cw = curWand()
   const nSlots = player.wands.length + player.items.length
@@ -1579,6 +1949,10 @@ function loop(now) {
   const perkLine = player.perks.length ? '  特权 ' + player.perks.map((id) => perks.perk(id)?.name || id).join('·') : ''
   $('hud').textContent = `(${player.x | 0}, ${player.y | 0})  深度 ${Math.max(0, player.y | 0)}  HP ${Math.ceil(player.hp * 25)}/${Math.round(player.maxHp * 25)}  金 ${player.gold}${player.spells.length ? '  散卡 ' + player.spells.length : ''}${status ? '  [' + status + ']' : ''}${atTemple ? '  [圣山:I / 编辑法杖]' : ''}${perkLine}\n${wandLine}  怪 ${entities.list.length} 道具 ${entities.bodies.length}`
   $('hp').firstElementChild.style.width = (player.hp / player.maxHp * 100) + '%'
+  // 捡心 / 回满:血条闪白(原版 max_hp_old / mLastMaxHpChangeFrame 让血条动一下);法术刷新:法杖法力条闪
+  if (player.hpGrowT > 0) { player.hpGrowT -= dt; $('hp').firstElementChild.style.background = (player.hpGrowT * 8 | 0) % 2 ? '#fff0f0' : '#e0484f' } else if ($('hp').firstElementChild.style.background) $('hp').firstElementChild.style.background = ''
+  if (player.manaFlashT > 0) player.manaFlashT -= dt
+  if (importantT > 0) { importantT -= dt; if (importantT <= 0) $('important').classList.remove('on') }
   $('fuel').firstElementChild.style.width = player.fuel + '%'
   $('fuel').firstElementChild.style.background = player.flyExhausted ? '#e0484f' : '#7fd4ff'
   // 气条:只在憋着气时显示(原版 HUD 也是入水才出)
@@ -1589,4 +1963,4 @@ function loop(now) {
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, entities, guard, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, entities, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }

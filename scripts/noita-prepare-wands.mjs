@@ -44,6 +44,25 @@ for (const b of blocks) {
   const projs = [...body.matchAll(/add_projectile\(\s*"data\/entities\/projectiles\/(?:deck\/)?(\w+)\.xml"/g)].map((m) => m[1])
   const trig = [...body.matchAll(/add_projectile_trigger_(\w+)\(\s*"data\/entities\/projectiles\/(?:deck\/)?(\w+)\.xml"/g)].map((m) => ({ kind: m[1], proj: m[2] }))
   const delta = (k) => { const m = new RegExp(`c\\.${k}\\s*=\\s*c\\.${k}\\s*([+-])\\s*([\\d.]+)`).exec(body); return m ? (m[1] === '-' ? -1 : 1) * +m[2] : 0 }
+  const mul = (k) => { const m = new RegExp(`c\\.${k}\\s*=\\s*c\\.${k}\\s*\\*\\s*([\\d.]+)`).exec(body); return m ? +m[1] : 1 }
+  // action 函数体 → 一串对 c.* / shot_effects.* 的操作(gun.lua 里 c 是本次 shot 的 ConfigGunActionInfo,默认值见 gunaction_generated.lua):
+  //   c.x = c.x + n / - n / * n → add / mul;c.x = n|true|false → set;c.x = c.x .. "a,b," → append(extra_entities / game_effect_entities);
+  //   if (c.x >= A) then c.x = math.min(c.x, A) elseif (c.x < 0) then c.x = 0 → clamp;运行时 Wands.js 按顺序回放,得到完整的 c
+  const ops = []
+  let pending = null // 正在处理的 if (c.x >= A) / (c.x < B) 分支:里面的赋值当 clamp,不当无条件 set
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.replace(/--.*$/, '').trim()
+    let m
+    if ((m = /^(?:else)?if\s*\(?\s*c\.(\w+)\s*(>=?|<=?)\s*(-?[\d.]+)\s*\)?\s*then\s*$/.exec(line))) { pending = { f: m[1], op: m[2][0] === '>' ? 'cap' : 'floor', v: +m[3] }; continue }
+    if (/^(end|else)\s*$/.test(line)) { pending = null; continue }
+    if (pending && (m = /^c\.(\w+)\s*=/.exec(line)) && m[1] === pending.f) { ops.push({ f: pending.f, op: pending.op, v: pending.v }); continue }
+    if ((m = /^(c|shot_effects)\.(\w+)\s*=\s*\1\.\2\s*([+\-*])\s*(-?[\d.]+)\s*$/.exec(line))) { ops.push({ f: m[2], op: m[3] === '*' ? 'mul' : 'add', v: (m[3] === '-' ? -1 : 1) * +m[4] }); continue }
+    if ((m = /^(c|shot_effects)\.(\w+)\s*=\s*\1\.\2\s*\.\.\s*"([^"]*)"\s*$/.exec(line))) { ops.push({ f: m[2], op: 'append', v: m[3] }); continue }
+    if ((m = /^c\.(\w+)\s*=\s*(-?[\d.]+|true|false)\s*$/.exec(line))) { ops.push({ f: m[1], op: 'set', v: m[2] === 'true' ? 1 : m[2] === 'false' ? 0 : +m[2] }); continue }
+    if ((m = /^c\.(\w+)\s*=\s*"([^"]*)"\s*$/.exec(line))) { ops.push({ f: m[1], op: 'set', v: m[2] }); continue }
+    if ((m = /^c\.(\w+)\s*=\s*math\.min\(\s*c\.\1\s*,\s*(-?[\d.]+)\s*\)\s*$/.exec(line))) { ops.push({ f: m[1], op: 'cap', v: +m[2] }); continue }
+    if ((m = /^c\.(\w+)\s*=\s*math\.max\(\s*c\.\1\s*,\s*(-?[\d.]+)\s*\)\s*$/.exec(line))) { ops.push({ f: m[1], op: 'floor', v: +m[2] }); continue }
+  }
   spells[id] = {
     id, name: tr(f('name')), type: (type || '').replace('ACTION_TYPE_', ''),
     icon: copyGfx(f('sprite')), levels: (f('spawn_level') || '').split(',').map(Number), probs: (f('spawn_probability') || '').split(',').map(Number),
@@ -51,7 +70,9 @@ for (const b of blocks) {
     flag: f('spawn_requires_flag') || null, // 要先解锁(HasFlagPersistent)才会进 GetRandomAction 的池,新存档默认全锁
     desc: tr(f('description')),
     projectiles: projs.length ? projs : trig.map((t) => t.proj), trigger: trig[0]?.kind || null,
-    fireRateWait: delta('fire_rate_wait'), spread: delta('spread_degrees'), speed: delta('speed_multiplier'), reload: delta('reload_time'),
+    fireRateWait: delta('fire_rate_wait'), spread: delta('spread_degrees'), speed: delta('speed_multiplier'), speedMul: mul('speed_multiplier'), reload: delta('reload_time'),
+    damage: delta('damage_projectile_add'), // 修饰卡的加伤(重击 / 加伤 …),Noita 单位(×25 = 显示血量)
+    ops, // 完整的 c.* 操作序列(上面几个字段是旧的快捷摘要,Wands.js 现在按 ops 回放)
     drawMany: type === 'ACTION_TYPE_DRAW_MANY' ? (n('draw_actions') ?? (/draw_actions\(\s*(\d+)/.exec(body) || [])[1] ?? 0) : 0,
   }
 }

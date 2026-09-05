@@ -52,9 +52,9 @@ export class WorldClient {
    * @param {{wantMat?:boolean, wantBitmap?:boolean, mat?:Uint16Array}} [o]  mat = 存档里的材质(改过的区块),给了就不用生成的
    * @returns {Promise<{cx,cy,biome,scenes,mat:Uint16Array|null,bitmap:ImageBitmap|null,timing,layerInfo}>}
    */
-  requestChunk(cx, cy, { wantMat = true, wantBitmap = true, mat = null } = {}) {
+  requestChunk(cx, cy, { wantMat = true, wantBitmap = true, mat = null, veg = null } = {}) {
     const w = this.workers[this.rr++ % this.workers.length]
-    return this._call(w, { cmd: 'chunk', cx, cy, wantMat, wantBitmap, mat }, mat ? [mat.buffer] : [])
+    return this._call(w, { cmd: 'chunk', cx, cy, wantMat, wantBitmap, mat, veg }, mat ? [mat.buffer] : []) // veg = 植被落点(重画 / 读档时带回去,别重算)
   }
 
   _call(w, msg, transfer = []) {

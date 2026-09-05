@@ -37,6 +37,7 @@ export class ChunkStreamer {
     this.lastCenter = null
     this.stats = { requested: 0, accepted: 0, fromStore: 0, persisted: 0, evicted: 0, holeFrames: 0 }
     this.seed = client.seed
+    this.onEvict = null        // (entry) => void:区块被卸载(实体层据此收掉该块的怪)
   }
 
   static key(cx, cy) { return cx + ',' + cy }
@@ -52,7 +53,7 @@ export class ChunkStreamer {
    * @param {number} dtMs
    * @returns {boolean} 是否有新内容(需要重绘)
    */
-  update(view, dtMs = 16) {
+  update(view, dtMs = 16, simRect = null) {
     // 速度(世界 px/s),平滑一下
     const cxm = (view.x0 + view.x1) / 2, cym = (view.y0 + view.y1) / 2
     if (this.lastCenter && dtMs > 0) {
@@ -80,19 +81,25 @@ export class ChunkStreamer {
       this.stats.shrunk = (this.stats.shrunk || 0) + 1
     }
 
+    // 模拟窗口(屏幕外一圈,CellSim 在跑的范围):这些 chunk 也要在(优先级排在可见 / 前方之后),否则屏幕外的爆炸 / 流水就"冻"住了
+    let sx0 = cx0 - left, sx1 = cx1 + right, sy0 = cy0 - up, sy1 = cy1 + down
+    if (simRect) {
+      const a = Math.floor(simRect.x0 / CHUNK) + WCX, b = Math.floor(simRect.x1 / CHUNK) + WCX, c = Math.floor(simRect.y0 / CHUNK) + WCY, d = Math.floor(simRect.y1 / CHUNK) + WCY
+      if ((Math.max(sx1, b) - Math.min(sx0, a) + 1) * (Math.max(sy1, d) - Math.min(sy0, c) + 1) <= this.cache) { sx0 = Math.min(sx0, a); sx1 = Math.max(sx1, b); sy0 = Math.min(sy0, c); sy1 = Math.max(sy1, d) }
+    }
     const wanted = []
     let holes = 0
     this.frame = (this.frame || 0) + 1
     let wantedCount = 0
-    for (let cy = cy0 - up; cy <= cy1 + down; cy++) {
-      for (let cx = cx0 - left; cx <= cx1 + right; cx++) {
+    for (let cy = sy0; cy <= sy1; cy++) {
+      for (let cx = sx0; cx <= sx1; cx++) {
         wantedCount++
         const key = ChunkStreamer.key(cx, cy)
         const visible = cx >= cx0 && cx <= cx1 && cy >= cy0 && cy <= cy1
         const e = this.entries.get(key)
         if (e) { e.t = ++this.tick; e.wantedFrame = this.frame; if (visible && !e.ready) holes++; continue }
         if (visible) holes++
-        // 优先级:可见 0;前方按距离;其他靠后
+        // 优先级:可见 0;前方按距离;预取圈 / 模拟圈按距离靠后
         const dx = cx < cx0 ? cx0 - cx : cx > cx1 ? cx - cx1 : 0
         const dy = cy < cy0 ? cy0 - cy : cy > cy1 ? cy - cy1 : 0
         const forward = (dirX && Math.sign(cx - (dirX > 0 ? cx1 : cx0)) === dirX) || (dirY && Math.sign(cy - (dirY > 0 ? cy1 : cy0)) === dirY)
@@ -137,9 +144,9 @@ export class ChunkStreamer {
     this.stats.requested++
     const p = (async () => {
       let saved = null
-      if (this.store) { try { saved = await this.store.get(this.seed, cx, cy) } catch (err) { console.warn('store.get', err) } }
+      if (this.store) { try { saved = this.store.getRec ? await this.store.getRec(this.seed, cx, cy) : await this.store.get(this.seed, cx, cy).then((m) => (m ? { mat: m, veg: null } : null)) } catch (err) { console.warn('store.get', err) } }
       if (saved) this.stats.fromStore++
-      const r = await this.client.requestChunk(cx, cy, { wantMat: true, mat: saved })
+      const r = await this.client.requestChunk(cx, cy, { wantMat: true, mat: saved?.mat || null, veg: saved?.veg || null })
       if (!this.entries.has(key)) { r.bitmap?.close?.(); return } // 期间被卸载了
       r.key = key
       r.wait = performance.now() - e.requestedAt
@@ -159,8 +166,9 @@ export class ChunkStreamer {
       if (over-- <= 0) break
       this.entries.delete(e.key)
       this.stats.evicted++
+      this.onEvict?.(e)
       if (e.dirty && this.store) {
-        this.store.put(this.seed, e.cx, e.cy, e.mat).then(() => { this.stats.persisted++ }).catch((err) => console.warn('store.put', err))
+        this.store.put(this.seed, e.cx, e.cy, e.mat, ChunkStreamer.vegOf(e)).then(() => { this.stats.persisted++ }).catch((err) => console.warn('store.put', err))
       }
       e.bitmap?.close?.()
     }
@@ -186,11 +194,14 @@ export class ChunkStreamer {
     }
     // 重画:把改过的材质交给 Worker(复制一份,原件留在主线程)
     await Promise.all([...touched.values()].map(async (e) => {
-      const r2 = await this.client.requestChunk(e.cx, e.cy, { wantMat: false, mat: e.mat.slice() })
+      const r2 = await this.client.requestChunk(e.cx, e.cy, { wantMat: false, mat: e.mat.slice(), veg: ChunkStreamer.vegOf(e) })
       if (this.entries.get(e.key) === e) { e.bitmap?.close?.(); e.bitmap = r2.bitmap }
     }))
     return [...touched.keys()]
   }
+
+  /** 这块的植被落点(主线程是唯一真相:树掉下来后 Vegetation.js 改的是这里) */
+  static vegOf(e) { return (e.decor || []).filter((d) => d.kind === 'veg') }
 
   /** 材质已在主线程改过(模拟/挖掘)→ 让 Worker 用当前材质重画位图(同一 chunk 同时只跑一份) */
   async repaint(cx, cy) {
@@ -198,7 +209,7 @@ export class ChunkStreamer {
     if (!e || !e.mat || e.repainting) return
     e.repainting = true
     try {
-      const r = await this.client.requestChunk(cx, cy, { wantMat: false, mat: e.mat.slice() })
+      const r = await this.client.requestChunk(cx, cy, { wantMat: false, mat: e.mat.slice(), veg: ChunkStreamer.vegOf(e) })
       if (this.entries.get(e.key) === e && r.bitmap) { e.bitmap?.close?.(); e.bitmap = r.bitmap }
     } catch (err) { if (!/seed changed/.test(String(err))) console.warn('repaint', err) } finally { e.repainting = false }
   }
@@ -207,7 +218,7 @@ export class ChunkStreamer {
   async flush() {
     if (!this.store) return 0
     const dirty = [...this.entries.values()].filter((e) => e.dirty && e.ready)
-    await Promise.all(dirty.map((e) => this.store.put(this.seed, e.cx, e.cy, e.mat)))
+    await Promise.all(dirty.map((e) => this.store.put(this.seed, e.cx, e.cy, e.mat, ChunkStreamer.vegOf(e))))
     this.stats.persisted += dirty.length
     return dirty.length
   }

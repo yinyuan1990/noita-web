@@ -257,11 +257,34 @@ export class ChunkPainter {
     if (!chunk.decor) return
     const ax0 = chunk.cx * CHUNK, ay0 = chunk.cy * CHUNK
     ctx.imageSmoothingEnabled = false
+    let px = null
     for (const d of chunk.decor) {
       if (d.kind !== 'veg') continue
       const img = this.assets.veg(d.name)
       if (!img?.image) continue
-      ctx.drawImage(img.image, d.sx, 0, d.fw, d.fh, d.x - ax0, d.y - ay0, d.fw, d.fh)
+      if (!d.solid || !chunk.mat || !img.data) { ctx.drawImage(img.image, d.sx, 0, d.fw, d.fh, d.x - ax0, d.y - ay0, d.fw, d.fh); continue }
+      // 实心植被(PixelSprite):像素在材质格里,只画材质还在的那些像素 —— 被炸掉 / 挖掉 / 烧掉的部分就没了
+      const x0 = Math.max(0, ax0 - d.x), x1 = Math.min(d.fw, ax0 + CHUNK - d.x), y0 = Math.max(0, ay0 - d.y), y1 = Math.min(d.fh, ay0 + CHUNK - d.y)
+      if (x0 >= x1 || y0 >= y1) continue
+      const w = x1 - x0, h = y1 - y0
+      if (!px || px.width !== w || px.height !== h) px = new ImageData(w, h)
+      const out = px.data, src = img.data, W = img.width, mat = chunk.mat
+      out.fill(0)
+      for (let j = y0; j < y1; j++) {
+        const wy = d.y + j - ay0
+        for (let i = x0; i < x1; i++) {
+          const si = ((j * W) + d.sx + i) * 4
+          if (src[si + 3] < 128) continue
+          if (mat[wy * CHUNK + (d.x + i - ax0)] !== d.mat) continue
+          const oi = ((j - y0) * w + (i - x0)) * 4
+          out[oi] = src[si]; out[oi + 1] = src[si + 1]; out[oi + 2] = src[si + 2]; out[oi + 3] = 255
+        }
+      }
+      // putImageData 会把透明像素也盖上去(抹掉背景),先放到小画布再 drawImage
+      if (!this._vegCv || this._vegCv.width < w || this._vegCv.height < h) this._vegCv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(Math.max(w, 128), Math.max(h, 160)) : Object.assign(document.createElement('canvas'), { width: Math.max(w, 128), height: Math.max(h, 160) })
+      const vc = this._vegCv.getContext('2d')
+      vc.clearRect(0, 0, w, h); vc.putImageData(px, 0, 0)
+      ctx.drawImage(this._vegCv, 0, 0, w, h, d.x + x0 - ax0, d.y + y0 - ay0, w, h)
     }
   }
 }

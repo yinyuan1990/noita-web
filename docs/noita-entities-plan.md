@@ -384,15 +384,222 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
    - 探针 `_noita-portal-shot.mjs [url]`:4 个传送门 (−1272/−760/−248/266, 1070) 全亮;从 (−248, 940) 掉进漏斗 → 落到 (−677, 1415) temple_altar_left;抽掉眼睛里的传送液 → on=false + 提示,人留在漏斗。
    - **事故记录**:这一步中途用 PowerShell `Get-Content -Raw | Set-Content` 改文案,把 `noitaPlay.js` 的 UTF-8 中文全部写坏(GBK 双重编码,不可逆)。从 Cursor 本地历史
      (`%APPDATA%\Cursor\User\History\-7c83036f`,14:12:43 版)恢复后逐条重放了之后的改动(趟沙台阶组合 / HUD 行 / 滚轮 / 空杖提示 / 刷新补满 / 传送门)。**以后改源码只用编辑工具,不用 shell 重写文件。**
+9. **怪物生命周期 + 走路 AI 重做 + 自由模式**(2026-09-04 晚,用户反馈"传送后没有怪物 / 怪卡在某个节点 / 本来出不来的怪突然跳出来 / 手机版别那么复杂,技能全开无限,主要玩材质"):
+   - **传送后没怪的根因**:`Entities.spawnedChunks` 只加不删,区块被 LRU 卸载(常驻 40)后回来仍算"已生成";同时 `list` 超 240 只就砍最老的 → 回到去过的区块永远空的。
+     改成两套:`spawnedChunks`(道具 / 物品 / 圣山特殊物只放一次,睡着的刚体已写进 chunk.mat,重放会重复)+ `liveChunks`(怪 / 虫跟着区块走);`ChunkStreamer.onEvict` → `Entities.unloadChunk(entry)`
+     收掉落在该块里的怪 / 虫,回来 `spawnChunk` 只重刷 creature 行(原版卸载区块也不存活物)。上限改 600、超了砍离玩家最远的。探针 `_noita-tp-spawn-shot.mjs`:出生 → 挖掘场 10 只 → 雪窟 16 只 → 回出生 → 回挖掘场 **10 只**(之前 0)。
+   - **bug2 穿墙冒出来**:`_walkStep / _flyStep / _crawlStep` 末尾的"卡在实心里就每帧往上顶 ≤16px"是罪魁——被落沙埴住 / 堵在坑里的怪一帧穿过顶上的石头。
+     改 `_unstick`:±3px 内就近挪出(先往上),挪不出 = 被埋住,速度清零原地不动;出生落点卡在墙里另走一次性的 `_settle`(≤24px 上找)。`_blocked` 改成扫碰撞盒四条边每 1px(之前只采左右两列、竖向每 2.2px 一点,1px 地板 / 竹竿会漏),子步 1px。
+   - **bug1 卡在节点**:旧寻路 8px 格只采格心一个像素、跳边最多 3 格但 `jumpV −125` 只能跳 13px → 路说能上、身体上不去,原地蹦到放弃再来。
+     现在:① `noita-prepare-entities` 多抽 `PathFindingComponent` 的 `jump_speed / initial_jump_lob / initial_jump_max_distance_x/y / frames_between_searches`(base_humanoid 100/60,miner·shotgunner 60/60);
+     ② `_findPath` 改 Dijkstra 桶队列,"能站" = 整个碰撞盒放这格不撞(真 `_blocked`)且脚下有实心,边:平走 1 / 掉 ≤12 格 / 跳(直上 j 格再横移 i 格,i ≤ initial_jump_max_distance_x/8 且 ≤ 抛物滞空 × 140px/s,j ≤ _y/8,代价 3+i+j 所以能走不跳;
+     只在这一侧走不通或人在上面时枚举),Uint8Array 网格缓存,≤600 节点,实测 0.6~0.9ms/次;③ 路点带 jump 标记 → 走到起跳格中心 `_jumpTo(tx, ty)` 按 pixel_gravity 反算抛物线(竖向刚好越过 +4px,横向按滞空时间,≤140),
+     空中 `lobT` 不往 run_velocity 收、贴墙不清 vx(过了墙顶继续往前);落地没到路点 → 立刻重算(不走回起跳点再来一遍);④ `frames_to_get_stuck` 到 → 重算,连卡 3 次 → 歇 1.5s;找不到路又撞墙 → 歇 1s 不在墙根蹦;
+     ⑤ 闲逛不走悬崖 / 追人跳窄坑的"前方有地"改看脚下 1~12 行(之前只看脚下 +12 那一行,站 1px 地板上会左右抽搐)。
+     探针 `_noita-ai-stuck-shot.mjs`(出生地上方砌试验场):僵尸 1.3s 跳上 32px 台子追到人开打 / 整个埋进石头的僵尸 6s 不动 / 1px 地板上的僵尸不掉穿、到边缘折返。`_noita-climb-shot`(蜘蛛爬柱)/ `_noita-ai2-shot` / 挖掘场一屏 60fps 无回归。
+   - **自由模式 FREE**(默认开,`?free=0` 关):`flags.editAnywhere`(随处改法杖)、`wands.infinite`(不扣法力、有限次数不减)、`wands.allUnlocked`(`spawn_requires_flag` 的法术也进商店 / 工具箱池)、每根杖容量至少 8;
+     背包多了**法术库** `#edLib`(`wands.usableSpells()`:弹丸都在 projectiles.json 里的 + 有效果的修饰 + 多重施放,共 165 张按类型分组,点一张装进选中法杖,取下即丢)。手机隐藏 `#panel` 调试栏和"上报日志"。
+     探针 `_noita-free-shot.mjs`:出生地开背包可编辑 / 165 张 / 装 MATERIAL_LAVA + FIREBALL 连开 3s 法力 100→100。
+     用户追加("只有 4 格怎么扩 / 加了法术后每次点击是依次的 / 法杖全部开通"):自由模式 **8 根杖**(`flags.wandSlots`,EXTRA_WAND_SLOT 仍叠加)、**每杖 20 格**(`FREE_CAPACITY`,存档载入也抬到 20)、
+     ~~点一下把杖里全部卡一起放出~~ —— **这是错的,已撤回**(用户:"他是一个法杖多个效果,是组合,比如多重是多个弹")。
+   - **施法模型按 gun.lua 重写**(`Wands.cast`,逐条对着 `draw_shot / draw_action / draw_actions / add_projectile_trigger_* / _handle_reload`):根 shot 抽 `actions_per_round` 张(牌库抽空就停);
+     每张卡:法力不够 / 次数用完 → 弃掉换下一张;PROJECTILE / STATIC / MATERIAL → 进当前 shot;**MODIFIER** 改 c(`speed_multiplier` 累乘 —— prepare 脚本新抽 `speedMul`(加速 ×2.5 / 重击 ×0.3)和 `damage_projectile_add`)再 `draw_actions(1, true)`;
+     **DRAW_MANY** `draw_actions(N, true)` 再抽 N 张进同一 shot(无尽 = 剩下全部),抽到牌库尾**绕回**一次(弃牌回牌库 + 这发之后充能);**触发弹**(`add_projectile_trigger_hit_world / timer / death`)先抽 1 张当载荷挂在弹上(`payload`,可嵌套),
+     `ProjectileSystem._die` 时在撞点(退 2px)沿原方向放出;shot 里全部弹同一帧发出;施法延迟 = 杖 + Σ卡、充能 = 杖 + Σ卡。infinite 只是不扣法力 / 次数不减 / 充能 0。
+     探针:[二重, 火球, 岩浆, 火花弹] 第一下 火球+岩浆、第二下 火花弹、第三下绕回;[火花弹·触发, 炸弹] → light_bullet{bomb},弹死 → bomb 出现;[加速, 火花弹] speedMul 2.5。
+   - **法杖面板 UI**(原版法杖提示框那几行):每根杖显示 洗牌 / 每次施放 / 施法延迟(帧 + 秒)/ 充能 / 法力上限 / 法力恢复 / 容量 / 散射,自由模式带 −/+ 可调(容量 ≤26,存档带走);
+     卡框按 ACTION_TYPE 上色(弹丸红 / 场橙 / 材质蓝 / 修饰紫 / 多重绿),悬停看 名字·类型·法力·次数·延迟·散射·速度·触发说明·原文描述;法术库分组头带色块和一句规则,顶部一段"怎么组合"说明。
+     用户追加("怎么把子弹放到第 4 个法杖,没法放"):根因是底栏 8 格但开局只有 2 根杖,空格不是杖、背包里也没这行 → 自由模式 `fillWands()` 用**空法杖**(`blankWand`:借 17 根固定杖之一的外形,清卡 / 不洗牌 / 20 格 / 延迟 5f)把背包补满到 `wandSlots` 根,
+     新局和读老存档都补;捡杖时满了就顶掉一根还没装卡的空杖(`pickWand`)。编辑器:开背包默认选中**手里那根**(payload),只有选中的杖展开属性面板、其余压成一行(8 根不用翻几屏);
+     `#tip` 被 `#editor`(z 20)盖住导致所有提示看不见 → 编辑器底部 sticky 行加 `#edMsg`(装进 / 取下 / 满了 / 先选杖 都在这儿说)。探针 `_noita-free-shot.mjs` 加真实点击:点第 4 行 → 点法术库第一张 → 空法杖 4 得到 BOMB → 底栏第 4 格开火出 bomb。
+   - **黑洞修对**(用户:"巨大黑洞效果不对"):之前巨大黑洞只是一张 alpha 0.1 的贴图原地待 8s、死时 1px 洞,什么都不吞。原版 `black_hole_big.xml` 的本体是引擎内置 **BlackHoleComponent**(radius 1 / damage_probability 0.25 / particle_attractor_force 6)
+     + `black_hole_big.lua`(每 3 帧 radius = min(64, radius+1))+ `black_hole_gravity.lua`(150px 内弹丸每帧 v += 196×(1−d/150) 朝中心,刚体 ×0.2)。prepare 脚本新抽 `d.blackHole {radius, damageProb, attractor, grow{every,max,step}}` 和 `d.gravityWell {dist, coeff, bodyMul}`(常量从 lua 正则抽)。
+     ProjectileSystem:`p.bhR` 按 grow 长大 → `_eat` 半径内全吞([indestructible] 除外,debris 1%)→ `hooks.blackHole(x,y,r,prob)` 圈内怪 / 虫 / 刚体 / 玩家每帧按概率吃 `BLACK_HOLE_DMG`;`gravityWell` 拉其他弹(黑洞之间不互吸,tag black_hole)+ `hooks.pull` → `entities.pull`(活物 / 刚体,走路怪这帧 `e.pullT` 跳过 AI 限速)+ 玩家;
+     渲染:黑洞本体 = 纯黑圆盘 + 粉色边光 + 往里飞的粉粒子,不画那张 sprite。**每次命中伤害 0.25 是倒推的**(xml 没有;wiki Omega Black Hole 210 curse/s ÷ 25 ÷ 60 ÷ 0.55 ≈ 0.25),玩家吃黑洞伤害不走 0.5s 无敌帧。小黑洞(`black_hole`,CellEater 12 / collide_with_world 0 / 速度 40)原来就能穿地吃洞,现在也带 gravityWell。
+     探针 `_noita-blackhole-shot.mjs`:巨大黑洞 3.8s 后 r=64、60px 内 10506 格实心 → 0、圈内僵尸死掉、8.3s 消失;小黑洞朝下 1.5s 走 70px 挖出 60 格通道。
+     用户追加("LooseGroundComponent 也要做,还有自己不能被吸进去"):(1)照 lua 改回**只吸刚体和弹丸**(`PhysicsApplyForceOnArea` + tag projectile),玩家 / 走路怪不吸 —— 第一版把玩家和怪也拉是我多做的;`e.pullT` 撤掉。
+     (2)子实体 `LooseGroundComponent`(probability 0.2 / chunk_probability 0.03 / max_angle π,lua 每次 max_distance = radius + 20)→ `d.blackHole.loose`;每帧按概率在洞边缘外 20px 环里挑一点,把 6~16px(chunk 16~32px)的一圈静态地面变成同类松散材质(`_loosen`,从 explode 里抽出来复用),掉进洞里被吞;探针里洞外 64~84px 环 3940 格松散 / 1448 格静态。
+   - **场类(原地 5)修对**:`base_field.xml` 的 `LifetimeComponent 7200` 被 ProjectileComponent 的 9999999 盖住 → prepare 取两者较小;`GameAreaEffectComponent`(radius 28 / frame_length)+ `damage_game_effect_entities`
+     → `d.areaEffect` → `hooks.areaEffect`:圈内怪吃 FROZEN(120 帧)/ ELECTROCUTION(40 帧)定住(`e.stunT`,电击冒蓝火花);`EnergyShieldComponent radius 28` → `d.shield`:进圈的敌方弹按离心方向弹开。
+     静止之环还带原有的 MagicConvert(r72 冻液体)。电击的伤害是引擎 ElectricityComponent 内置,没有数值可抽,先只做定身。
+   - **雷霆之环 + 电(用户:"雷霆效果也有问题,5 张橙色的全部对一下")**:原版 `electrocution_field.xml` 除了 GameAreaEffect(圈内怪 40 帧定身,shooter 不算),还有 `electrocution_blast.lua` 每 10 帧在圈内 ±28 随机点朝随机方向
+     `shoot_projectile misc/electricity.xml` —— 引擎内置 **ElectricityComponent**(component_documentation 默认 energy 1000 / speed 32 / probability_to_heat 0,这张卡 0.1):电流碰到**导电材质**就钻进去窜,碰到活物就电。
+     实现:(1)`materials.xml` 里只有金属显式 `electrical_conductivity=1`、油 / 胶水显式 0 → 真液体缺省导电(prepare-assets 补默认;水 / 血 / 岩浆 / 酸 … 都导,粉末 / 静态不导);
+     (2)`ProjectileSystem`:`d.electricity {every, spread, shotSpeed, energy, speed, heat}`;`_shootElectricity` 从随机点朝随机方向走一帧路程(5000/60 ≈ 83px,没碰撞),第一个导电格开一条 `zap`;`_stepZaps` 每帧走 speed 格(8 邻里挑导电格,偏向惯性方向 + 随机,没亮过的优先),走一格耗 1 energy,走出导电材质就断;
+     走过的格进 `elec` Map 亮 0.15s(渲染:亮蓝白闪 + 电流头一团蓝光),`heat` 每帧按概率把头上那格烧成 warmth_melts_to(水 → 蒸汽);
+     (3)`hooks.shock(cells)`:碰到亮格的怪 / 玩家 每 10 帧最多电一次 → `stunT` 40 帧 + `ELEC_DMG` 0.4(引擎常量,取 wiki Damage Types 页电伤害示例 `AreaDamageComponent damage_per_frame=0.4`;泡电水里 2.4/s,满血 1.7s 死,和原版"电水必死"的手感一致);玩家被电不吃 0.5s 无敌帧(wiki:湿身时电击没有无敌帧),`player.stunT` 期间不能动 / 不能开火。
+     探针 `_noita-field-shot.mjs`:圈放在水池左上,圈外水里的僵尸被电死、玩家走进电水 1.5s 被电 5~6 次掉 2 血、定身 0.67s。
+   - **其余 4 张橙色一起对了**:
+     - 静止之环:`MagicConvertMaterialComponent` 之前是"每帧随机抽 steps×60 个点"—— r72 的圈 1.6 万格只抽 300 个,基本冻不住;改成照原版语义**从中心一圈圈往外扫**(每帧 steps_per_frame 圈,1 圈 = 1px 环),loop=0 扫到 radius 就完(触摸系 4 帧扫完 20~30px、静止之环 15 帧冻完 72px),loop=1 从头再来(冰球 / 火球一路飞一路转)。探针:1560 格水池 1s 全冻成 ice_static。
+     - 遮蔽之环:EnergyShield 弹开敌方弹已有,探针敌方弹 vx 682 → −682。
+     - 雨云:`cloud_position.lua`(出生时往上 RaytraceSurfaces 40px 挂到天花板下)→ `d.riseTo`;下真水 379 格/2.5s 已有。
+     - 巨大黑洞:补声音(下条)。
+     - 场类精灵:`SpriteComponent` 之前只读子文件,丢了 base_field 的 `alpha 0.25 + additive` → 改成 Base 打底;`blast_frozen.xml` 的 `color_r/g/b` 染色(淡蓝 / 青)+ `next_animation`(spawn 5 帧 → fireball 行脉动)进 `d.sprite.tint / .next`,运行时 `p.spr` 切动画;雷霆之环 image_file="" 不再在圈心画白点。
+   - **黑洞第三次修(用户:"黑洞还是不对,看 E:\...\Noita.v20250125-P2P 怎么实现的,反一下")**:游戏目录 `tools_modding/component_documentation.txt` 有引擎组件文档 ——
+     `BlackHoleComponent`:radius 16 / particle_attractor_force 2 / damage_probability 0.25 / **damage_amount 0.1**(之前 0.25 是倒推的,改成文档值);`ElectricityComponent` energy 1000 / speed 32;
+     `LooseGroundComponent`:"shoots a ray in random direction"(`_loosen` 改成从中心绕上方向 ±max_angle 射线,碰到的第一块地面崩;圈里圈外都算);`MagicConvertMaterialComponent` 有 mRadius(证实是扫环)。
+     再把 wiki 的演示 gif 抽帧看(`Spelldemo_giga_black_hole_1.gif`):巨大黑洞**不是一个黑盘子一口吞掉圈内**——画面是一圈很淡的紫环,圈里的地面被一块块崩成飞行像素,
+     被 attractor(lua:= radius × 0.25)拉着绕中心打转、在中心湮灭;满屏粉色长条流光(emitter plasma_fading_pink draw_as_long attractor_force 32,lua 把出生范围改成 ±radius)朝洞心飞;
+     玩家离 ~100px 也被吸进去、屏幕变红(wiki:"attracts enemies"/"trying to resist its pull"—— 之前按 "自己不能被吸进去" 把玩家 / 怪的吸力去掉是理解反了,现在恢复:BlackHoleComponent 吸活物,gravity lua 吸弹丸 / 刚体)。
+     实现:`_bhCrumble` 每帧在圈内抽 (8 + R/4) 个小块(半径 1~2)从世界拿掉变 `bhParts`(材质原色 1px,重力 + attr px/s 每帧朝洞心 + 轻阻尼,到中心 3px 内消失,上限 4000);
+     `hooks.blackHole(x,y,r,prob,dmg,attr,dt)` → `entities.blackHole` 伤害 + `entities.attract`(150px 内 v += attr × (1 − d/150),走路怪 `pullT` 这帧不按 AI 限速)+ 玩家(`player.pullT`:没按方向时不做"松手减速",按方向才是在抵抗)+ 飞着的 debris;
+     渲染改成淡紫圆盘(lighter 0.16)+ 1px 亮边 + 材质色碎屑像素,黑盘子和自造的粉粒子删掉,fx 粒子支持 `attractor_force`。
+     探针:r64 时 3.75s 圈内 10506 格剩 2170、飞行像素 3629 颗;5.9s 剩 789;僵尸 0.33s 死;玩家 90px 处每 100ms 被拉 2px(从静止起步)。
+     用户追加("颜色不对,没原版华丽"):把 gif 帧放大 4 倍取色 —— 环是 2px 紫红(≈150,60,150),圈内一层暗紫雾,流光是 2px 粗 6~14px 长的亮粉紫条,整片被 LightComponent 的洋红光罩着、碎屑都泛粉。
+     我们的光照图是 multiply(白天彩光没效果),所以黑洞的光直接在 ProjectileSystem.render 里用 lighter 叠:大范围洋红软光(r + 64)+ 中心亮核;圈内 rgba(40,0,55,0.5) 暗紫雾;环 2px rgba(235,110,240) + 5px 软边;
+     带 attractor 的 fx 流光单独在最上层画两层线(2px 洋红 + 1px 亮粉芯,长度 3 + 速度/50 ≤ 14)。
+     用户再纠("黑洞不是黑的么,怎么会粉红"):对着 wiki `Demo_Black_Hole_Sizes.png` 取色 —— 本体是**暗紫黑、接近不透明**的圆盘(白底上 rgb≈70,60,80 → 底色 (20,14,30) 约 78% 不透明)+ 1px 细粉边(≈225,140,235),
+     洋红光只在盘外一圈淡淡的光晕。之前把圈内填洋红 + 中心亮核是过头了,改回:盘 rgba(20,14,30,0.78)、边 1px、盘外 lighter 光晕 0.16 → 0(r → r+64),粉色只在流光 / 细边 / 光晕。
+   - **黑洞第四次:反 exe(用户:"不能破解 Noita.v20250125-P2P 看效果怎么写的么")**:机器上有 Python `capstone` + `pefile`,写了 `%TEMP%\_reva.py`:在 exe 里找字符串 → 找 .text 里引用它的 32 位地址 → 回溯 `55 8B EC` 函数头 → 反汇编,
+     抽 call 目标 / 浮点常量(从 .rdata 解析)/ 立即数 / 字符串。`noita_dev.exe` 比正式版多留了断言文字(`BlackHoleSystem_Raytrace() hit an endless loop`、`mGrid->IsSafe(...)`),源码路径 `source/component_updators/blackhole_system.cpp`。
+     反出来的 `BlackHoleSystem::Update`(0xb4fde0)每帧:
+     (1)**吃格子靠射线**:最多试 100 次随机角,从中心射到 radius(Raytrace 0xb4f330),第一条打到格子的射线吃掉命中格;再以命中点为基准沿垂直方向(|dx|>|dy| 沿 y,否则沿 x)偏移 ±1..8 px 各射一条 → 一帧最多 17 格,一条"扇面"。所以是从内表面一层层啃(≈1000 格/s),不是一口吞,r64 的圈 8.3s 吃不完 —— 这就是 gif 里圈内还剩地面的原因。
+     (2)**吃掉的格子 CreateParticle(原材质)**(0xb4f620):速度 = 径向方向旋转 π/2(常量 1.5708)× attractor × 4(常量 4.0),再叠 rand×20−10 随机 —— 切向甩出,被吸引器拉回来就绕圈,这就是漩涡;50% 的粒子多一个标记(0x41400000=12.0 的字段,没解出含义)。
+     (3)**粒子吸引器**:注册 {x, y, radius × 3, attractor × −0.025}(范围 3R,负号 = 吸)。
+     (4)**实体**:±radius 方框内(不是 150)的实体,VelocityComponent / CharacterData 的 mVelocity += attractor × 1.5 × (径向 + 径向旋转 π/2) —— 一半拉一半切,怪和玩家也绕着掉进去;Box2D 刚体范围 1.5R,力 ∝ (1 − d/1.5R) × attractor,外加 rand×30−15 的随机转矩。
+     (5)**伤害**:每帧掷一次 `rand < damage_probability`,中了就 DamageEntitiesInRadius(radius, damage_amount, tag "mortal");伤害原点是中心附近 (rand×90+30)×0.5 px 处的随机点(只影响击退方向)。
+     实现照改:`_bhCrumble` 改射线扇面,`_bhEatCell` 切向初速 4×attr,`bhParts` 吸引加速度取 12×attr px/s²(吸引器单位反不出来,按"切向 4×attr 时轨道半径约洞半径 1/3"定)+ 阻尼 0.988/帧,范围 3R;
+     `entities.attract` / 玩家改成 ±R 方框 + attr×1.5×(径向+切向);伤害改每帧一次全局掷骰。探针:3.75s 圈内 10506 格剩 5831、5.9s 剩 3783(和原版"啃不完"一致),碎屑 2400~3600 颗绕中心成团。
+   - **黑洞没声音(用户)**:原版是 FMOD 事件(`AudioComponent event_root` + `AudioLoopComponent`),没有音频文件可抽。prepare 抽 `AudioLoopComponent event_name` → `d.loop`(black_hole_big / black_hole / field / field_electric);
+     运行时 `projectiles.loops` 记录本帧活着的循环名,noitaPlay `PROJ_LOOPS` 按名字配合成噪声音色(黑洞 70Hz 低鸣、场 520Hz 嗡鸣、雷霆之环 3.2kHz 滋滋、电流 zap 4.2kHz),音量随离玩家距离衰减;黑洞出生再来一声 rate 0.35 的低沉 explosion。
+   - 冒烟方式变了:`8.162.5.160:80` 现在 301 到 https(它其实是阿里 ENS 边缘节点),要 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + **https://** URL;线上首屏资源到齐慢(27MB 冷缓存),探针要等区块就位再测。
 
 ---
+
+## 2.4 反 noita_dev.exe 得到的引擎规则(用户:"把现有的子弹效果都反一下,要精确")
+
+工具(都在 `%TEMP%`,丢了照这里重写,Python 需要 `capstone` + `pefile`):
+- `_strings.py exe pattern`:扫字符串;`_reva.py exe pattern [n] [--asm]`:找引用某字符串的函数并反汇编,抽 call / 浮点常量 / 立即数 / 字符串;
+- `_asmat.py exe va count [--skip-asserts]`:带注释反汇编(内存浮点常量、字符串标在行尾);`_funcs.py exe start end`:按 int3 切函数列摘要;
+- `_vtable.py exe ClassName`:RTTI → vtable(ComponentUpdator 22 槽,但每组件 Update 是 std::function 里的 lambda,得从同编译单元相邻函数 / 断言字符串找);
+- `_rdconst.py exe va…`:读常量。`noita_dev.exe` 比正式版多断言文字,源文件名 `source/component_updators/*_system.cpp`、`gameplay_utils/explosion_factory.cpp`。
+- 字段文档:游戏目录 `tools_modding/component_documentation.txt`;ConfigExplosion 字段在 wiki `Documentation:_ConfigExplosion`。
+
+结论(已照改,探针 `_noita-explosion-shot.mjs` / `_noita-blackhole-shot.mjs` / `_noita-field-shot.mjs`):
+
+1. **ExplosionFactory::IMPL_DoExplosion**(0x685350,4680 条):
+   - 先建 360 项随机表 `0.25(1+sin(i/90)) + rand×0.5`(大爆炸 r>60 时用来再抖一下边)。
+   - **CastRays**:360 条射线(1°/条)从中心 1px 步走到 `explosion_radius`;每个实心 / 液体格 `take = min(energy, 材质 hp)`,`energy −= take`;撞上 `durability > max_durability_to_destroy` 的格立即停(该格不算);energy 归零停;返回到达距离²(+rand 0/1)。
+     材质 hp:rock_static 100000 / rock_hard 200000 / soil 2000 / sand 800 / steel_static 130000 / templebrick 1000000;ray_energy:火球 5 万(挖不动岩石,只挖土)、光弹 40 万、炸弹 600 万、圣炸弹 640 万;文档默认 20000。
+   - **格子循环**(±total_radius 方框,total = radius + stains_radius):dist² ≤ radius² 且 ≤ 自己角度射线到达距离² → 摧毁;空格按 `create_cell_probability`% 各自掷骰生成 `create_cell_material`;液体 `hole_destroy_liquid=0` 时**抛飞**(CreateParticle ±0.35 随机速度)不是留着;
+     `destroy_non_platform_solid_enabled=0` 时平台不拆;material_sparks:格 hp ≥ material_sparks_min_hp 且 rand%100 < probability → count_min..max 颗真材质火花,速度 ∝ 偏移 × −4;染色 `normalized_distance_from_hole_edge = ((d² − r²)/(total² − r²))²`。
+   - **DamageMortals**:方框 ±radius 里的实体,中心距离 ≤ radius,跳过 `dont_damage_this`;取 hitbox 四角 + 10px 网格采样点,任一点 `射线到达² ≥ 实体中心距离²` 才算打到(墙挡住没伤害);
+     伤害 = `config.damage × hitbox damage_multiplier`,**没有距离衰减**;击退冲量 = 方向 × lerp(physics_explosion_power.min, .max, 1 − d/r) × knockback_force × 3600(我们 ×120 换成 px/s)。
+2. **ProjectileSystem**(projectile_system.cpp):
+   - 反弹(0xd31873):`bounces_left--`;反射 r = v − 2(v·n)n;`r̂·v̂ > 0.75`(= 1 − 2cos²θ,入射离表面 < 20.7°)才弹,否则要 `bounce_always`;速度 × `bounce_energy`(默认 0.5)。
+   - 命中(0xd33c96):伤害 = `damage`(× 传入乘数);`damage_scaled_by_speed` → × min(1, 速度 / (damage_scale_max_speed || 初速));击退 = `knockback_force × 弹速 × 弹 mass / 目标 mass`(文档原话;光弹 kb 0 不推人、bullet 1.8、heavy 2.6、rocket 3);`penetrate_entities` 穿过实体每个只伤一次。
+   - 撞世界会 spawn `misc/crack.xml`(裂纹电流,速度 rand×2 × v);打到刚体给它 dir × 5 的速度。
+3. **VelocitySystem::Update**(0xd67458):`v += g·dt`;`v −= v·air_friction·dt`;液体里 `v −= v·liquid_drag·dt·液体格数`;`|v| ≤ terminal_velocity`;位置 += v·dt。
+   **默认值(文档)gravity_y 400 / air_friction 0.55 / terminal 1000 / liquid_drag 1** —— xml 没写就是这些,之前 prepare 当 0:手雷 / 石子 / 地雷 / 长枪 / 钻头都该有 400 重力;没有 VelocityComponent 的实体(circle_* / touch_*)根本不动。
+4. **BlackHoleSystem**:见上面 2.3 第四次修黑洞(射线扇面 17 格/帧、切向 4×attr 甩出、±R 方框吸力 attr×1.5 径向+切向、每帧一次掷骰伤害)。
+5. **ElectricitySystem::Update**(0xbe4a00):每步最多 16 次:mAvgDir 两侧 ±135°(rand×3π/2 − 3π/4)随机角,步长 = 方向 × 2 取整(2px 一跳),目标格非空、导电、10 帧内没电过;16 次都不行才断。我们加了 1px 邻格兜底(浅水坑 2px 跳容易出水面),让电流留在坑里持续闪。
+6. **CellEaterSystem**(0xb71230):±radius 方框,dist² ≤ r²,`rand % 101 < eat_probability`,吃掉的格出 `spark` 火花 —— 和我们的 `_eat` 一致。
+7. **MagicConvertMaterialSystem**:`mRadius` 逐帧长(证实是从中心一圈圈往外扫),`min_radius < radius`,`stain_frozen` 用 stain_frozen.png。
+8. **GameAreaEffectSystem**:`out_entities / out_hitboxes` 一一对应,半径内实体每 frame_length 帧加一次 game effect —— 和我们一致。
+9. **修饰卡(用户:"还有这么多修饰效果到底怎么反应的,瞬移、激光、反作用力浮空")**:
+   - 数据侧:`gun_actions.lua` 每张卡的 action 体就是对 `c.*`(ConfigGunActionInfo,默认值在 `gunaction_generated.lua`)和 `shot_effects.recoil_knockback` 的一串操作。
+     prepare-wands 把它们抠成 `ops`(add / mul / set / append / cap / floor,if-clamp 也识别);`scripts/_dump-modifiers.mjs` 能列全表(491 张卡,179 张修饰;字段频次:fire_rate_wait 312、extra_entities 136、recoil 78、spread 71、speed 63…)。
+   - `gun.lua` 语义(Wands.cast 照抄):`c` **每个 shot 一份**(`create_shot` → 默认值;根 shot 从法杖 gunaction_config 拷);同一 shot 里所有卡(弹丸卡自己也改 c:火球 +20 后座、火花弹 +5 暴击)的 ops 都进同一个 c,
+     `register_action(c)` 一次 → shot 里所有弹共享最终 c;触发载荷是新 shot(新 c);`shot_effects` 整次施法共享。
+   - 引擎侧:`extra_entities` 是挂在弹上的子实体,绝大多数是 lua(数值原样抄进 `Wands.EXTRA_BEHAVIOR`):piercing_shot(on_collision_die=0)/ clipping_shot(penetrate_world,墙里 ×0.1)/ fly_up|down(第 20 帧竖直 2|v|)/
+     chaotic_arc(每 2 帧 ±0.4·max|v|)/ floating_arc(探 30px 悬 12px,vy 限 ±240 各一半)/ avoiding_arc(每 3 帧四向探 20px,(20²−d²)×0.3)/ lifetime_infinite / remove_bounce / nolla(1 帧)/ accelerating(air_friction −3)/ decelerating(+6)/ autoaim(200px 最近敌人 lerp 0.8 ±0.1rad)/ homing_cursor(朝法杖朝向转 20%)。
+     **HomingComponent**(反 exe HomingSystem::Update 0xc4adc0):detect_distance(默认 150)内最近目标;accelerate 模式 `v = v × velocity_multiplier + dir × targeting_coeff × dt × (1 − d/detect)`(所以追踪弹会明显变慢);just_rotate 模式只按 max_turn_rate 每帧转向。
+     homing 130/0.86、homing_short 480/0.83/60、homing_shooter 30/0.99/300(追射手)、anti_homing −130、homing_rotate 0.2rad、homing_accelerating 20/0.4/200 每帧 +2/+0.01。
+     **SineWaveComponent** m 0.6 × sin(freq 1.0 × 帧)当方向摆;**AreaDamageComponent** r16 每帧 0.14。
+   - **后座力**(反 exe GunSystem::ShootShot 0xc41ee0):`recoil_knockback > 0` 时,射手 CharacterData.mVelocity −= 瞄准方向单位向量 × recoil(px/s,直接加);RECOIL 卡 +200、激光 +20、火球 +20、轻击 −10。朝下打 = 每发向上 200 px/s → 一直浮空,就是视频里那个。
+   - **瞬移**:TELEPORT_PROJECTILE = `teleport_projectile.xml` 带 TeleportProjectileComponent(引擎):弹死在哪射手传到哪(min_distance_from_wall 4,y 速度归零);
+     TELEPORT_CAST 是工具卡:`add_projectile_trigger_death(teleport_cast.xml)`,teleport_cast.lua 出生就跳到 96px 内随机一个敌人身上,2 帧后死 → 载荷在敌人身上放出。
+   - **激光** LASER = `laser.xml`:普通弹,speed 130~150 但 air_friction −9(每帧 ×1.15 加速,被 terminal_velocity 1000 截住)+ 0.22 伤害 + `effect_disintegrated` + 后座 20。数据驱动,VelocitySystem 那套改对后自然对了。
+   - 其余 c 字段作用(引擎 GunSystem 按 RegisterGunAction 的 c 改弹):speed_multiplier 乘初速(lua 已 clamp 0~20)、lifetime_add 加帧、bounces 加次数、gravity 加到 gravity_y(GRAVITY +600)、knockback_force 加击退(KNOCKBACK +5)、
+     explosion_radius / damage_explosion(_add) 加到 config_explosion(HIGH_EXPLOSIVE +64 / +3.2,没爆炸配置的弹加了半径也会炸)、friendly_fire、game_effect_entities 命中给状态(frozen / electricity / on_fire)。
+     法术库现在放出 110 张修饰卡(`usableSpells` 只放我们实现了效果的 ops);卡片 tooltip 用 `editor.opsText` 把 ops 翻成人话。探针 `_noita-modifier-shot.mjs`。
+10. **模拟窗口(用户:"手机上子弹飞出屏幕,爆炸的地形要走到那里才开始动,看起来像静止")**:根因是 CellSim 只绑视口 +24px、ChunkStreamer 只请求视口 +32px,
+    屏幕外 `sim.get` 返回 −1、`sim.set` 失败,爆炸挖不动、崩下来的沙 / 液体不流,人走过去窗口盖到才开始动。Noita(GDC 2019 talk)模拟的是玩家周围一整片加载区(≈ 3×3 chunk),
+    靠脏矩形 / 睡眠让代价只和"在动的格子"有关。改法:`simWindow()` = 视口 ± 512px(跨度 < 1536 保证落在 CellSim 4×4 表里,手机横屏 VH≈200 时是 4×3 chunk),
+    `sim.bind(窗, inner=视口圈)` 只要求视口圈就位、外圈没到当 −1;`streamer.update(view, dt, simRect)` 把模拟圈纳入需要集(优先级在可见 / 前方之后,cache 48 够放);
+    `entities.update(dt, simWindow())` 屏幕外的怪也走 AI。探针 `_noita-simwindow-shot.mjs`(844×390 横屏):屏幕外 500px 的沙柱 1s 落完、−450px 处炸弹当场挖 2530 格、+400px 的僵尸在走;
+    快跑 1200px 可见空洞帧 0、常驻 40 块、模拟 0.2ms;`_noita-far-shot.mjs` 跳 6 个远点截图,地表 / 山厅 / 圣山 / 挖掘场都正常。
+11. **地表植被(用户:"地表被炸了树 / 蘑菇跟着往下掉,合理?反一下 Noita 怎么做")**:biome xml 的 `VegetationComponent` 分两类(`scripts/_dump-veg.mjs` 列全表):
+    - `is_visual="0"` + png(云杉 / 阔叶 / 大小蘑菇 / 仙人掌 / 沼泽树 / 枯草):对应 `entities/vegetation/*.xml` = **PixelSpriteComponent**(把图的实心像素烙进材质格,`material=tree_material`:wood_loose / fungus_loose / cactus,
+      `diggable=1`、`kill_when_sprite_dies`)+ **SimplePhysicsComponent**(`can_go_up=0`:脚下没东西就整株往下掉,不会往上)+ VelocityComponent(默认重力 400)。所以原版树是能被子弹打中、火烧、爆炸炸掉一块的,
+      脚下挖空会整株竖直落下 —— "跟着掉"是对的,但应该是按重力掉、像素级可破坏,而不是整张贴图瞬移到新地面上。
+    - `is_visual="1"`(灌木 / 草丛 / 藤蔓 / 气根 / 红草;或无图的 grass / moss / snow 表层材质):纯贴图,不进格子、不掉。
+    - 之前我们全是"decor 贴图 + 每次重画按当前地面重算落点"→ 炸了地面树就瞬移下去、还打不中。改法:
+      Worker `World._vegAnchors` 给 is_visual=0 的落点标 `solid / mat / id`,`_stampVeg` 生成时把实心像素烙进 `chunk.mat`(只写空气格,PixelSprite clean_overlapping_pixels=0);
+      落点只算一次:重画 / 读档时主线程把 `e.decor` 里的 veg 落点传回(`requestChunk({mat, veg})`,`ChunkStore` 存档带 veg),Worker 不再按被挖过的地面重算;
+      `ChunkPainter._paintVegetation` 对实心植被逐像素画、只画材质格里还是 tree_material 的像素(被炸掉的部分就没了);
+      主线程新增 `Vegetation.js`:每 10 帧看每列最低活像素正下方有没有静态格(同材质 = 旁边那棵树,不算撑),全空就 `_lift`(活像素从格子里抬出来存 mask + 小画布)按 400 px/s² 掉,
+      1px 一步试落点,碰到静态格 `_land` 烙回去(沙 / 液体让位),decor 归属换到落点碰到的 chunk;一个活像素都没了就删实体。
+      探针 `_noita-veg-shot.mjs`:云杉 2957 格进材质、火花弹撞树死、脚下挖空后 52px 落到坑底、1429 个自有像素落地后 1399(边缘落在静态格上的丢 2%)。
+12. **用户三张截图的一批细节(09-05)**:
+    - 天上悬一块 512 的岩石正方形(树左上方):biome_map (cx33,cy11) 是 `roadblock.xml`(色 f0d517),原版 = `_EMPTY_` wang + `coarse_map_not_terrain` + roadblock.png 全透明只有一个生成点(10 只 acidshooter 的天空陷阱)→ 空气。
+      我们 BIOMES 没登记 → 走默认 solid 填岩石。补登记 roadblock(air)、scale / watchtower(沙漠地表静态图块,按 desert 打底)。
+    - 站树顶往下陷:玩家碰撞盒只测左右两角,树尖 / 细枝正好落在两角之间就穿下去。`bodyBlocked` 顶 / 底两行整行采样,`onGround` 用 `groundUnder` 整行。
+    - 激光 / 等离子渣留在地上不消失(图 2 绿点):laser 爆炸 `create_cell_material=plasma_fading_green`,材质 tag `[evaporable_fast]`,materials.xml 反应表 `[evaporable_fast] + air → air + air`(45%/帧)、`[evaporable] + air`(15%,血 / 泥浆)。
+      我们 `_react` 里 `t <= 0 → continue` 把和空气的反应全跳了,而且液体停下块就睡、反应根本不跑。改:允许 t=0;`airRx[m]`(会和空气反应的材质)每帧 `_markOne` 不让睡。探针:120 格 1.5s 后 0。
+      落着的渣能托住人也一并没了(plasma_fading_green liquid_sand=1 按沙处理,但几帧就蒸发)。
+    - 湿身碰火"要有个过程":status_list.lua WET / BLOODY / SLIMY / RADIOACTIVE `protects_from_fire=true`(OILED 表里也写 true,但 wiki / 实测是"更易燃、烧更久",按 wiki);
+      wiki:沾污 "is depleted by contact with Fire",1% 沾污就全额生效,晃动才掉(stain_shaken_drop_chance)。改 `player.wet` 语义 = 沾污量 0~10:泡液体 0.25s 沾满、只湿脚最多 4 成;
+      站着 ~80s 干、跑着 ~10s;碰火时防火沾污每秒烤掉 4 成(冒蒸汽),烤光才点着;着火伤害改为 2% 最大血 / 秒(wiki,原来 0.2/0.5s 是 5 倍);OILED 烧 12s;泡任何液体立刻灭(含油,wiki)。
+      头顶画 `ui_gfx/status_indicators/*.png`(解 data.wak 拷到 res/ui/status)+ 剩余量条。探针:满湿站火里 3.4s 才烤到 0.39,期间 0 伤害。
+    - 死后"回出生点"上一局的坑 / 火 / 连锁还在跑:原版死亡 = 新一局,世界整个重生成,没有"接着上一局地形"。改:回出生点保留身上东西(法杖 / 特权 / 金),
+      但清本种子的地形存档(IndexedDB)+ 圣山崩塌 / 守卫状态,整页重载 → 模拟 / 实体 / 弹丸从零起。
+    - 心和金块"连成一起":`heart.xml` 是 SimplePhysics + SpriteComponent(`heart_extrahp.xml` 4 帧 20×20 一排),没形状图 → 我们把整张 4 帧的表当刚体,地上躺"四颗心一排";
+      金块是 `gold_box2d` 材质的 Box2D 刚体,原版互相碰撞堆成小堆,我们刚体不互撞 → 一箱全叠一个点。改:`_spriteFrames` 切第一帧当形状、按帧播、不打滚(`fixedRot`);物品之间挤开(minGap 4.4px)。
+      捡心:heart.lua `max_hp += 1×HEARTS_MORE_EXTRA_HP`(封 max_hp_cap)+ `heart_effect.xml`(spark_red 从中心往外描一颗心)→ 加了 `heartBurst` + 提示。
+13. **分裂弹(SPITTER)对表**:`deck/spitter.xml` 全部字段和 projectiles.json 一致 —— 速度 400~600 / 重力 200 / 空气阻力 2.7 / 寿命 25±7 帧 / 伤害 0.3 / bounce_always 10 次 ×0.5 /
+    死亡 r2 爆炸不挖洞(hole_enabled=0,只有 0~2 颗材质火花 + stains 3)/ 贴图 `projectiles_gfx/spitter.png` 7 帧 12×12 由亮到暗**缩成一点、播一遍不循环**(loop=0,0.35s ≈ 寿命)/
+    additive+emissive / 粉色枪口 muzzle_small_pink 1~5 / LightComponent r60 (80,10,40) / 弹墙 bounce_effects/spitter.xml 7~15 粒 plasma_fading_pink。
+    改了一处通用的:`velocity_sets_scale` 之前按 0.4 + 速度/450 拉长(分裂弹被拉成 1.5 倍的椭圆条),组件文档原话是 "sprite width is made equal to the distance traveled since last frame",
+    且 rocket(85px/s)也开着这个而原版火箭没被压成点 → 只拉长不压扁:scaleX = max(1, 每帧位移 × coeff / 帧宽)。分裂弹 7~10px < 12px → 原大小;狙击弹 26px/4px → 6.5 倍长线。
+    探针 `_noita-spitter-shot.mjs`:0.35s 死、7 帧播完、朝下打弹 1 次不挖洞。
+14. **怪掉金 / HUD 状态区 / 头顶导航(09-05)**:
+    - 怪死掉金:`drop_money.lua` money = 10 × max(1, floor(max_hp)),先最多 5 个 10 面值,再 1000/200/50/10 —— 我们一直是这么做的(slimeshooter_weak hp0.3 → 1 个 10);"看不出是什么"是因为缺了 goldnugget_*.xml 的
+      `SpriteParticleEmitter shine_08`(每 50~250 帧在 ±3px 闪一颗 5×5 星),原版一眼认出金子靠这个闪。补了:金块闲置闪光 + 捡起时 `gold_pickup.lua` 的火花(gold_pickup(_large/_huge).xml:6 帧 shine_08 朝 ±50 飞出并减速 + 一颗 shine_06 大闪 0.56s)。
+      `spawnItem('goldnugget_N')` 之前没带 gold 值,探针撒的金块捡不到钱,顺手修了。
+    - 头顶导航箭头 + "传送门 1149" 文字去掉(原版头顶什么都没有);屏边小箭头和顶部横幅保留,距离数字进横幅。
+    - 状态区按原版放 HUD 血条 / 悬浮条下面(release notes:"Fire status duration displayed in the status area" / "Stain status amount is displayed next to icon"):
+      每行 12×12 图标 + 剩余量条 + 数字(着火 = 剩余秒,沾污 = %,药效 = 剩余秒),文字行里的 [湿] [着火] 撤掉。头顶只留图标。
+    - 主角身上怎么体现:SpriteStainsComponent 染的是精灵像素本身,`fade_stains_towards_srite_top=1` 越靠头顶越淡 → 染色改成脚重头轻的渐变,量越大越深;着火照旧从身体往外冒火格 + 火星(fire_how_much_fire_generates=4/帧)。
+15. **怪卡石头里 / 灯笼(09-05)**:
+    - 怪卡在石头里:原版怪只在生成点的空气里出现,不存在长在岩石里的怪;我们地形和原版有出入 / 布景后盖 / 塌方,`_settle` 只往上找 24px、`_unstick` 只在 ±3px 找,找不到就原地冻住 —— 就是截图那只。
+      改:生成时往上 24px 再一圈圈找 ≤32px,都实心就不出这只;活着时埋进石头 >1s 每秒往外找 ±12px,3s 还在石头里就撤掉(沙埋不算,只看中心格是 static)。
+    - 灯笼(`props/physics_lantern(_small).xml`):glass_box2d 刚体 + `PhysicsJoint nail_to_wall`(大:pos_y=-2 钉在图顶上方的墙里;小:breakable)+ 5/4 格油(`leak_on_damage_percent 0.999`)+ hp 0.9/0.15 +
+      `script_physics_body_modified=physics_lantern_damaged.lua`(像素一被打掉就 EntityLoad(misc/fire.xml) → **起火**)+ `ExplodeOnDamage`(死了炸 r12/r5、坑里 10%/50% 生火、洒油)+
+      `PhysicsBodyCollisionDamage speed_threshold=120`(掉下来砸地就碎)。原版流程 = 打中 → 像素缺 → 起火 + 漏油 → 油烧;打够 / 掉下砸地 → 碎 → 炸 + 洒 5 格油烧一片。
+      我们缺的:① 弹丸打刚体不抠像素(现在命中点抠 1.5px,才触发 physics_body_modified);② `leak_on_damage_percent` 之前当"伤害占比阈值"用,文档原话是"might leak when projectile damage happens" = 漏的概率;
+      ③ 缺 physics_lantern_damaged 起火;④ 缺 PhysicsBodyCollisionDamage(抽进 entities.json:speed_threshold / damage_multiplier 1/60);⑤ 钉子 / 链子挂着的像素被打掉关节要断(`hasPixelNear`);
+      ⑥ **矿里的灯笼从来没出现过**:带皮肤图(火苗)的道具只请求了形状图,pendingProps 永远等不到皮肤图。探针 `_noita-lantern-shot.mjs`:大灯笼第 1 发起火 + 缺像素、第 4 发漏油、第 8 发碎(0.9/0.12)炸 + 5 格油;没顶的直接掉下来砸碎。
+16. **金块颜色 / 刚体摇晃 / 怪穿墙 / 圣山崩塌 / 捡心效果(09-05 第三批)**:
+    - 金块是绿红黄的:`items_gfx/goldnugget_*.png` 不是颜色图,`gold_box2d` 的父材质 gem_box2d `Graphics normal_mapped="1"` —— png 是**法线图**,显示 = 材质 color(ffc74e 金)按法线打光。
+      materials.json 抽 `normalMapped`,RigidBody `_canvas` 对这类按法线(左上来光)给材质色明暗;碎屑也用材质色。宝石 / 药瓶玻璃同一套。头顶状态图标改原图 12×12 不缩放(缩到 8 就糊)。
+    - 板凳 / 崩塌石块左右摇:两条腿轮流点接触给扭矩;加"坐实"规则(慢速贴地角速度再耗、离 0/90° 不到 4° 直接摆正)。顺带发现桌子会**穿地**:法线用"接触质心→刚体中心",
+      桌面一排像素多、桌腿少,接触质心天然偏上 → 算出朝下的法线一路推穿。改成"接触质心→边缘像素质心",全埋(≥6 成边缘在实心里)当从上掉进去往上顶;顶出后再回收 0.25px,
+      不然悬半像素掉回来再顶、vy 每个来回 ±20 永远睡不着。探针 `_noita-body-shot.mjs`:桌子 / 崩塌块落平台 3s 内入睡 rot=0。
+    - 怪穿墙:三处"只查终点"的挪位 —— 走路怪爬台阶 `e.y -= c`(c ≤ climb)、飞行怪贴坡上下滑 ≤4px、爬墙怪跨小坎 ≤4px / 拐角 ≤3px,中间一段不查 → 隔着 1~2px 的板子就"抬"到另一面;
+      爬墙怪还是 2px 一步。全部改成一路查 + 1px 一步。
+    - 圣山崩塌按 `loose_chunks_workshop.xml` 重做:LooseGroundComponent **每帧** probability 0.25 绕上方向 ±2.1 rad 射 ≤180px,打到的地面 3~8px 一团松脱成**同材质飞行像素**(真粒子,落地堆成砖色渣);
+      chunk_probability 0.15 只打顶(±0.7),按 `procedural_gfx/collapse_big/0~14.png` 形状抠一块 **concrete_collapsed**(灰混凝土,不是砖色)刚体;LifetimeComponent 320±50 帧。
+      concrete_collapsed 材质:`solid_on_collision_explode=1`(砸地按 ExplosionConfig 炸:concrete_sand 火花 + 震镜)、`solid_on_sleep_convert=1 → concrete_static`(睡着化成静态混凝土,刚体撤掉)。
+      之前是 44 块砖色不规则圆团、没有像素雨、不炸不化 —— 效果不对就在这。
+    - 捡心 / 法术刷新的效果:heart.lua `GamePrintImportant("$log_heart", "你的最大生命现在是 N")` → 屏幕中上方大字 + 说明 3.5s;血条闪白(max_hp_old / mLastMaxHpChangeFrame);
+      heart_effect 心形火花;圣山满血心同一套。法术刷新:shine 火花 + 大字 + 法力条闪白。
+17. **树挡路 / 怪"挂"在树上 / 尸块晃(09-05 第四批)**:
+    - materials.xml 的 `platform_type` 才是"角色碰不碰这格":0 = 穿过去 —— grass / moss / plant_material / mushroom / **wood_loose(树)** / fungus_loose / rock_loose / **meat(尸块)** / item_box2d / wood_prop_noplayerhit;
+      1 = 站得住 —— rock_static / sand_static / wood / steel / brick / concrete_static / concrete_collapsed / wood_prop…;2 = templebrick_box2d;没写 = 1。原版人和怪都穿树走、踩不到尸块,子弹照样打得中树。
+      之前一版按 `solid_static_type` 判是错的:wood / steel / brick / meteorite 这些 cell_type=solid 的真地形 sst≠1 但 pt=1,会被当成可穿。人(`solidAt`)和怪(`_solid`)都改按 platformType;
+      刚体(原版 Box2D)另给 `_solidB`:platform_type 只管角色,箱子 / 尸块照样落在树上、堆在尸块上(不然尸块堆互相"穿"着一直醒来掉)。"怪被藤蔓挂住"其实是站在树的实心像素上,同一处修。
+    - 尸块碎了以后一直晃:碎肉 3~10 像素的小块惯量极小,点接触的扭矩冲量甩到 20+ rad/s 乱转、转着钻进地里。改:n<12 的小块一律按面接触(不给扭矩)、法线按来向;
+      角速度封顶 12 rad/s(box2d 默认量级)。探针 `_noita-body-shot.mjs`:僵尸 12 块尸块 3s 后 10 块睡着(之前 3 块)。
+18. 没反完的:DamageModelSystem(电水接触伤害每帧多少、火伤 0.2 / 坠落 0.1~1.2 常量在 0xbc6980)、LooseGroundSystem 细节(144 条,和文档描述一致就没细读)、PhysicsThrowable。
 
 ## 2.5 接手指南(新会话从这里开始)
 
 **仓库**:`https://github.com/yinyuan1990/noita-web.git`(main;2026-09-04 首推,`.gitignore` 排除 node_modules / dist* / noita-ref / scripts/out / scripts/shots)。
 本机 `git config http.proxy socks5h://127.0.0.1:2801`(用户的本地代理是 SOCKS5,走 http:// 会超时)。`noita-ref/`(原版解包数据 + 存档真值)不在仓库里,只在本机 `e:\soft\xiaoshuodongtai\web\noita-ref`。
-**当前状态(2026-09-04 18:00)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙全部上线。
-**线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);此前冒烟用 `$env:ORIGIN_IP='8.162.5.160'` 直连源站。
+**当前状态(2026-09-04 20:00)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
+怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条)。
+**线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。
 
@@ -407,7 +614,8 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 圣山探针 `_noita-temple-shot.mjs [x,y] [url]`(传送进圣山 → 列商店 / 灯 / 生成点 → 给钱买一件 → 开编辑器 → 拿一个特权,四张截图);
 憋气 / 死亡画面 `_noita-drown-shot.mjs [url]`(出生地挖坑灌水 → 逐秒记气 / 血 → 死亡画面 → 点回出生点);
 lukki 蜘蛛 `_noita-lukki-shot.mjs [lukki|longleg|tiny|eggs|jungle] [url]`(出生地放一只看腿 / 追 / 刺 / 打死,`jungle` 传送到丛林找真生成的;`-z*.png` 是 4 倍放大截图);
-玩法 UI `_noita-ui-shot.mjs [pc|touch|all] [url]`(指引 / 引导 / 背包只读 / 踢 / 暂停 / 底栏 / 手机动作键);圣山崩塌 + 存档 `_noita-collapse-shot.mjs [url]`;圣山入口传送门 `_noita-portal-shot.mjs [url]`;商店件数 `_noita-shopcount-shot.mjs [count]`(setGlobals 后传送圣山数货);圣山守卫 `_noita-steve-shot.mjs [url]`(检查区材质直方图 → 挪一件货出框 → Stevari 出现追人开火 → 新页挖穿顶砖;输出里有中文提示,在 PowerShell 里请 `> file` 再看)。
+玩法 UI `_noita-ui-shot.mjs [pc|touch|all] [url]`(指引 / 引导 / 背包只读 / 踢 / 暂停 / 底栏 / 手机动作键;测"背包只读"要带 `&free=0`);
+黑洞 `_noita-blackhole-shot.mjs [url]`;怪物随区块重刷 `_noita-tp-spawn-shot.mjs [url]`;走路 AI(跳台子 / 埋住不动 / 1px 地板)`_noita-ai-stuck-shot.mjs [url]`;自由模式 `_noita-free-shot.mjs [url]`;圣山崩塌 + 存档 `_noita-collapse-shot.mjs [url]`;圣山入口传送门 `_noita-portal-shot.mjs [url]`;商店件数 `_noita-shopcount-shot.mjs [count]`(setGlobals 后传送圣山数货);圣山守卫 `_noita-steve-shot.mjs [url]`(检查区材质直方图 → 挪一件货出框 → Stevari 出现追人开火 → 新页挖穿顶砖;输出里有中文提示,在 PowerShell 里请 `> file` 再看)。
 调研脚本 `_survey-entities.mjs`、`_dump-spawn-tables.mjs`、`_dump-biome-mats.mjs`、`_dump-wands.mjs`、`_fit-surface.mjs`。
 
 **上线**:`npm run build:noita; tar -czf dist-noita.tar.gz -C dist-noita .; $env:DEPLOY_PW='<密码,文档不存,新会话向用户要>'; python scripts/_deploy.py noita`,

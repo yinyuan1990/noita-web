@@ -26,6 +26,20 @@ export class ChunkStore {
 
   static key(seed, cx, cy) { return `${seed}:${cx},${cy}` }
 
+  /**
+   * 世界生成版本:生成算法 / 群系表 / 植被烙格子改了之后,老存档里改过的区块还是旧算法生出来的(天上悬的岩石块、没烙进材质的树…),
+   * 读回来就"看着没变化"。open 之后调一次:本机记的版本和现在不一样 → 把这个种子的旧区块全删,重新生成。返回删了几块。
+   */
+  async ensureRev(seed, rev) {
+    const k = `noita_world_rev_${seed}`
+    let cur = null
+    try { cur = localStorage.getItem(k) } catch { /* */ }
+    if (cur === String(rev)) return 0
+    const n = await this.clear(seed)
+    try { localStorage.setItem(k, String(rev)) } catch { /* */ }
+    return n
+  }
+
   _tx(mode, fn) {
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction(STORE, mode)
@@ -35,15 +49,20 @@ export class ChunkStore {
     })
   }
 
-  /** @returns {Promise<Uint16Array|null>} */
+  /** @returns {Promise<Uint16Array|null>} 材质;植被落点用 getVeg 拿 */
   async get(seed, cx, cy) {
     const rec = await this._tx('readonly', (s) => s.get(ChunkStore.key(seed, cx, cy)))
     return rec ? rleDecode(new Uint16Array(rec.rle), rec.n) : null
   }
+  /** @returns {Promise<{mat:Uint16Array, veg:Array|null}|null>} 材质 + 植被落点(树掉过之后位置变了,和材质一起存,读档才对得上) */
+  async getRec(seed, cx, cy) {
+    const rec = await this._tx('readonly', (s) => s.get(ChunkStore.key(seed, cx, cy)))
+    return rec ? { mat: rleDecode(new Uint16Array(rec.rle), rec.n), veg: rec.veg ? JSON.parse(rec.veg) : null } : null
+  }
 
-  async put(seed, cx, cy, mat) {
+  async put(seed, cx, cy, mat, veg = null) {
     const rle = rleEncode(mat)
-    await this._tx('readwrite', (s) => s.put({ rle: rle.buffer, n: mat.length, t: Date.now() }, ChunkStore.key(seed, cx, cy)))
+    await this._tx('readwrite', (s) => s.put({ rle: rle.buffer, n: mat.length, t: Date.now(), veg: veg ? JSON.stringify(veg) : null }, ChunkStore.key(seed, cx, cy)))
     return rle.byteLength
   }
 

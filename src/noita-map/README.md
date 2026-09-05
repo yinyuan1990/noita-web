@@ -141,13 +141,14 @@ CPU×4/×6 模拟结果(15s 巡航):
 小巫师在这张原版精度的地图里走 / 飞 / 打洞 / 倒材质。横屏(竖屏出遮罩),一屏 427 世界像素宽(= Noita),
 玩家碰撞盒 7×15,出生点 (227,-85) 山洞大厅。桌面 A/D W/空格 鼠标;手机左半摇杆(上推=跳/悬浮,和原版手柄一样不单设飞行键)右半瞄准摇杆开火,只留"换法杖"按钮。
 线上:`https://update.cocoaihj.com/updatesoft/noita/noita-play.html`。
+**自由模式**(默认开,`?free=0` 回经典规则):随处改法杖、背包里有整个可用法术库(165 张)、不扣法力 / 有限次数不减、每根杖至少 8 格、`spawn_requires_flag` 的法术也进池 —— 玩家要的是玩材质效果;手机隐藏调试栏与"上报日志"。
 
 ### 画面细节(为什么原版看着"细")——已补上的四层
 
 | 层 | 来源 | 实现 |
 |---|---|---|
 | 材质描边 | `materials.xml <EdgeGraphics color percent>`(煤矿湿岩/砂岩是 `#233112` 深绿苔边) | `ChunkPainter`:与空气交界 1~2px 按 percent 概率换描边色,哈希决定,重画一致 |
-| 植被贴图 | `biome/<名>.xml <VegetationComponent>`(丘陵云杉 tree_spruce_1~4 / 阔叶 tree_leaf / 灌木 bush_growth / 草丛 grass_patch / 垂藤 vine_growth / 气根 aerial_root / 蘑菇)→ `biomes.json` | 落点由 `World._vegAnchors` 算成 `chunk.decor`(kind `veg`),painter 只贴:按 `tree_width` 分格、`tree_probability` 掷,地面株放在 `material_on_top_of` 表面,`is_ceiling_plant` 挂洞顶;`tree_extra_y` 往地里压(云杉 14 / 阔叶 25,树根埋进土);.xml Sprite 取最后一帧。**跨 chunk**:本 chunk 还会算下一 chunk 顶部 140 行内地表长出来的株(下一块已生成用其材质,纯丘陵按解析地表 `_surfaceMatAt`),树在 chunk 缝上不再被切半;下一块后生成且有伸上来的(`spillUp`)→ streamer 补重画上一块 |
+| 植被贴图 | `biome/<名>.xml <VegetationComponent>`(丘陵云杉 tree_spruce_1~4 / 阔叶 tree_leaf / 灌木 bush_growth / 草丛 grass_patch / 垂藤 vine_growth / 气根 aerial_root / 蘑菇)→ `biomes.json` | 落点由 `World._vegAnchors` 算成 `chunk.decor`(kind `veg`),painter 只贴:按 `tree_width` 分格、`tree_probability` 掷,地面株放在 `material_on_top_of` 表面,`is_ceiling_plant` 挂洞顶;`tree_extra_y` 往地里压(云杉 14 / 阔叶 25,树根埋进土);.xml Sprite 取最后一帧。**跨 chunk**:本 chunk 还会算下一 chunk 顶部 140 行内地表长出来的株(下一块已生成用其材质,纯丘陵按解析地表 `_surfaceMatAt`),树在 chunk 缝上不再被切半;下一块后生成且有伸上来的(`spillUp`)→ streamer 补重画上一块。**`is_visual=0` 的(树 / 大小蘑菇 / 仙人掌)照原版 PixelSprite:实心像素在生成时烙进材质格(`tree_material` wood_loose / fungus_loose / cactus,`World._stampVeg`),子弹打得中、火烧得着、爆炸炸掉一块少一块;painter 只画材质还在的像素;落点只算一次(重画 / 存档都带 veg 落点回 Worker);主线程 `Vegetation.js` 做 SimplePhysics —— 脚下全空整株按 400 px/s² 竖直掉、落地烙回去。`is_visual=1`(灌木 / 草 / 藤)纯贴图不动 |
 | 全局固定布景 `SPLICED_SCENES` | `biome/_pixel_scenes.xml <PixelSceneFiles>` → `biome_impl/spliced/*.xml`(skip_biome_checks);原作用 `_<名>.bat` 把整图切成 .plz 小块,xml 里是小块坐标,我们用整图 + .bat 原点 | 最左边的**巨树** `tree.png` 1024×2048 @ (−2048,−1324)(带 `_visual`/`_background`,wood_tree 材质、内有水潭),水洞 (−2048,0)、熔岩湖 (2048,0)、mountain_lake (2560,0)、沙漠骷髅 (7100,−100)、boss_arena、月亮…共 12 张;`staticScenesNear` 按包围盒并入,与 init 布景同一套盖章/背景/手绘层 |
 | 光源 | wang 标记 `spawn_lamp`(g_lamp 0.7/1.1 出小灯笼)/ `spawn_candles` / `spawn_altar_torch`,位置 + ProceduralRandom 掷骰 | `collectLights` → 每 chunk 带 `lights`;`noita-play` 画灯笼/蜡烛小图 + 光图 |
 | 光照 | Noita 洞穴是黑的,画面由光源驱动 | `noita-play`:1/4 分辨率光图,环境光按深度 1→0.1(地表再乘天色亮度,夜里 ≈0.35),玩家提灯 + 灯 + 发光材质(`gfx_glow`:火/熔岩)叠加,multiply 回主画面;地表群系空气透明 |
@@ -168,9 +169,12 @@ CPU×4/×6 模拟结果(15s 巡航):
   (挖掘场按群系内纵向位置 `BiomeMapGetVerticalPositionInsideBiome`、雪窟 `safe()` 入口井不出怪、雪窟 spawn_props 10% 换雪人)。挂在 `chunk.spawns`,主线程首次拿到该 chunk 实例化一次。种子确定。
 - **钉墙刚体**:`PhysicsJointComponent nail_to_wall`(挖掘场轮子)→ `RigidBody.nailed`:不受重力/碰撞/推动,按 `mMotorSpeed` 匀速转,永不入睡。
 - **链 / 钉**(`RigidBody.ropes`):`chain_to_ceiling.lua` 的挂点往上找顶拴链、钉在边上的吊桶绕钉摆;位置式绳约束 + 沿绳冲量(含转动惯量),超 break_distance 或锚点被挖断链掉下;链只画不碰撞。多体机械 / 家具关节 / 门仍没做。
-- **行走**:CharacterPlatforming 同玩家(pixel_gravity 600、run_velocity、accel_x、climb_over_y、buoyancy);遇墙跳 −125(原版 jump_velocity_y −12 是小跳,跨障碍靠 PathFinding.can_jump)。
+- **行走**:CharacterPlatforming 同玩家(pixel_gravity 600、run_velocity、accel_x、climb_over_y、buoyancy),1px 子步、碰撞盒四边逐像素判定(`_blocked`);
+  跨障碍靠 PathFindingComponent:`can_jump` + `initial_jump_max_distance_x/y`(base_humanoid 100/60)限定跳边范围,`_jumpTo` 按 pixel_gravity 反算抛物线(横向 ≤140px/s),`frames_to_get_stuck` 到就重算路。
+  卡进实心(落沙埴住 / 塌方)只在 ±3px 内就近挪出,挪不出 = 被埋住原地不动(`_unstick`),不再"往上顶 16px 穿墙冒出来"。
+- **怪的生命周期**:怪 / 虫随区块走——区块被 LRU 卸载 `ChunkStreamer.onEvict → Entities.unloadChunk` 收掉,回来按生成表重刷(`liveChunks`);道具 / 物品 / 圣山货只放一次(`spawnedChunks`,睡着的刚体已在 chunk.mat 里)。
 - **AI**(AnimalAI 简化):sense_creatures + detection_range 发现玩家 → 追;attack_melee_max_distance 内播 `attack`,action_frame 那帧结算 damage_min~max + impulse,frames_between 冷却;helpless 阵营见人跑;没人时站/逛(不走悬崖)。
-- **伤害**:弹丸子步进 `hooks.hitTest`(Hitbox)→ ProjectileComponent.damage;爆炸 config_explosion.damage 按距离衰减;`materials_that_damage` 每帧;受击喷 `blood_spray_material`、死亡洒 `blood_material`(真材质,会流/会反应)。玩家 hp 改用 Noita 单位(max_hp 4 = 100),`materials_that_damage` 表生效,0.5s 无敌帧,死了回出生点。
+- **伤害**:弹丸子步进 `hooks.hitTest`(Hitbox)→ ProjectileComponent.damage(`damage_scaled_by_speed` 按速度缩,击退 = `knockback_force` × 弹速);爆炸 config_explosion.damage **满额无衰减**,但 hitbox 要能被爆炸射线够到(墙挡住没伤害;规则反自 exe,见 docs/noita-entities-plan.md 2.4);`materials_that_damage` 每帧;受击喷 `blood_spray_material`、死亡洒 `blood_material`(真材质,会流/会反应)。玩家 hp 改用 Noita 单位(max_hp 4 = 100),`materials_that_damage` 表生效,0.5s 无敌帧,死了回出生点。
 - **像素刚体 `RigidBody.js`(第 2 步:物理道具)**:PhysicsImageShape 一张图 = 形状 + 材质,每像素是世界里一格该材质。
   醒着:自己积分(重力 350、box 摩擦/恢复系数、边缘像素撞地形 → 接触质心→中心为法线,沿主轴半像素推出,冲量 + 库仑摩擦 + 扭矩;
   整面贴地当"面接触"不产生扭矩,只有角/边挨着才翻;慢速接触不弹),画在世界之上,对玩家/弹丸/怪按像素判定,玩家能推(推睡着的会把它推醒)。
@@ -198,10 +202,19 @@ CPU×4/×6 模拟结果(15s 巡航):
   图标 / 类型 / mana / max_uses / 弹丸 / `c.fire_rate_wait` 与 `c.spread_degrees` 增量),加煤矿祭坛 17 根固定法杖(`items/wands/level_01/wand_0xx.xml` 的
   AbilityComponent + gun_config)和 `player.xml` 的两根初始法杖(Bolt staff:容量 3 / 延迟 10 / 充能 24 / 法力 100·30 / LIGHT_BULLET×2;Bomb wand 按
   `starting_bomb_wand.lua` 区间掷)。祭坛法杖的卡照 `level_1_wand.lua` 逐行(`SetRandomSeed(x,y)`,reload+fire_rate+spread 决定弹/炸/工具三张表)。
-  施法 = gun.lua 简化:抽 `actions_per_round` 张 → 弹丸开火;延迟 = 法杖 + Σ卡 fire_rate_wait;法力不够放不出;牌库空 → 充能 `reload_time`,
-  `shuffle_deck_when_empty` 洗牌;`max_uses` 用完消失;散射 = 法杖 + Σ卡。法杖是世界里的物品(祭坛 `wand_altar.png` 的 0x50a0f0 标记 →
-  `spawn_wands` → `g_items` 掷 wand_001~017 / wand_level_01),碰到捡起,背包 4 根,1~4 / q e / 按钮切换,手里换成对应 `items_gfx` 法杖图。
-  DRAW_MANY 再抽 N 张、MODIFIER 的速度增量叠给同一手后面的弹;触发弹先按普通弹放。未做:`gun_procedural.lua` 完整随机法杖(wand_level_01 先借固定法杖数值)。`?debugwands=1` 仍是测试表。
+  施法 = gun.lua 逐条(`draw_shot / draw_action / draw_actions`):根 shot 抽 `actions_per_round` 张;每张卡法力不够 / 次数用完就弃掉换下一张;
+  PROJECTILE / STATIC_PROJECTILE / MATERIAL 进当前 shot;MODIFIER 改 c(`speed_multiplier` 累乘、`damage_projectile_add` 累加、延迟 / 散射累加)再 `draw_actions(1, true)` 让右边那张吃到;
+  DRAW_MANY `draw_actions(N, true)` 再抽 N 张进同一 shot(无尽 = 剩下全部),抽到牌库尾绕回一次并在这发之后充能;触发弹(hit_world / timer / death)先抽 1 张当载荷挂在弹上(可嵌套),
+  弹死时 `ProjectileSystem._die` 在撞点沿原方向放出。shot 里全部弹同一帧发出;延迟 = 法杖 + Σ卡 fire_rate_wait;充能 = 法杖 reload_time + Σ卡;`shuffle_deck_when_empty` 洗牌;散射 = 法杖 + Σ卡。
+  法杖是世界里的物品(祭坛 `wand_altar.png` 的 0x50a0f0 标记 → `spawn_wands` → `g_items` 掷 wand_001~017 / wand_level_01),碰到捡起,背包 4 根(自由模式 8),1~9 / q e / 按钮切换,手里换成对应 `items_gfx` 法杖图。
+  场类(`base_field.xml`:LifetimeComponent 7200 + GameAreaEffectComponent r28 → 圈内怪 FROZEN / ELECTROCUTION 定住;EnergyShieldComponent → 弹开敌方弹;精灵 alpha 0.25 additive + blast_frozen 染色 + spawn→fireball 动画接续)。
+  电(ElectricityComponent):雷霆之环 `electrocution_blast.lua` 每 10 帧射一道电,碰到导电材质(液体缺省导电、油 / 胶水 0、金属 1)就开一条 `zap` 电流 —— 每帧 speed 32 格顺惯性乱窜、走 energy 1000 格断,
+  走过的格亮 0.15s(`elec` Map),碰到的怪 / 玩家 `hooks.shock` → 40 帧定身 + 0.4 电伤害(玩家无无敌帧,`player.stunT` 期间不能动 / 开火);`probability_to_heat` 把水烧成蒸汽。
+  MagicConvertMaterialComponent 按原版从中心一圈圈往外扫(每帧 steps_per_frame 圈),loop=0 扫完即止 / loop=1 循环。弹丸 `AudioLoopComponent` → `d.loop` → `projectiles.loops`,noitaPlay 用合成噪声配音色(黑洞低鸣 / 场嗡鸣 / 电滋滋)。
+  修饰卡:每张卡的 action 体抠成 `ops`(对 c.* 的 add/mul/set/append/clamp),施法时按 gun.lua 回放 —— c 每个 shot 一份,同一 shot 的弹共享最终 c;
+  c 作用到弹上(速度 / 伤害 / 寿命 / 反弹 / 重力 / 击退 / 爆炸半径与伤害 / 友伤),`extra_entities` → `Wands.EXTRA_BEHAVIOR`(追踪 HomingComponent 反自 exe、穿透 / 穿墙 / 上下飞 / 波浪 / 乱抖 / 贴地 / 避墙 / 无限寿命 / 加减速 / 自瞄 / 区域伤害),
+  `game_effect_entities` 命中给状态;`shot_effects.recoil_knockback` → 射手 v −= 瞄准方向 × recoil(后座力卡浮空);瞬移弹 TeleportProjectileComponent / 瞬移施法 teleport_cast.lua。110 张修饰可用。
+  未做:`gun_procedural.lua` 完整随机法杖(wand_level_01 先借固定法杖数值)、阵型类 DRAW_MANY 的角度(按普通多重放)、bounce_* / larpa / orbit / 颜色类 extra_entities、暴击。`?debugwands=1` 仍是测试表。
 - **物品**:药水(`potion.xml`:形状 `potion_normals.png` + 精灵 `potion.png` 按液体色染;内容照 `potion.lua` `SetRandomSeed(x,y)`:75% 魔法液体 / 25% 常规表;
   捡进 4 个物品格,选中后开火 = 扔(`max_throw_speed` 180),砸到东西碎,1000 单位液体洒出来(真材质);被打也碎)、宝箱(`chest_random.lua drop_random_reward` 主干:
   7% 小炸弹 · 33% 金 · 10% 药水 · 4% 法术刷新 · 19% 法杖 · 11% 心 · 3% 整箱变金 · 2% 再掷,碰到即开)、心(+25 最大生命并回 25)、法术刷新(全部法杖法力/牌库回满);
@@ -209,7 +222,7 @@ CPU×4/×6 模拟结果(15s 巡航):
   三种身体模型:`_walkStep`(CharacterPlatforming + 局部寻路:窄坑跳、卡住跳/放弃)、`_flyStep`(`can_fly`:无重力朝目标飞,射手悬在人斜上方)、
   `_crawlStep`(蜘蛛:surf 记实心在哪一侧,沿切向爬,小坎跨 / 下坡贴 / 拐角绕 / 撞墙转,精灵按面旋转)。`escape_if_damaged_probability` 受伤逃。
   第四种 `stationary`(shooterflower / 巢 / 卵:没有 CharacterPlatforming)不动只开火;PhysicsAI 飞行体(无人机 / 水晶)本体 `d.bodyImage` 先画再叠发光眼精灵。
-  走路怪追人时人不在同一层或被挡 → `_findPath` 8px 粗网格 BFS(平走 / 跳 ≤3 格 / 掉 ≤10 格 / 跨坑),每 0.4s 一次,照下一路点走 / 跳。
+  走路怪追人时人不在同一层或被挡 → `_findPath` 8px 粗网格 Dijkstra("能站" = 整个碰撞盒放得下且脚下有实心;平走 / 掉 ≤12 格 / 跳:直上 j 格再横移 i 格,范围由 initial_jump_max_distance 与抛物滞空决定,代价 3+i+j 能走不跳),每 0.4s 一次,照下一路点走 / 到起跳格中心抛物起跳。
   地雷 `mine_scavenger`(`d.mine` 圈 20px 触发 → 0.5s → `explosionOnDeath`,和炸药箱共用 `explodeConfig`);巢 `d.nest` 每 121 帧 75% 在玩家 200px 内吐一只(上限 15 / 10);
   神殿陷阱 `d.trap`(crypt_trap_check.lua:正面 170px 内每秒一发,朝向由精灵 _left/_right 定),石框 `SCENE_PROPS` 跟生成点盖进材质;
   幽灵 `d.ghost`(穿墙、`d.aura` 光环伤害、`d.invulnerable`),幽灵水晶碎了 500px 内幽灵散掉。
@@ -251,7 +264,11 @@ on_death/lifetime_explode、`config_explosion`)→ `SpriteComponent`(Sprite xml 
 第二轮对齐(按 490 个 xml 的组件统计逐个补):
 - `SpriteParticleEmitterComponent`(45 处):贴图粒子——火球的橙烟团、锯刃的火星、挖掘弹的尘,含 color/color_change(每秒变色/淡出)、随机位置/速度/旋转/角速度、重力、减速、缩放、additive
 - `MagicConvertMaterialComponent`(26 处):半径内按 steps_per_frame 转换材质——冰球一路把水/血/酸/熔岩冻成对应冰(表在 `misc/material_converter_freeze.xml`,通过 `<Base file>` 继承解出来)并灭火;火球 ignite_materials 点燃可燃物;触水/触金/触油把任意材质变成那一种
-- `CellEaterComponent`:大锯刃/黑洞按概率啃掉半径内的格子
+- `CellEaterComponent`:大锯刃/小黑洞按概率啃掉半径内的格子
+- `BlackHoleComponent`(巨大黑洞,引擎内置;逻辑反自 `noita_dev.exe` 的 `BlackHoleSystem::Update`,见 docs/noita-entities-plan.md):半径每 3 帧 +1 长到 64;
+  每帧从中心射随机射线到 radius,第一条命中的格子吃掉,再沿垂直方向 ±1..8px 射 16 条 → 一帧最多啃 17 格(从内表面往外一层层啃);吃掉的格子变飞行像素(`bhParts`,原材质),
+  初速切向 4×attractor、被吸引器(范围 3R)拉回来绕圈、到中心湮灭;±R 方框内活物 / 玩家 v += attractor × 1.5 × (径向+切向),刚体走 `black_hole_gravity.lua`;
+  每帧掷一次 damage_probability,中了半径内 mortal 全扣 damage_amount 0.1。画面:暗紫黑圆盘 + 1px 细粉边 + 盘外洋红光晕 + 材质色碎屑漩涡 + 粉色流光(emitter attractor_force 32)
 - 发射器补齐:`area_circle_radius`(圆内随机位置)、`velocity_always_away_from_center`、`draw_as_long`(拉成线的火星)、`delay_frames` / `emitter_lifetime_frames`、
   **`image_animation_file`**(火圈/水圈:按图片像素从中心一圈圈向外发射真材质,`circle_256.png` 预先按到中心距离分桶)
 - 没有 ProjectileComponent 的"原地实体"(火圈/水圈只有 LifetimeComponent)不飞不撞,寿命取 LifetimeComponent
@@ -292,7 +309,9 @@ LaserEmitterComponent 光束渲染、LightningComponent 闪电弧、`hole_image`
 temperature_of_fire / fire_hp / generates_smoke / requires_oxygen / lifetime / gfx_glow / gas_* / 冻结·融化目标 …,按 `_parent` 继承),
 并把 328 条 `<Reaction>` 抽成 `reactions.json`([tag] 输入、`[tag]_molten` 输出模板都保留)。
 
-`CellSim` 直接在 ChunkStreamer 的 `chunk.mat` 上原地跑(激活窗口 = 视口 + 24px,最多 3×3 chunk,坐标→chunk 纯算术无查表):
+`CellSim` 直接在 ChunkStreamer 的 `chunk.mat` 上原地跑(**激活窗口 = 视口 + 512px 一圈**,最多 4×4 chunk,坐标→chunk 纯算术无查表;
+Noita 模拟的是玩家周围一整片加载区而不只是屏幕,屏幕外的爆炸 / 崩塌 / 流水 / 怪物照常进行 —— 之前只模拟视口 +24px,手机上子弹飞出屏幕炸出来的地形要走过去才开始动;
+窗口只要求视口那一圈的 chunk 就位,外圈没到的当 −1;`ChunkStreamer.update(view, dt, simRect)` 会把模拟圈的 chunk 也纳入需要集,睡眠机制让代价只跟"在动的块"有关):
 
 | 材质分类(由 xml 推出) | 规则 | 用到的字段 |
 |---|---|---|
@@ -308,7 +327,7 @@ temperature_of_fire / fire_hp / generates_smoke / requires_oxygen / lifetime / g
 位图只画静态材质(`ChunkPainter.skipDynamic`),液体/沙/气/火每帧由主线程按当前状态叠上去(液体用 xml 的 alpha 半透);
 静态材质变了(挖/烧穿)的 chunk 节流 150ms 后让 Worker 重画。实测:油池点燃 → 烧 → 出烟 → 倒水灭火出蒸汽,模拟 ~2ms/帧。
 
-还没对上的:Noita 的 `liquid_*` 精确流速常数、box2d 刚体(solid_*)、电(electrical_conductivity)、染色(liquid_stains)、
+还没对上的:Noita 的 `liquid_*` 精确流速常数、box2d 刚体(solid_*)、电只有雷霆之环这一路(闪电 / 雷球 / 电荷修饰还没接 zap)、染色(liquid_stains)、
 冻结/融化(cold_freezes_to / warmth_melts_to 已在表里,尚未接温度)、爆炸(reaction.explosion_size)、三元反应与 req_lifetime。
 
 ## 无缝大地图(Chunk Streaming)—— Noita 的做法,`worker/ChunkStreamer.js` + `store/ChunkStore.js`

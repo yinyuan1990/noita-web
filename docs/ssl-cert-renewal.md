@@ -60,6 +60,17 @@ node scripts/_noita-biome-play-shot.mjs 13500,8400 rb2-ip $u
 
 2026-09-04 12:40 结果:189 只实体、`skipped {}`、60 fps,零碎实体(激光门 / 云陷阱 / 雕像陷阱 / 工具箱)全部正常。
 
+**2026-09-04 19:00 起 http 不通了**:`8.162.5.160:80` 返回 `301 → https://…`(响应头 `Server: Tengine` / `Via: ens-cache*.hk48`,这个 IP 其实是阿里 ENS 边缘节点,
+443 上是同一张过期证书,再往后才是 docker nginx)。改成 https + 忽略证书:
+
+```powershell
+$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'
+$u = "https://update.cocoaihj.com/updatesoft/noita/noita-play.html?log=0&new=1&v=$(Get-Date -UFormat %s)"
+node scripts/_noita-tp-spawn-shot.mjs $u
+```
+
+线上冷缓存下首屏资源(27MB)到齐要十几秒,探针里先等区块就位再测(`_noita-ai-stuck-shot.mjs` 已这么写)。
+
 ## 证书好了之后
 
 不带任何环境变量跑一次,验证证书链:
