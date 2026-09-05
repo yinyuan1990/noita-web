@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Noita 是怎么做出来的 · 设计思路 / 实现 / 常规技术 / 对我们的启发</title>
+<style>
+  :root {
+    --bg: #0b0910; --bg2: #14111c; --card: #181423; --line: rgba(255,255,255,0.10);
+    --fg: #e8eef4; --fg2: #b9c3cf; --dim: #7f8a97;
+    --gold: #ffd050; --red: #e0484f; --blue: #7fd4ff; --green: #8fe388; --purple: #c98cff; --orange: #ff9a4a;
+    --mono: ui-monospace, Consolas, "SFMono-Regular", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--fg); font-family: "Noto Serif SC", "Source Han Serif SC", Georgia, serif; line-height: 1.75; font-size: 15px; }
+  a { color: var(--blue); text-decoration: none; } a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; color: #f2e7c9; }
+  header { padding: 56px 20px 36px; text-align: center; background:
+    radial-gradient(ellipse at 50% 0%, rgba(255,208,80,0.12), transparent 60%),
+    linear-gradient(180deg, #120e1c 0%, var(--bg) 100%); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 34px; letter-spacing: 0.08em; color: #fff4d6; text-shadow: 0 2px 12px rgba(255,208,80,0.25); }
+  header .sub { margin-top: 10px; color: var(--fg2); font-size: 15px; }
+  header .note { margin: 18px auto 0; max-width: 760px; font-size: 13px; color: var(--dim); line-height: 1.7; }
+  .wrap { display: grid; grid-template-columns: 220px minmax(0, 860px); gap: 36px; max-width: 1160px; margin: 0 auto; padding: 28px 20px 80px; }
+  nav.toc { position: sticky; top: 16px; align-self: start; font-size: 13px; border-right: 1px solid var(--line); padding-right: 14px; max-height: calc(100vh - 32px); overflow: auto; }
+  nav.toc b { display: block; color: var(--gold); font-size: 12px; letter-spacing: 0.2em; margin: 0 0 8px; }
+  nav.toc a { display: block; color: var(--fg2); padding: 4px 0; border-left: 2px solid transparent; padding-left: 8px; margin-left: -8px; }
+  nav.toc a:hover { color: #fff; border-left-color: var(--gold); text-decoration: none; }
+  nav.toc a.sub { padding-left: 18px; color: var(--dim); font-size: 12px; }
+  main { min-width: 0; }
+  h2 { font-size: 24px; color: #fff4d6; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); letter-spacing: 0.04em; }
+  h2 small { font-size: 13px; color: var(--dim); margin-left: 10px; letter-spacing: 0; font-weight: normal; }
+  h3 { font-size: 17px; color: #fff; margin: 22px 0 8px; }
+  p { margin: 8px 0; color: var(--fg); }
+  ul, ol { margin: 8px 0 8px 22px; } li { margin: 4px 0; }
+  .lead { font-size: 16px; color: var(--fg); border-left: 3px solid var(--gold); padding: 6px 14px; background: rgba(255,208,80,0.06); margin: 14px 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin: 18px 0; }
+  .card h3 { margin-top: 0; }
+  .card h3 .tag { display: inline-block; font-size: 11px; color: var(--bg); background: var(--gold); border-radius: 4px; padding: 1px 6px; margin-right: 8px; vertical-align: middle; letter-spacing: 0.1em; }
+  .card.m1 { border-left: 4px solid var(--orange); } .card.m2 { border-left: 4px solid var(--green); } .card.m3 { border-left: 4px solid var(--blue); }
+  .card.m4 { border-left: 4px solid var(--purple); } .card.m5 { border-left: 4px solid #d9b26c; } .card.m6 { border-left: 4px solid var(--red); }
+  .card.m7 { border-left: 4px solid #ff6a3d; } .card.m8 { border-left: 4px solid #6cd9c4; } .card.m9 { border-left: 4px solid #6ea8ff; }
+  .card.m10 { border-left: 4px solid var(--gold); } .card.m11 { border-left: 4px solid #e6a5ff; } .card.m12 { border-left: 4px solid #9fb3c8; } .card.m13 { border-left: 4px solid #b6ff9e; }
+  .blk { margin: 12px 0; padding: 10px 14px; border-radius: 8px; background: rgba(255,255,255,0.03); }
+  .blk > b:first-child { display: block; font-size: 12px; letter-spacing: 0.18em; color: var(--dim); margin-bottom: 4px; }
+  .blk.design > b:first-child { color: var(--gold); }
+  .blk.life { background: rgba(143,227,136,0.07); border: 1px dashed rgba(143,227,136,0.35); } .blk.life > b:first-child { color: var(--green); }
+  .blk.pit { background: rgba(224,72,79,0.07); } .blk.pit > b:first-child { color: var(--red); }
+  .blk.insp { background: rgba(127,212,255,0.07); } .blk.insp > b:first-child { color: var(--blue); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .chips span { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.18); color: var(--fg2); background: rgba(255,255,255,0.03); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--gold); font-weight: normal; letter-spacing: 0.05em; background: rgba(255,208,80,0.05); }
+  td:first-child { color: #fff; white-space: nowrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .pill { display: inline-block; font-size: 12px; color: var(--gold); border: 1px solid rgba(255,208,80,0.4); border-radius: 999px; padding: 0 8px; margin-right: 6px; }
+  .num { font-family: var(--mono); color: #f2e7c9; }
+  footer { border-top: 1px solid var(--line); padding: 26px 20px 60px; text-align: center; color: var(--dim); font-size: 13px; }
+  footer a { margin: 0 8px; }
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; gap: 0; padding: 16px 14px 60px; }
+    nav.toc { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 12px; margin-bottom: 8px; columns: 2; column-gap: 18px; }
+    nav.toc b { column-span: all; }
+    header { padding: 36px 16px 26px; } header h1 { font-size: 26px; }
+    .grid2 { grid-template-columns: 1fr; }
+    .card { padding: 16px; border-radius: 10px; }
+    body { font-size: 14.5px; }
+    td:first-child { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Noita 是怎么做出来的</h1>
+  <div class="sub">设计思路 · 实现方式 · 用到的常规技术 · 对我们做游戏的启发（按模块逐个拆）</div>
+  <div class="note">
+    本页的机制描述和数字，来自原版 <code>data.wak</code> 解包出来的 <code>materials.xml</code> / <code>entities/*.xml</code> / <code>scripts/*.lua</code>、
+    游戏目录自带的 <code>tools_modding/component_documentation.txt</code>、GDC 2019 的引擎演讲，以及我们在 Web 复刻过程中对 <code>noita_dev.exe</code> 的反汇编与存档真值对照。
+    生活比喻只是帮助理解，不是原话。
+  </div>
+</header>
+
+<div class="wrap">
+<nav class="toc">
+  <b>目录</b>
+  <a href="#s0">0 · 一句话总纲</a>
+  <a href="#s1">1 · 材质与元胞自动机</a>
+  <a href="#s2">2 · 世界生成</a>
+  <a href="#s3">3 · 区块流式与存档</a>
+  <a href="#s4">4 · 实体 = 组件表</a>
+  <a href="#s5">5 · 像素刚体</a>
+  <a href="#s6">6 · 法杖与法术</a>
+  <a href="#s7">7 · 弹丸与爆炸</a>
+  <a href="#s8">8 · 生物 AI</a>
+  <a href="#s9">9 · 状态与沾污</a>
+  <a href="#s10">10 · 圣山与游戏循环</a>
+  <a href="#s11">11 · 渲染 / 光 / 氛围</a>
+  <a href="#s12">12 · 声音</a>
+  <a href="#s13">13 · 我们是怎么学它的</a>
+  <a href="#sum">技术一览表</a>
+  <a href="#insp">对我们的十条启发</a>
+</nav>
+
+<main>
+
+<h2 id="s0">0 · 一句话总纲 <small>Falling Everything</small></h2>
+<p class="lead">
+  Noita（芬兰语"女巫"）由三个人的 Nolla Games 做出来，引擎叫 <b>Falling Everything</b>，从 2007 年前后的"落沙"原型一路演化了十几年。
+  它的全部设计可以压成一句话：<b>世界里的每一个像素都是一格真实的材质，所有玩法都是这些材质按规则互相作用的结果。</b>
+</p>
+<p>围绕这句话，原版有四根支柱，后面每个模块都能对上其中一根或几根：</p>
+<div class="grid2">
+  <div class="card"><h3>① 一切皆像素</h3><p>地形、水、油、火、血、木箱、尸体、金块——全是材质格子。没有"贴图假象"，火能烧到的一定是真木头，血一定能流进水里。</p></div>
+  <div class="card"><h3>② 数据驱动</h3><p>469 种材质、328 条反应、316 个生物、482 张法术卡，全部写在 xml / lua 里。引擎只提供通用系统（元胞自动机、Box2D、组件更新器），内容由数据拼出来。</p></div>
+  <div class="card"><h3>③ 组合而非枚举</h3><p>法术是"卡牌组合"，反应是"标签配对"，状态是"沾了什么材质"。设计者写的是少量正交规则，玩家玩到的是它们相乘出来的无穷可能。</p></div>
+  <div class="card"><h3>④ 确定性随机</h3><p>同一个种子 → 同一个世界，任何位置的随机都从坐标派生（<code>SetRandomSeed(x,y)</code> / <code>ProceduralRandom(x,y)</code>）。存档只记"改过的区块"，别的重新算一遍就是。</p></div>
+</div>
+<div class="blk life"><b>生活比喻</b>
+  Noita 更像一间<b>化学实验室 + 沙盘</b>，而不是一部剧本电影。设计师没有写"油桶被打中会爆炸"这句剧情，他只写了"油是可燃液体""火点燃可燃物""桶漏了油会流出来"，
+  然后爆炸是玩家自己在沙盘里"发现"的。做菜也一样：菜谱不写每一道菜，写的是"盐是咸的、油能炸、火会烧"，剩下的交给厨师去组合。
+</div>
+
+<h2 id="s1">1 · 材质与元胞自动机 <small>materials.xml · CellSim</small></h2>
+<div class="card m1">
+  <h3><span class="tag">核心</span>世界是一张材质格子表，每帧按邻居规则挪一挪</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p><code>materials.xml</code> 里 469 种材质，每种只是一行属性：<code>cell_type</code>（solid / liquid / gas / fire）、<code>liquid_sand</code>（是粉末还是液体）、<code>density</code> 密度、
+    <code>liquid_gravity / liquid_viscosity</code>、<code>burnable / fire_hp / autoignition_temperature / temperature_of_fire / requires_oxygen</code>、<code>durability / hp</code>（爆炸挖不挖得动）、
+    <code>electrical_conductivity</code>（金属 1、油 0，液体缺省导电）、<code>platform_type</code>（0 = 人能穿过去，树 / 尸块就是 0）、还有一串标签 <code>[water] [burnable] [corrodible] [meltable]</code>……</p>
+    <p>328 条 <code>&lt;Reaction&gt;</code> 写的是"相邻两格按概率变成什么"，而且用标签当通配符：<code>[meltable] + lava → [meltable]_molten</code> 一条规则管所有能熔的东西；
+    <code>[evaporable_fast] + air → air + air</code>（45%/帧）让激光渣几帧就蒸发。模拟本身是最经典的落沙自动机：自下而上、左右交替扫，沙往下 / 斜下掉，液体还能横着摊，气往上飘，火要氧气、有寿命、点燃比自己燃点低的邻居。</p>
+    <p>性能靠"只算会动的"：GDC 演讲里讲的每个区块一块脏矩形 + 多线程棋盘格分四轮更新（相邻块不同时算）；新生成的区块是静止的，碰一下才醒。</p>
+  </div>
+  <div class="chips"><span>元胞自动机（落沙游戏）</span><span>脏矩形 / 睡眠块</span><span>棋盘格多线程</span><span>标签系统 + 反应表</span><span>数据表驱动</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    每个格子像小区里一户人家，只看左邻右舍、楼上楼下，不知道整个城市长什么样——但"每家只管自己门口"加起来，整个城市就有了交通流。
+    反应表像化学课本最后那张"哪两样放一起会怎样"的表；"睡眠块"像一整栋没人的楼，物业根本不去巡。
+  </div>
+  <div class="blk pit"><b>我们复刻时踩的坑</b>
+    <ul>
+      <li>只模拟视口 + 24px 时，手机上子弹飞出屏幕炸出来的地形要走过去才开始动；改成模拟视口 ± 512px 一圈（3×3 ~ 4×4 区块）+ 32×32 睡眠块，模拟从 1.5~4.5ms 降到 0.1~0.9ms。</li>
+      <li>"和空气的反应"被我们跳过了、液体停下就睡 → 激光渣永远留在地上；原版里还会起反应的格子是不能睡的。</li>
+      <li>用 <code>solid_static_type</code> 判"人能不能站"是错的，<code>platform_type</code> 才是；结果人被树"挂"住、踩在尸块上。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>用属性代替名字</b>：不要写 <code>if (mat == 'oil')</code>，写"可燃的液体"。新材质只加一行数据，所有规则自动生效。</li>
+      <li><b>规则要少而正交</b>：重力、密度、燃点、反应四件事，能推出"熔岩遇水成石头冒蒸汽""油浮在水上烧"这些没人专门写过的场面。</li>
+      <li><b>性能不是靠加速算法，而是不算不动的东西</b>：睡眠 / 脏矩形 / 分块，这套在任何模拟类玩法里都能用。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s2">2 · 世界生成 <small>biome_map · wang 砖 · 布景 · 材质带</small></h2>
+<div class="card m2">
+  <h3><span class="tag">分层</span>一张小图定群系，一套瓷砖拼地形，颜色当指令放东西</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <ol>
+      <li><b>群系图</b> <code>biome_map.png</code>：一个像素 = 一个 512×512 区块，像素颜色查 <code>_biomes_all.xml</code> 得到群系（煤矿 / 圣山 / 挖掘场 / 雪窟……）。整张地下世界就是几十×几十个像素。</li>
+      <li><b>wang 砖</b>：每个群系一张人字形（herringbone）砖库 png，用 <code>stb_herringbone_wang_tile</code> 的算法把边缘颜色能对上的砖拼成一片；拼坏了最多重掷 99 次。砖里的白 / 灰像素是"这里要填材质"，特殊颜色是标记。</li>
+      <li><b>材质带</b>：砖里的白块按群系 xml 的 <code>MaterialComponent</code> 用噪声分成 soil → sand → rock 等带，煤 / 金这种稀有材质只在噪声落在某区间时出现。</li>
+      <li><b>布景（pixel scene）</b>：标记色 → lua 的 <code>RegisterSpawnFunction</code> → <code>LoadRandomPixelScene</code> 从池子里挑一张手绘 png（材质图 + 手绘层 + 背景层三张一组）盖上去；生成点用 <code>spawn_small_enemies / spawn_lamp / spawn_props</code> 这类函数按权重表掷骰放怪、放灯、放箱子。</li>
+      <li><b>整图群系</b>：出生的山体、圣山不是砖，是 <code>init()</code> 里按固定坐标放整张图。</li>
+    </ol>
+    <p>所有随机来自 <code>NollaPrng</code>（MINSTD）——种子 + 坐标派生，所以同一个种子在任何机器上生成的地图逐像素一样，连油罐放在哪、灯是不是空掷都一样。</p>
+  </div>
+  <div class="chips"><span>Wang tiles / 人字形砖</span><span>值噪声 / simplex</span><span>坐标派生 PRNG</span><span>预制件（prefab）</span><span>"颜色即指令"的小 DSL</span><span>图片当数据</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    铺瓷砖的师傅手里一箩筐花砖，规矩只有一条：相邻两块砖边上的花纹得接得上——铺完自然是一整片连贯的图案，师傅自己也不知道最后长什么样。
+    建筑图纸上红点是灭火器、蓝点是插座：美术在砖上点一个特定颜色的像素，就是在图纸上做标注，程序照标注放东西。
+  </div>
+  <div class="blk pit"><b>我们复刻时踩的坑</b>
+    <ul>
+      <li>PNG 必须自己解码：浏览器 <code>&lt;img&gt;</code> 的色彩管理会把标记色 <code>#000042</code> 读歪，煤矿入口井被封死，每次都重掷 99 次。</li>
+      <li>世界像素 → wang 像素是半格取整 <code>floor((x+5)/10)</code>，改对后和真实存档的一致率从 82% 到 91%。</li>
+      <li>地表不能有 45° 以上的坡：soil / grass 是落沙，会被自动机塌成三角堆，用户截图里的"金字塔"就是这么来的。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>让美术直接画关卡</b>：一张 png 既是形状又是逻辑，不用再做关卡编辑器。</li>
+      <li><b>随机要可复现</b>：所有随机从（种子, 坐标）派生，bug 才能复现、存档才能只存差异、玩家才能分享种子。</li>
+      <li><b>分层生成</b>：粗图定大结构 → 砖定通路 → 噪声定材质 → 布景定细节，每层都能单独验收。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s3">3 · 区块流式与存档 <small>512×512 chunk · 只存改动</small></h2>
+<div class="card m3">
+  <h3><span class="tag">无缝</span>玩家走到哪就算到哪，没动过的一律不存</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p>世界切成 512×512 的区块，玩家周围一片（约 3×3）常驻并参与模拟，远了就卸掉。存档目录里只有 <code>world_X_Y.png_petri</code>——被玩家改过（挖、炸、流过液体）的区块才写盘，
+    没动过的区块因为生成是确定性的，回来重新算一遍就一模一样。区块卸载时里面的怪也一起丢掉，再回来按生成表重刷。</p>
+    <p>这是"中途永远不出加载页"的根本原因：不是加载得快，是<b>大部分东西根本不用加载</b>。</p>
+  </div>
+  <div class="chips"><span>分块（chunking）</span><span>LRU 缓存</span><span>增量存档（delta save）</span><span>RLE 压缩</span><span>Worker / 多线程生成</span><span>按移动方向预取</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    你家的房间不用每天拍照存档，只要记住"今天挪了哪把椅子"，别的东西回来还在原位。图书馆也不记录每本书的位置，只记"借出去的那几本"。
+  </div>
+  <div class="blk pit"><b>我们复刻时的做法</b>
+    <ul>
+      <li>生成 + 渲染全放 Worker，主线程只贴位图；同时在飞的请求 ≤ 2、每帧最多收 2 块。手机模拟 CPU ×6 仍 60fps，iPhone 实测区块到达 p95 53ms。</li>
+      <li>改过的区块用 RLE 压进 IndexedDB（512KB → 几十 KB），真机上出现过 LRU 抖动（20 秒请求 1499 次），用"本帧要用的不卸 + 超缓存先砍预取"堵死。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>确定性生成 + 只存差异 = 无限世界几乎零存档成本</b>，这条对任何程序化世界都成立。</li>
+      <li><b>把"卡"拆成可量化的两件事</b>：主线程帧时间 与 区块到达延迟，分别有判据（p95 ≤ 33ms / 黑洞帧 &lt; 3%），而不是凭感觉说"有点卡"。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s4">4 · 实体 = 组件表 <small>entities/*.xml · Base 继承 · Lua 钩子</small></h2>
+<div class="card m4">
+  <h3><span class="tag">ECS</span>一个怪就是一张零件清单，引擎按零件类型逐个更新</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p>每个实体是一份 xml，里面一行一个组件：<code>SpriteComponent</code>（帧动画）、<code>HitboxComponent</code>、<code>DamageModelComponent</code>（血量 / 溅什么血 / 哪些材质会伤它 / 着火概率 / 憋气 7 秒 / 摔落伤害）、
+    <code>CharacterDataComponent + CharacterPlatformingComponent</code>（<b>和玩家同一套行走模型</b>）、<code>AnimalAIComponent</code>、<code>PathFindingComponent</code>、<code>GenomeDataComponent</code>（阵营）、<code>ItemChestComponent</code>（死亡掉落）、
+    <code>LuaComponent</code>（在 死亡 / 受伤 / 刚体被打缺像素 等事件上挂脚本）、<code>VariableStorageComponent</code>（给脚本存变量）……</p>
+    <p>316 个生物 xml 里 DamageModel 出现 251 次、AnimalAI 157 次、CharacterPlatforming 133 次。复用靠 <code>&lt;Base file="base_humanoid.xml"&gt;</code>：先拿基础模板，块内覆盖、块外追加。
+    引擎组件的全部字段和默认值都写在 <code>component_documentation.txt</code>，比如 <code>VelocityComponent</code> 不写就是 gravity 400 / air_friction 0.55 / terminal 1000——我们一开始当成 0，手雷石子全不掉。</p>
+  </div>
+  <div class="chips"><span>Entity-Component（数据导向）</span><span>原型继承（Base file）</span><span>脚本钩子（Lua）</span><span>默认值文档化</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    一份简历表：姓名、学历、技能、健康状况各一栏，HR 按栏目处理，不关心你是谁。<code>Base file</code> 像"基础套餐 + 加料"——僵尸 = 人形基础包 + 弱血量 + 近战；矿工 = 同一个基础包 + 扔炸药。
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>怪和玩家共用运动组件</b>：手感一致、bug 一致、关卡对双方公平——怪能跳的台阶玩家也能跳。</li>
+      <li><b>引擎做通用系统，特殊行为交给脚本</b>：黑洞、电、寻路是引擎的；"矿工死了掉金子""巢每 121 帧吐一只"是几十行 lua。</li>
+      <li><b>把默认值写成文档</b>比写在代码注释里值钱得多——十年后你自己都会忘。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s5">5 · 像素刚体 <small>PhysicsImageShape · Box2D · 醒着 / 睡着两种身份</small></h2>
+<div class="card m5">
+  <h3><span class="tag">融合</span>一只木箱既是一个 Box2D 物体，也是一堆木头像素</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p><code>PhysicsImageShapeComponent</code>：一张 png 就是形状 + 材质，图里每个像素在世界里是一格该材质（<code>wood_prop</code> / <code>metal_rust_barrel</code> / <code>glass_box2d</code>…）。
+    GDC 演讲里的做法：图 → marching squares 描轮廓 → Douglas-Peucker 简化 → 三角化 → Box2D 刚体；刚体每帧把自己的像素写进世界格子，所以元胞自动机能烧它、酸能蚀它、子弹能抠掉它一角，抠掉后轮廓重算。</p>
+    <p>再叠几个组件就是全部道具：<code>ExplodeOnDamageComponent</code>（炸药箱被打掉 4% 像素就炸，<code>physics_body_destruction_required 0.04</code>）、<code>MaterialInventoryComponent</code>（油桶装 300 油，被打有概率漏）、
+    <code>PhysicsJointComponent</code>（<code>nail_to_wall</code> 钉在墙上的轮子、吊链）、<code>PhysicsBodyCollisionDamage</code>（灯笼掉下来砸地就碎）。材质自身还带 <code>solid_on_sleep_convert</code>（崩塌混凝土睡着变静态）、<code>solid_on_collision_explode</code>。</p>
+    <p>尸体也是这套：<code>ragdoll_filenames_file</code> 里每张 png 一块 <code>meat</code> 刚体，最后化成一堆肉像素。</p>
+  </div>
+  <div class="chips"><span>Box2D</span><span>Marching squares</span><span>多边形简化 / 三角化</span><span>刚体睡眠</span><span>浮力按密度</span><span>连续物理 ↔ 离散格子的交接</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    一块冰扔进水里：飘着的时候是"一块冰"，化了以后就是"水的一部分"。木箱醒着时是一件家具，睡着后就是墙的一部分，火照样能烧到它；有人推一下又变回家具。
+  </div>
+  <div class="blk pit"><b>我们复刻时的做法与坑</b>
+    <ul>
+      <li>没用 Box2D：醒着自己积分，边缘像素撞地形给冲量 / 摩擦 / 扭矩；睡着写进 <code>chunk.mat</code> 交给自动机，支撑没了再醒。</li>
+      <li>桌子"穿地"：法线用"接触点质心 → 刚体中心"算，桌面像素多桌腿少，质心偏上 → 算出朝下的法线一路推穿。改成"接触质心 → 边缘像素质心"才对。</li>
+      <li>小尸块乱转：3~10 像素的碎肉惯量极小，点接触扭矩甩到 20+ rad/s；n&lt;12 的一律按面接触、角速度封顶。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li>两个系统（连续物理 / 离散格子）之间要有<b>明确的交接协议</b>：醒着谁管、睡着谁管、什么时候换手。含糊就会出现"既是又不是"的诡异 bug。</li>
+      <li>道具 = 形状图 + 几行组件，新道具几乎零代码；美术画一张图就能加。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s6">6 · 法杖与法术 <small>gun_actions.lua · gun.lua · 卡牌牌库</small></h2>
+<div class="card m6">
+  <h3><span class="tag">组合</span>法杖是一副牌，施法是抽牌，法术是改一份配置的小程序</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p><code>gun_actions.lua</code> 里 482 张卡，类型只有几种：<b>弹丸</b>（PROJECTILE / STATIC）、<b>修饰</b>（MODIFIER）、<b>多重</b>（DRAW_MANY）、<b>材质</b>（MATERIAL）、工具 / 被动。
+    每张卡的正文就是对一份配置 <code>c</code>（<code>ConfigGunActionInfo</code>：速度倍率、伤害加成、寿命、反弹次数、重力、爆炸半径、后座力、挂载的子实体……）做几行加减乘。</p>
+    <p><code>gun.lua</code> 是发牌规则：每次施法抽 <code>actions_per_round</code> 张；抽到<b>修饰</b>就改 <code>c</code> 再多抽一张让右边那张吃到效果；抽到<b>多重 N</b>就再抽 N 张同一发放出；
+    <b>触发弹</b>先抽一张当载荷挂在弹上，弹死时在撞点放出（可嵌套）。法力不够 / 次数用完的卡弃掉换下一张；牌库抽空 → 充能、洗牌（或不洗）。
+    法杖本身只有七八个数：容量、每次施放、施法延迟、充能、法力上限 / 恢复、散射、是否洗牌。</p>
+    <p>反直觉但有效的细节：<code>c</code> 是每个 shot 一份，所以同一发里所有弹共享最终配置；后座力直接减射手速度——朝下打"后座力"卡每发 +200 px/s 向上，玩家就这么浮空。</p>
+  </div>
+  <div class="chips"><span>牌库机制（Dominion / Slay the Spire 同源）</span><span>操作序列解释器</span><span>组合式原语</span><span>lua 小 DSL</span><span>顺序即语义</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    做菜：主料（弹丸）、调料（修饰：辣一点、快一点）、"接下来两样一起下锅"（多重）、"炸完再撒葱花"（触发弹）。调料永远作用在它右边那道菜上，顺序摆错味道就变。
+    菜谱只有几十种基本动作，菜却做不完。
+  </div>
+  <div class="blk pit"><b>我们复刻时踩的坑</b>
+    <ul>
+      <li>曾经做成"点一下把杖里全部卡一起放出"，用户一句话纠正："它是一个法杖多个效果，是组合，比如多重是多个弹。"—— 于是照 <code>gun.lua</code> 逐条重写抽牌。</li>
+      <li>激光其实不是"激光"：就是一发普通弹，<code>air_friction −9</code>（每帧 ×1.15 加速）被 terminal_velocity 1000 截住。数据对了效果自然对，不用专门写。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>少量正交原语 + 一条组合规则 = 无穷深度</b>。设计 5 种类型、1 页发牌规则，胜过手写 500 个技能。</li>
+      <li><b>规则要能被玩家推理</b>："修饰改右边那张"这一条就足够让人自己琢磨出连招，不需要教程。</li>
+      <li><b>内容量靠系统而不是靠手写</b>：新法术 = 几行 lua 改配置，不需要程序介入。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s7">7 · 弹丸与爆炸 <small>projectiles/deck/*.xml · ExplosionFactory（反自 exe）</small></h2>
+<div class="card m7">
+  <h3><span class="tag">物理</span>爆炸是 360 条带能量的射线，不是一个圆</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p>弹丸也是组件表：<code>VelocityComponent</code>（重力 / 空气阻力，负阻力 = 加速）、<code>ProjectileComponent</code>（速度、寿命、伤害、反弹、撞了死不死、<code>config_explosion</code>）、粒子发射器、光、
+    再加各种"效果组件"：<code>MagicConvertMaterial</code>（冰球一路把水冻成冰，从中心一圈圈往外扫）、<code>CellEater</code>（啃格子）、<code>BlackHole</code>、<code>Electricity</code>（电流沿导电材质乱窜）、<code>Homing</code>、<code>LaserEmitter</code>……</p>
+    <p>爆炸（<code>ExplosionFactory::IMPL_DoExplosion</code>，我们从 <code>noita_dev.exe</code> 反出来的）：从中心射 <b>360 条射线</b>，每条带 <code>ray_energy</code>；每穿过一格扣掉该材质的 <code>hp</code>（rock_static 10 万、soil 2000、sand 800、神殿砖 100 万），
+    能量耗尽或碰到 <code>durability</code> 超上限的材质就停。火球 5 万能量只挖得动土，炸弹 600 万。圈内且射线够得到的格子被摧毁，空格按概率生成火，液体被抛飞。
+    对实体的伤害<b>没有距离衰减</b>，但 hitbox 上的采样点必须被射线够到——躲在墙后就一点不掉血。击退 = 方向 × lerp(power_min, power_max, 1 − d/r)。</p>
+  </div>
+  <div class="chips"><span>网格射线（DDA）</span><span>能量预算模型</span><span>hitbox 采样</span><span>粒子系统</span><span>additive 混合 / 发光</span><span>震屏 / 闪光</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    爆炸像一盏 360° 的手电筒：光照到哪儿哪儿就坏，被墙挡住的地方一点事没有。"能量预算"像挖坑的力气：挖土一铲子一大块，凿石头一铲子只掉一点粉，力气用完就停。
+  </div>
+  <div class="blk pit"><b>我们复刻时踩的坑</b>
+    <ul>
+      <li>黑洞改了四遍：先当贴图、再当"一口吞掉圈内"、再按 wiki gif 取色、最后反汇编发现是"每帧一条射线 + 16 条扇面射线最多啃 17 格、吃掉的格切向甩出绕圈"。<b>拿不准就反 exe，别猜。</b></li>
+      <li><code>velocity_sets_scale</code> 文档原话是"精灵宽度 = 这一帧走过的距离"，我们按速度拉长又压扁，分裂弹被拉成椭圆条。只拉长不压扁才对。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>能量预算比距离衰减更真实也更好调</b>：一个数（材质 hp）同时决定了挖不挖得动、挡不挡得住。</li>
+      <li><b>反直觉但一致的规则玩家学得会</b>：躲墙后免伤这条规则从没写在教程里，但每个玩家都掌握了。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s8">8 · 生物 AI <small>AnimalAI · PathFinding · Worm · Lukki</small></h2>
+<div class="card m8">
+  <h3><span class="tag">参数化</span>AI 没有剧本，只有一组视距 / 距离 / 冷却的数字</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p><code>AnimalAIComponent</code>：<code>sense_creatures</code> 视距、<code>attack_melee_max_distance</code>、<code>attack_ranged_min/max_distance</code>、<code>attack_ranged_predict</code>（提前量）、<code>frames_between</code> 冷却、<code>escape_if_damaged_probability</code> 受伤逃跑。
+    <code>PathFindingComponent</code>：<code>can_fly / can_jump / jump_speed / initial_jump_max_distance_x/y / frames_between_searches / frames_to_get_stuck</code>。
+    <code>GenomeDataComponent</code> 是阵营矩阵：helpless 见人就跑、slimes 和别的怪也打。</p>
+    <p>特殊身体另有引擎组件：虫是 <code>WormComponent</code>（节链）+ <code>CellEaterComponent</code>（半径 6 啃穿一切非刚体材质）+ <code>WormAI</code>（256 盒内猎杀）；
+    Lukki 蜘蛛是 Box2D 圆身体 + 7 条 <code>IKLimbComponent</code> 反向运动学腿 + 1 条攻击腿；幽灵穿墙、水晶碎了 500px 内幽灵一起散。
+    死亡是一串<b>物理事件</b>：<code>blood_material</code> 溅成真材质、布娃娃肉块、<code>drop_money.lua</code> 掉 10 × max_hp 的金块（先最多 5 个 10 面值再大额）。</p>
+  </div>
+  <div class="chips"><span>参数化状态机</span><span>网格寻路（Dijkstra / A*）</span><span>视线射线</span><span>两段式 IK</span><span>阵营矩阵</span><span>抛物线跳跃反算</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    小区保安：看得见多远（视距）、多近开始喊（近战距离）、隔多远才拿对讲机（远程距离）、追多久放弃（frames_to_get_stuck）。换个岗位只换这几个数，保安还是那个保安。
+    蜘蛛腿像撑拐杖：每根拐杖各自找地方撑住，身体飘着走，够不着就换个落点。
+  </div>
+  <div class="blk pit"><b>我们复刻时踩的坑</b>
+    <ul>
+      <li>怪"卡在节点原地蹦"：8px 格寻路只采格心一个像素、跳边最多 3 格但跳速只够 13px——路说能上、身体上不去。改成"整个碰撞盒放得下才算能站"+ 按 <code>pixel_gravity</code> 反算抛物线，才不骗自己。</li>
+      <li>怪"穿墙冒出来"：卡在实心里就每帧往上顶 16px 的兜底逻辑，被沙埋住的怪一帧穿过头顶石板。改成 ±3px 挪不出就原地不动。</li>
+      <li>传送回去没怪了：区块被卸载后"已生成"标记没清，回来永远是空的。怪要跟着区块走。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>AI 从数据抽，不写 if</b>：几十种怪共用一套代码，差别全在表里。</li>
+      <li><b>死亡是物理事件而不是消失动画</b>：血能灭火、肉能被吃、金子能被熔岩吞——尸体继续参与世界。</li>
+      <li><b>兜底逻辑最危险</b>："卡住就往上顶一下"这种小聪明，是 80% 穿墙 bug 的来源。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s9">9 · 状态与沾污 <small>SpriteStains · status_list.lua · materials_that_damage</small></h2>
+<div class="card m9">
+  <h3><span class="tag">推导</span>状态不是"被赋予"的，是从"身上沾了什么"推出来的</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p><code>SpriteStainsComponent</code> 记录精灵身上每个像素沾了哪种材质；<code>status_list.lua</code> 50 条状态按材质标签匹配：<code>[water]</code> → WET（防火、灭火）、<code>[burnable]</code> 液体 → OILED（更易燃、烧更久）、
+    <code>[blood]</code> → BLOODY、<code>[slime]</code> → SLIMY（变慢）、<code>[radioactive]</code> → 持续掉血。沾污只有 1% 就全额生效，被火烤掉、靠晃动甩掉（<code>stain_shaken_drop_chance</code>），越靠头顶越淡。</p>
+    <p><code>DamageModelComponent.materials_that_damage</code> 是"泡在什么里掉多少血"的表：酸 0.005/帧、熔岩 0.003、毒 0.001、<b>魔法回血气体 −0.005</b>（负数 = 回血）。
+    <code>air_needed=1 / air_in_lungs_max=7</code>：憋气 7 秒后掉血。药水喝下去 = 液体材质的 <code>status_effects</code> 给状态，时长照 <code>effect_*.xml</code> 的帧数。</p>
+  </div>
+  <div class="chips"><span>标签系统</span><span>计时器 / 叠加</span><span>数据表</span><span>状态可视化（染色精灵）</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    淋过雨的衣服点不着，得先烤干才会烧；沾了油的抹布一碰火就着、还烧得久；踩过泥的鞋子走一走就干净了。你不需要一个"防火 buff"，你只需要真的是湿的。
+  </div>
+  <div class="blk pit"><b>我们复刻时踩的坑</b>
+    <ul>
+      <li>湿身碰火"要有个过程"：之前 WET 是个 10 秒计时器，改成 0~10 的沾污量——泡水 0.25s 沾满，站着 80s 干、跑着 10s，碰火每秒烤掉 4 成、烤光才点着；满湿站火里 3.4s 零伤害。</li>
+      <li>着火伤害按 wiki 是 2% 最大血 / 秒，我们原来 0.2 / 0.5s 是 5 倍。</li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>状态由世界事实推出</b>，而不是脚本赋予：这样状态天然和环境互动（下水灭火、油桶漏了溅一身），也天然公平（怪也会湿）。</li>
+      <li><b>把状态画在身上</b>（衣服颜色、头顶图标 + 剩余量条），玩家不用看文字就知道自己现在"能不能碰火"。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s10">10 · 圣山与游戏循环 <small>temple_altar.lua · 商店 / 特权 / 众神之怒 / 崩塌</small></h2>
+<div class="card m10">
+  <h3><span class="tag">节奏</span>紧张一层、喘口气一站，喘气的地方也有规矩</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p>每层地下之间夹一座圣山（Holy Mountain）：入口是漏斗底下一个由传送液供能的传送门（<code>teleport_liquid_powered.xml</code>，把眼睛里的传送液抽干门就灭）；
+    里面 <b>商店</b>（<code>generate_shop_item.lua</code>：<code>SetRandomSeed(x,y)</code>，5 件，一件打折，标价 <code>max(⌊(price·0.3 + 70·level²)/10⌋·10, 10)</code>）、
+    <b>特权</b> 3 选 1（<code>perk_list.lua</code> 106 条，出现顺序是一副洗好的牌 <code>perk_get_spawn_order</code>，拿一个其余消失）、回满血、<b>唯一能改法杖的地方</b>。
+    走出去的竖井一踩，<code>workshop_exit.lua</code> 让整座圣山崩塌（<code>LooseGroundComponent</code> 崩出混凝土块 + 一片诅咒伤害区），回不了头。</p>
+    <p><b>众神之怒</b>用的不是脚本判定而是世界规则：商店货物出了 <code>shop_hitbox</code> 框 = 偷；两行 <code>MaterialAreaChecker</code> 每 0.5s 查那两行是不是还全是神殿砖 = 有没有挖穿。
+    任意一条触发 → 特权祭坛上冒出守卫 Stevari（hp 24 飞行，远近两段攻击）。杀 3 个换更强的。全局状态用 <code>GlobalsSetValue</code>（TEMPLE_SHOP_ITEM_COUNT、STEVARI_DEATHS…）。</p>
+  </div>
+  <div class="chips"><span>Roguelite 局内循环</span><span>安全屋 / 检查点</span><span>牌库式奖励顺序</span><span>触发体积 / 区域检测</span><span>全局标记</span><span>价格曲线</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    高速公路服务区：加油、买东西、换轮胎，一站只有一次机会，开出去就上了下一段高速。超市门口的防盗门不认人，只认"商品有没有付款就出门"；圣山也不认你是谁，只看砖还在不在、货还在不在框里。
+    走过就塌的吊桥：逼你往前，不让回头。
+  </div>
+  <div class="blk pit"><b>我们复刻时踩的坑</b>
+    <ul>
+      <li>把入口传送门误记成"回程秘道，不做"，用户"到了 86 米进不去"才发现整座圣山从上方是密封的。</li>
+      <li>用户反馈"玩不明白"：没有目标指引、不知道往哪走、圣山出口不明显。补了屏边箭头、"下一座圣山 ↓ 距离"、新手引导、暂停里的按键表——<b>系统再好，没有引导等于没做。</b></li>
+    </ul>
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>节奏 = 紧张段 + 安全段</b>，安全段承载全部"决策"（买什么、拿哪个特权、怎么改杖）。</li>
+      <li><b>用世界规则代替脚本判定作弊</b>："偷"和"挖穿"是材质检测出来的，于是想办法骗过检测本身成了玩法（比如用传送带把货运出去）。</li>
+      <li><b>有代价的选择</b>：3 选 1、拿一个其余消失，比给 10 个随便拿更让人纠结、更记得住。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s11">11 · 渲染 / 光 / 氛围 <small>光照 · 材质贴图 · 描边 · 视差天空</small></h2>
+<div class="card m11">
+  <h3><span class="tag">画面</span>画面从材质里长出来，不另说一套话</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <ul>
+      <li><b>洞穴是黑的</b>：画面由光源驱动——玩家提灯、<code>LightComponent</code>（灯笼 / 火把 / 法术弹的彩光）、<code>gfx_glow</code> 的发光材质（火 / 熔岩）；光图低分辨率叠回主画面。</li>
+      <li><b>材质即贴图</b>：每种材质一张按世界坐标平铺的纹理，所以石头被挖成什么形状都"接得上"；<code>&lt;EdgeGraphics&gt;</code> 给交界 1~2px 换描边色（煤矿湿岩的深绿苔边），<code>&lt;Edge&gt;&lt;Images&gt;</code> 在边上盖随机旋转的碎石斑。</li>
+      <li><b>地表天空</b>：<code>parallax_*.png</code> 全是白蒙版，颜色来自 <code>parallax_colors.bmp</code> ——横向 512 步是一天，每 20 行一层（天空 / 云 / 远山 / 星）；一天 667 秒，开局黄昏。</li>
+      <li><b>后处理</b>：液体像素采样偏 ±1px 的折射晃动、震屏、爆炸闪光；植被 / 布景有手绘层与背景层分开。</li>
+    </ul>
+  </div>
+  <div class="chips"><span>低分辨率光图 multiply</span><span>色板驱动的昼夜</span><span>视差多层</span><span>世界坐标平铺纹理</span><span>后处理 shader</span><span>像素美术约束</span></div>
+  <div class="blk life"><b>生活比喻</b>
+    舞台灯光：黑屋子里一盏灯就有戏，灯照到哪观众看哪。天空色像一盘调色板绕一圈就是一天。材质贴图像墙纸——墙被砸个洞，剩下的墙纸花纹还是连着的。
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>画面和模拟不能"说两套话"</b>：颜色、贴图、描边都从材质表来，逻辑变了画面自动跟着变，永远不会出现"看着是木头其实是石头"。</li>
+      <li><b>黑暗是最便宜的氛围</b>：少画东西、多控制光，还顺带给了"提灯探索"的玩法张力。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s12">12 · 声音 <small>FMOD · AudioComponent</small></h2>
+<div class="card m12">
+  <h3><span class="tag">听觉</span>声音也是组件，跟着实体和材质走</h3>
+  <div class="blk design"><b>原版怎么设计</b>
+    <p>音频走 FMOD 事件：<code>AudioComponent event_root</code> 挂在实体上，<code>AudioLoopComponent</code> 给黑洞 / 场类法术持续低鸣，材质有各自的碰撞 / 流动音；水下把主声音低通。事件名在数据里，音频包不在解包件里，所以我们只能拿到"叫什么"，拿不到"响什么"。</p>
+  </div>
+  <div class="chips"><span>事件驱动音频中间件</span><span>循环音 + 距离衰减</span><span>低通滤波（水下）</span></div>
+  <div class="blk life"><b>生活比喻</b>电影拟音师：不是给每个镜头配一段音乐，而是给"玻璃碎""水滴""火烧"各准备一种声音，画面里出现什么就响什么。</div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <p>没有素材就合成：我们用 Web Audio 噪声合成了黑洞 70Hz 低鸣、场 520Hz 嗡鸣、电流 4kHz 滋滋，音量随距离衰减——"有对的声音"比"有好的声音"先一步重要。iOS 切后台回来 AudioContext 会 interrupted，任何手势都要尝试 resume。</p>
+  </div>
+</div>
+
+<h2 id="s13">13 · 我们是怎么学它的 <small>方法论也是启发</small></h2>
+<div class="card m13">
+  <h3><span class="tag">方法</span>数值只从数据里抽，拿不准就反，不拍脑袋</h3>
+  <div class="blk design"><b>四层证据，按可信度排</b>
+    <ol>
+      <li><b>解包数据</b>：<code>data.wak</code> → xml / lua / png。材质、实体、法术、群系表全部脚本抽成 json（<code>noita-prepare-*.mjs</code>），代码里不出现魔法数。</li>
+      <li><b>引擎文档</b>：<code>component_documentation.txt</code> 列了每个引擎组件的字段和默认值——黑洞 damage_amount 0.1、电 energy 1000 / speed 32 都是从这儿来的，之前倒推的数全被它纠正。</li>
+      <li><b>存档真值</b>：真游戏存档解出来的 24 个区块，逐像素对照（wang 层实 / 空一致率 91.4%，布景坐标 10/10 一致）。</li>
+      <li><b>反汇编</b>：<code>noita_dev.exe</code> 比正式版多留断言字符串（源文件名 <code>blackhole_system.cpp</code> / <code>explosion_factory.cpp</code>），找到引用字符串的函数 → 反汇编 → 抽浮点常量和调用。爆炸 360 条射线、黑洞 17 格 / 帧、追踪弹公式、后座力直接减速度，全是这么来的。</li>
+    </ol>
+    <p>最后一层是 wiki 的演示 gif 抽帧放大取色——黑洞本体是暗紫黑近不透明的圆盘 + 1px 粉边，不是"粉色的"。</p>
+  </div>
+  <div class="blk life"><b>生活比喻</b>
+    修一台老钟：先看说明书（xml / 文档），再对着一台完好的同款钟比零件（存档真值），实在不懂就把机芯拆开看齿轮（反汇编）。凭感觉"应该差不多"装回去的钟，一定走不准。
+  </div>
+  <div class="blk insp"><b>对我们做游戏的启发</b>
+    <ul>
+      <li><b>每一小步都可验证</b>：每个子系统一个 Playwright 探针，输出数字（格数 / 血量 / 帧时间）和截图，"感觉对了"不算对。</li>
+      <li><b>先查再问</b>：用户的每条反馈先回到原版数据里找依据，再决定改什么；改错方向的成本比多查十分钟高得多。</li>
+      <li><b>事故也要记</b>：用 shell 重写文件把 UTF-8 中文全写坏、从编辑器本地历史恢复的那次，被写进文档变成"改源码只用编辑工具"的规矩。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sum">技术一览表 <small>每个模块背后的"常规技术"</small></h2>
+<table>
+  <tr><th>模块</th><th>常规技术</th><th>一句话</th></tr>
+  <tr><td>材质模拟</td><td>元胞自动机、脏矩形 / 睡眠块、棋盘格多线程、标签反应表</td><td>只算会动的格子</td></tr>
+  <tr><td>世界生成</td><td>Wang 砖、噪声、坐标派生 PRNG、预制件、"颜色即指令"</td><td>种子即世界</td></tr>
+  <tr><td>流式 / 存档</td><td>分块、LRU、增量存档、RLE、Worker、方向预取</td><td>没动过的不存</td></tr>
+  <tr><td>实体</td><td>Entity-Component、原型继承、Lua 钩子、默认值文档</td><td>怪是一张零件清单</td></tr>
+  <tr><td>刚体</td><td>Box2D、marching squares、多边形简化、刚体睡眠、密度浮力</td><td>醒着是物体，睡着是墙</td></tr>
+  <tr><td>法术</td><td>牌库机制、操作序列解释器、组合原语、lua DSL</td><td>五种卡、一页规则</td></tr>
+  <tr><td>弹丸 / 爆炸</td><td>网格射线、能量预算、hitbox 采样、粒子、additive</td><td>爆炸是 360 束光</td></tr>
+  <tr><td>AI</td><td>参数化状态机、网格寻路、视线射线、IK、阵营矩阵</td><td>保安只换几个数</td></tr>
+  <tr><td>状态</td><td>标签匹配、计时叠加、染色精灵</td><td>湿了就是真的湿</td></tr>
+  <tr><td>圣山</td><td>Roguelite 循环、检查点、牌库奖励、触发体积、区域检测</td><td>服务区 + 防盗门</td></tr>
+  <tr><td>渲染</td><td>低分辨率光图、色板昼夜、视差、世界坐标纹理、后处理</td><td>画面从材质长出来</td></tr>
+  <tr><td>声音</td><td>事件音频中间件、循环音、低通</td><td>拟音师</td></tr>
+</table>
+
+<h2 id="insp">对我们做游戏的十条启发</h2>
+<div class="card">
+  <ol>
+    <li><b>先定一个"物理层"，让所有玩法都从它长出来。</b> Noita 是材质格子；我们的游戏可以是别的东西（一张地图、一套经济、一个社交图），但要有一个所有系统共用的真实底座，而不是一堆各自为政的脚本。</li>
+    <li><b>用属性代替名字。</b> 规则写给"可燃的液体"，不写给"油"。新内容 = 加一行数据。</li>
+    <li><b>少量正交规则相乘，胜过大量手写内容。</b> 法术 5 种类型 + 1 页发牌规则，玩家玩了几千小时还在发现新组合。</li>
+    <li><b>随机必须可复现。</b> 种子 + 坐标派生一切随机，bug 能复现、存档能只存差异、玩家能分享。</li>
+    <li><b>性能靠"不算不动的"，不靠"算得更快"。</b> 睡眠、脏矩形、分块、Worker，这四件事解决了 90% 的卡。</li>
+    <li><b>玩家和怪共用一套身体。</b> 手感一致、关卡公平、状态公平，代码还少一半。</li>
+    <li><b>死亡、受伤、作弊检测都是世界事件，不是脚本判定。</b> 血会流、尸体会烧、偷东西是"货出了框"，于是玩家想的是"怎么骗过世界"而不是"怎么骗过程序"。</li>
+    <li><b>反直觉但一致的规则，玩家学得会。</b> 躲墙后爆炸免伤、后座力浮空、湿身防火——从没写进教程，人人都掌握。</li>
+    <li><b>系统再好，没有引导等于没做。</b> 用户一句"玩不明白"，比任何技术难题都致命。目标箭头、新手引导、暂停里的按键表，都是必需品。</li>
+    <li><b>数值只从数据抽，拿不准就反，每一小步可验证。</b> 这条对做游戏和对复刻游戏一样成立：凭感觉"差不多"的东西，最后都要重做。</li>
+  </ol>
+</div>
+
+</main>
+</div>
+
+<footer>
+  <a href="./noita-play.html">可玩原型 noita-play</a> · <a href="./noita-map.html">地图查看器 noita-map</a>
+  <div style="margin-top:8px">数据来源与实现细节见仓库 <code>docs/noita-entities-plan.md</code> 与 <code>src/noita-map/README.md</code></div>
+</footer>
+
+</body>
+</html>
