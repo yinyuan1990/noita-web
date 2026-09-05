@@ -11,6 +11,7 @@ import { ProjectileSystem } from '../noita-map/ProjectileSystem.js'
 import { PlayerSprite } from '../noita-map/PlayerSprite.js'
 import { ParallaxSky } from '../noita-map/Sky.js'
 import { Entities } from '../noita-map/Entities.js'
+import { Ragdoll } from '../noita-map/Ragdoll.js'
 import { Vegetation } from '../noita-map/Vegetation.js'
 import { WandSystem, FREE_CAPACITY } from '../noita-map/Wands.js'
 import { PerkSystem } from '../noita-map/Perks.js'
@@ -270,10 +271,11 @@ const projectiles = new ProjectileSystem({
     hitEntity: (t, p, dmg) => {
       const kb = ((p.d.knockback || 0) + (p.kbAdd || 0)) * 0.15
       if (t === PLAYER_TARGET) { damagePlayer(dmg, p.vx * kb, p.vy * kb - (kb ? 10 : 0), p.name); return }
-      entities.hurt(t, dmg * (p.owner === 'enemy' ? 1 : (flags.damageMul || 1) * effectMul.dmgOut), p.vx * kb, p.vy * kb - (kb ? 15 : 0), 'proj', p.x, p.y)
+      // 尸体效果:弹丸 ragdoll_fx_on_collision(激光 / 狙击 BLOOD_SPRAY,霰弹 / 锯片 BLOOD_EXPLOSION)或卡的 c.ragdoll_fx(火箭 2 / GORE 3);命中同时给的状态(冻 / 化尘)也决定尸体
+      entities.hurt(t, dmg * (p.owner === 'enemy' ? 1 : (flags.damageMul || 1) * effectMul.dmgOut), p.vx * kb, p.vy * kb - (kb ? 15 : 0), 'proj', p.x, p.y, { ragdollFx: p.ragdollFx || p.d.ragdollFx || null, effects: p.effects })
       // damage_game_effect_entities(修饰卡 game_effect_entities 或弹自带):命中时给目标状态
       if (p.effects && !t.isBody && !t.dead) for (const f of p.effects) {
-        if (f === 'frozen') t.stunT = Math.max(t.stunT || 0, 120 / 60)
+        if (f === 'frozen') { t.stunT = Math.max(t.stunT || 0, 120 / 60); t.frozenT = 120 / 60 } // effect_frozen frames=120,期间死了走 FROZEN 尸体
         else if (f === 'electricity') { t.stunT = Math.max(t.stunT || 0, 40 / 60); for (let k = 0; k < 4 && sparks.length < 600; k++) sparks.push({ x: t.x + (Math.random() - 0.5) * 8, y: t.y - 4 + (Math.random() - 0.5) * 10, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, c: '#80c0ff', life: 0.2 }) }
         else if (f === 'apply_on_fire') entities.ignite(t)
       }
@@ -298,8 +300,8 @@ const projectiles = new ProjectileSystem({
     // AreaDamageComponent(area_damage 修饰):每帧给 r 内的怪 dmg
     areaDamage: (x, y, r, dmg, p) => { for (const e of entities.list) { if (e.dead || e.isBody) continue; if (Math.hypot(e.x - x, (e.y + (e.hit.t + e.hit.b) / 2) - y) <= r) entities.hurt(e, dmg, 0, 0, 'proj') } },
     // 反 exe DamageMortals:中心在 r 内 + hitbox 能被射线够到 → 满额伤害(无衰减);击退 lerp(power) × knockback_force
-    explosion: (x, y, r, dmg, reach2, power = [0, 0.2], kb = 1) => {
-      entities.explosion(x, y, r, dmg, reach2, power, kb)
+    explosion: (x, y, r, dmg, reach2, power = [0, 0.2], kb = 1, ragdollFx = 0) => {
+      entities.explosion(x, y, r, dmg, reach2, power, kb, ragdollFx)
       const cy = player.y - 4, d = Math.hypot(player.x - x, cy - y)
       if (d <= r && Entities.los(x, y, reach2, player.x, cy, 3, 8)) { const t = 1 - d / r, f = (power[0] + (power[1] - power[0]) * t) * kb * 120; damagePlayer(dmg, (player.x - x) / Math.max(1, d) * f, -f * 0.75, 'explosion') }
     },
@@ -1963,4 +1965,4 @@ function loop(now) {
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, entities, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }

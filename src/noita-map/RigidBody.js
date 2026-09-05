@@ -144,14 +144,20 @@ export class RigidBody {
     // 比数 3×3 实心格稳:陷进去的接触像素周围全是实心,梯度法会给出噪声法线,箱子就一边抖一边自己转。
     let nx = ex - cx, ny = ey - cy
     let l = Math.hypot(nx, ny)
-    // 几个像素的小块没有"形状",质心法线是噪声:按来向(速度反方向)当法线,从哪儿撞进去就从哪儿退出来
-    if (this.n < 12 && !buried) { const sp = Math.hypot(this.vx, this.vy); if (sp > 1) { nx = -this.vx / sp; ny = -this.vy / sp; l = 1 } }
+    // 几个像素的小块没有"形状",质心法线是噪声:看接触点四周哪边实心多(±2px 采样),法线背着实心那边;四周都一样(卡缝里)才按来向(速度反方向)退
+    if (this.n < 12 && !buried) {
+      const X = Math.floor(cx), Y = Math.floor(cy)
+      const sx = (solid(X + 2, Y) ? 1 : 0) + (solid(X + 2, Y - 1) ? 1 : 0) - (solid(X - 2, Y) ? 1 : 0) - (solid(X - 2, Y - 1) ? 1 : 0)
+      const sy = (solid(X, Y + 2) ? 1 : 0) + (solid(X + 1, Y + 2) ? 1 : 0) - (solid(X, Y - 2) ? 1 : 0) - (solid(X + 1, Y - 2) ? 1 : 0)
+      if (sx || sy) { nx = -sx; ny = -sy; l = Math.hypot(nx, ny) }
+      else { const sp = Math.hypot(this.vx, this.vy); if (sp > 1) { nx = -this.vx / sp; ny = -this.vy / sp; l = 1 } }
+    }
     if (buried || l < 0.5) { nx = 0; ny = -1; l = 1 }
     nx /= l; ny /= l
     if (buried) { this.vx *= 0.5; this.vy = Math.min(this.vy, 0); this.w *= 0.5 }
     // 推出:沿法线主轴 1px 一步(斜面上沿斜法线推会产生"无速度的横向蠕动",箱子自己爬坡;按主轴推没有这个问题),最多 5px
     const ax = Math.abs(ny) >= Math.abs(nx) ? 0 : Math.sign(nx), ay = ax ? 0 : Math.sign(ny) || -1
-    for (let k = 0, K = buried ? 48 : 12; k < K; k++) {
+    for (let k = 0, K = buried ? (this.softPush ? 6 : 48) : 12; k < K; k++) {
       this.x += ax * 0.5; this.y += ay * 0.5 // 半像素一步,别一下顶出去太多又落回来(那就是抖);埋住的多顶几步(≤24px)
       let still = false
       for (let e = 0; e < this.edge.length; e++) { this.worldOf(this.edge[e], P); if (solid(Math.floor(P[0]), Math.floor(P[1]))) { still = true; break } }

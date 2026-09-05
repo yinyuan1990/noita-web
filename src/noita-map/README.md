@@ -184,8 +184,10 @@ CPU×4/×6 模拟结果(15s 巡航):
   hp≤0 或缺损 ≥ `physics_body_destruction_required`(炸药箱 4%)按概率炸,`config_explosion` 交 `ProjectileSystem.explode`(同一套坑/火/摇镜/伤害,会连锁);
   `MaterialInventoryComponent`:桶被打到从伤口漏,毁了 300 油全洒(真液体);碎块按图色飞出(box2d 材质是尘)。矿灯带光。
   `cell_type=solid` 改为静态是顺手修的 bug:之前煤矿木支架、睡着的箱子都会当落沙塌掉。
-- **第 3 步:尸体 / 掉金 / 沾污 / 火**:死亡 → `ragdoll_filenames_file` 每张 png 一块像素刚体(材质 `ragdoll_material`=meat),带着受击冲量摔出去,
-  睡够 8s 撤掉刚体只留肉像素(原作尸体最终也是一堆 meat);`drop_money.lua` 逐行:money = 10×max(1,⌊max_hp⌋),先掷 5 个 10 面值再 1000/200/50/10,
+- **第 3 步:尸体 / 掉金 / 沾污 / 火**:死亡走 `DamageModelSystem::KillMe` 的 RAGDOLL_FX 分支(反 exe,细节见 docs/noita-entities-plan.md 2.4 第 19 条):NORMAL / BLOOD_SPRAY = `ragdoll_filenames_file` 每张整帧 png 裁成一块像素刚体(材质 `ragdoll_material`=meat),
+  **两张图重叠的像素 = 一个 pin 关节**(`Ragdoll.js`:僵尸 12 块 11 关节一具骨架,顺序冲量 + 转角刚度,整组一起睡 / 醒,拉开太远或锚点像素被打掉才断),整具带着 自身速度×3 + 受击冲量 倒下;
+  BLOOD_EXPLOSION(霰弹 / 锯片 / 火箭卡)不建关节散开 + 每块喷 `blood_spray_material`;FROZEN(冻住时死)/ 没有 ragdoll 文件 = 整张精灵帧变一块刚体(ice_glass_b2 / ragdoll_material);DISINTEGRATED(幽灵 / 幻影 / 雕像 `ragdoll_fx_forced`,或化尘弹)= 每像素一粒尘无尸;
+  火烧死每 5 像素点一格火把尸体烧成灰;弹丸 / 爆炸致死 20% 变 BLOOD_SPRAY。睡够 8s 撤掉刚体只留肉像素(原作尸体最终也是一堆 meat);`drop_money.lua` 逐行:money = 10×max(1,⌊max_hp⌋),先掷 5 个 10 面值再 1000/200/50/10,
   金块是 `gold_box2d` 小刚体(`goldnugget_6/9/12/20px.png`),`LifetimeComponent` 900 帧消失,`auto_pickup` 碰到就进钱包。
   沾污按液体材质 tag(status_list.lua):`[water]` WET(灭火)· `[burnable]` 液体 OILED(碰火即燃)· `[blood]` BLOODY · `[slime]` SLIMY(走速 ×0.6)· `[radioactive]` 掉血;
   踩水洼也沾。着火(`fire_probability_of_ignition`):烧 4s,每 0.5s 扣 `fire_damage_amount` 0.2,身上往外冒火格(会点燃旁边的油/木,人就是行走的火源),进水灭;

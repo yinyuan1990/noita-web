@@ -392,6 +392,7 @@ export class ProjectileSystem {
     p.bounces += c.bounces || 0
     p.gAdd = c.gravity || 0
     p.kbAdd = c.knockback_force || 0
+    p.ragdollFx = c.ragdoll_fx || 0 // 1 NORMAL / 2 BLOOD_EXPLOSION(火箭 / 核弹 / 高爆)/ 3 BLOOD_SPRAY(GORE 卡),和引擎 RAGDOLL_FX 枚举同序
     p.exR = c.explosion_radius || 0
     p.exD = (c.damage_explosion || 0) + (c.damage_explosion_add || 0)
     p.friendly = !!c.friendly_fire
@@ -814,8 +815,9 @@ export class ProjectileSystem {
     if ((p.exR || p.exD) && (ex || p.exR > 0)) ex = { ...(ex || { radius: 0, damage: 0, shake: 0, hole: true, holeLiquid: false, rayEnergy: 0, maxDurability: 0, sprite: null, sparks: null, matSparks: null, light: null, createCell: null, power: [0, 0.2], knockback: 1 }), radius: (ex?.radius || 0) + p.exR, damage: (ex?.damage || 0) + p.exD }
     if (!ex || !(byHit ? d.deathExplode : d.lifetimeExplode) && !(p.exR > 0)) return
     this._lg = d.looseGround || null
+    this._exFx = p.ragdollFx || p.d.ragdollFx || 0 // 火箭类 c.ragdoll_fx=2:被爆炸炸死的尸体 BLOOD_EXPLOSION 散块
     this.explode(p.x, p.y, ex, Math.atan2(-p.vy, -p.vx))
-    this._lg = null
+    this._lg = null; this._exFx = 0
   }
 
   /**
@@ -889,7 +891,7 @@ export class ProjectileSystem {
     }
     const angIdx = (dx, dy) => { let d = Math.round(Math.atan2(dy, dx) * 180 / Math.PI); d %= 360; if (d < 0) d += 360; return d }
     // config_explosion.damage 打到范围内的实体(damage_mortals):把射线表交给实体层做遮挡判定
-    if (ex.damage > 0 && r > 0) this.hooks.explosion?.(x, y, r, ex.damage, reach2, ex.power, ex.knockback)
+    if (ex.damage > 0 && r > 0) this.hooks.explosion?.(x, y, r, ex.damage, reach2, ex.power, ex.knockback, this._exFx || 0)
     const ms = ex.matSparks ? ex.matSparks[0] + Math.random() * (ex.matSparks[1] - ex.matSparks[0]) : 0
     const ccId = ex.createCell?.mat ? mats.byName.get(ex.createCell.mat) : undefined
     if (ex.hole && r > 0) {

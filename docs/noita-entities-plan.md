@@ -592,19 +592,35 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     - 尸块碎了以后一直晃:碎肉 3~10 像素的小块惯量极小,点接触的扭矩冲量甩到 20+ rad/s 乱转、转着钻进地里。改:n<12 的小块一律按面接触(不给扭矩)、法线按来向;
       角速度封顶 12 rad/s(box2d 默认量级)。探针 `_noita-body-shot.mjs`:僵尸 12 块尸块 3s 后 10 块睡着(之前 3 块)。
 18. 没反完的:DamageModelSystem(电水接触伤害每帧多少、火伤 0.2 / 坠落 0.1~1.2 常量在 0xbc6980)、LooseGroundSystem 细节(144 条,和文档描述一致就没细读)、PhysicsThrowable。
-19. **下一件(用户 09-05 提出,还没动)——怪物死亡 / 尸体**:用户实际玩原版的感觉是"怪死了基本是一整具尸体倒下,不是很多碎块";我们现在是 `ragdoll_filenames_file` 里每张 png 一块刚体
-    (僵尸 12 块)散开来。要反:`DamageModelComponent` 的 ragdoll 系列字段(`ragdoll_filenames_file` / `ragdoll_material` / `ragdollify_child_entity_sprites` / `ragdollify_root_angular_damping` /
-    `ragdollify_disintegrate_nonroot` / `create_ragdoll` / `ragdoll_fx_forced` / `blood_spray_material` / `blood_sprite_large`),`data/temp/ragdoll/filenames.txt` 与 `ragdolls/*.png` 的对应关系
-    (一张 png 是一块 Box2D 体,块与块之间原版用 **joint 连着**才是"一整具"——RAGDOLL_FX / `ragdoll_fx` 枚举:NORMAL / BLOOD_EXPLOSION / BLOOD_SPRAY / FROZEN / CONVERT_TO_MATERIAL / CUSTOM_RAGDOLL_ENTITY /
-    DISINTEGRATED / NO_RAGDOLL / PLAYER_RAGDOLL_CAMERA),每种怪 xml 里 `ragdoll_fx_forced` / 伤害类型决定走哪种(火烧死 = 焦尸、爆炸 = 血爆、冰 = 冻住整块、DISINTEGRATED = 化灰无尸)。
-    还要看 `data/scripts/...` 里 `death` 脚本(掉金 / 分裂 / 变蛋)和 `blood_spray_material` 溅血量。改法方向:一具尸体 = 各块用关节串起来的一个刚体组(或简化成按 root 块整体落地),按 ragdoll_fx 分支。
+19. **怪物死亡 / 尸体(用户 09-05:"原版怪死了基本是一整具尸体倒下,不是很多碎块")—— 反 `DamageModelSystem::KillMe`(0xbcdef0)+ `PhysicsRagdollSystem::LoadRagdoll`(0xd0fe90)+ `LoadCachedRagdollImpl`(0xd0f120)**:
+    - **ragdoll png 与关节**:`filenames.txt` 列的每张 png 都是**整帧尺寸**(僵尸 18×19 = 精灵帧),各部件在帧内各占自己的位置,叠起来就是整个身体。LoadCachedRagdoll 对每一对图片做 FindOverlap(0xd0ee50:两张都有像素的格子),
+      **每个重叠像素 = 一个关节**(`{i, j, x, y}`,LoadRagdoll 里 0x76ad40 建 box2d 关节)。僵尸 12 块 11 个关节(上躯干~下躯干 / 头 / 左右臂,下躯干~左右腿 / 尾,腿~脚,臂~手,各 1 像素),矿工 10 块 9 个,狼 11 块 10 个 —— 一具骨架。
+      每具掷一次 `rand < 0.75` 选关节类型 0x2b68(很硬,`PHYSICS_RAGDOLL_VERY_STIFF_JOINT_STIFFNESS` xml 2 / exe 5)否则 0x2b67(`PHYSICS_RAGDOLL_JOINT_STIFFNESS` 0.05);`PHYSICS_RAGDOLL_JOINT_MIN_BREAK_FORCE` 200 / `MAX_FORCE_MULTIPLIER` 400(exe 默认)。
+      整帧居中放在 实体位置 + `ragdoll_offset`(x 随朝向翻转,`scale_x` = 朝向 → 朝左整帧镜像);初速 = 自身速度 × `RAGDOLL_OWN_VELOCITY_IMPULSE_MULTIPLIER`(xml 3)+ 伤害冲量,每块 ×(1 ± `RAGDOLL_IMPULSE_RANDOMNESS` 0.04),最大块 x 再 ±2。
+    - **RAGDOLL_FX 枚举(exe 字符串表 0xd7f040)**:0 NONE 1 NORMAL 2 BLOOD_EXPLOSION 3 BLOOD_SPRAY 4 FROZEN 5 CONVERT_TO_MATERIAL 6 CUSTOM_RAGDOLL_ENTITY 7 DISINTEGRATED 8 NO_RAGDOLL_FILE 9 PLAYER_RAGDOLL_CAMERA
+      (lua 里 `c.ragdoll_fx` 同序:火箭 / 核弹 / 高爆 = 2,GORE 卡 = 3)。KillMe 的决定顺序:伤害带的 fx(弹丸 `ragdoll_fx_on_collision`:激光 / 狙击弹 / 挖掘弹 / 链锯 BLOOD_SPRAY,霰弹 / 锯片 / 胶弹 BLOOD_EXPLOSION,其余 NORMAL)
+      → children GameEffect 的 `ragdoll_effect` 取最大并顶掉 ragdoll_material(effect_frozen FROZEN + ice_glass_b2;effect_disintegrated DISINTEGRATED + soil;effect_electricity CUSTOM + physics_ragdoll_part_electrified)
+      → `create_ragdoll=0` 或 `ragdoll_filenames_file` 为空 → 8 → NORMAL 且伤害类型含 PROJECTILE|EXPLOSION(位 2|4)时 `DAMAGE_BLOOD_SPRAY_CHANCE`(exe 20)% 变 BLOOD_SPRAY → `ragdoll_fx_forced` 覆盖(37 种幽灵 / 幻影 / 雕像 / 骷髅虫 = DISINTEGRATED)→ 玩家 0/1 变 9。
+      switch 表:0/1 → LoadRagdoll(**joints=1**);2/3/6/9 → LoadRagdoll(joints = fx≠2,即**只有 BLOOD_EXPLOSION 不建关节散开**),再给每块挂血喷发射器(2/3)/ 自定义实体(6);4/5/7/8 → 不用 ragdoll 文件:
+      FROZEN / CONVERT / NO_RAGDOLL_FILE = **整张当前精灵帧变一块刚体**(0xbd0480:材质 = 效果的 ragdoll_material,冻住时精灵调色 (0,0.5,1),角速度 Random(−4,4));DISINTEGRATED = 每个精灵像素变一粒该材质真粒子(0xbc5a10:两轴 Random(−100,100),带像素自己的颜色)。
+      火烧死(伤害类型 FIRE 或身上有着火效果):ragdoll 每 `RAGDOLL_FIRE_DEATH_IGNITE_EVERY_N_PIXEL`(xml 5)个像素点一格火 → 尸体烧成灰(meat fire_hp 600 无转化 → 烧没)。
+      BLOOD_EXPLOSION 每块角速度 ±`RAGDOLL_FX_EXPLOSION_ROTATION`(xml 0.5);血喷:每块挂 ParticleEmitter,总量 = (`ragdoll_blood_amount_absolute` > −1 ? 按质量分摊 : 质量 × 1000)× `RAGDOLL_BLOOD_MULTIPLIER` 2 × rand(0.8~1.2),方向 = 伤害方向 ×(0.85~1.15),每 1~2 帧 1~3 粒,材质 `blood_spray_material`(没有就 blood_material),放 `audio_blood_spray_sound`。
+      受伤时的血(DamageModelSystem 0xbcd3f0):Random(`DAMAGE_BLOOD_AMOUNT_MIN` 20, MAX 40) × `blood_multiplier` 粒 blood_material,沿伤害方向 ±0.6 rad,速度 ×(0.5~1.25)。死亡脚本只有 drop_money(第 14 条已做);分裂 / 变蛋是各怪自己的 LuaComponent(没在我们出生区的表里)。
+    - **改法**:新增 `Ragdoll.js`(部件刚体 + 关节表):`_buildRagdoll` 每张 png 镜像 → 裁包围盒 → RigidBody(材质 ragdoll_material),重叠像素 → pin 关节(锚点 = 各自图心局部坐标);每帧所有部件 step 完做 3 轮顺序冲量
+      (2×2 有效质量矩阵消掉锚点相对速度 + 位置按逆质量分摊拉回,每轮 ≤3px;转角刚度按 75%/25% 掷 0.12 / 0.03 把相对转角拉回初始姿势 —— 尸体大体保持精灵姿势整具倒下、四肢软一点);
+      整组一起睡(相连块 0.5s 内位移 <1.5px + 任一块有支撑)/ 一起醒;着地时按地面摩擦一起耗 vx / w(box2d 里是接触 + 关节摩擦干的活,不然关节把重力速度在块之间倒来倒去整具会蠕动);
+      断裂 = 一帧拉开 16px 或连续 4 帧合不拢 8px、或锚点像素被打掉 / 烧掉;散开的块(BLOOD_EXPLOSION / 断了)各自睡。刚生成先整具上移到没有像素埋在实心里(整帧居中 y−6 时脚在地里,我们的刚体埋住会一帧顶 24px 把关节撕开),部件 `softPush`。
+      小块(<12 像素)的接触法线改看四周实心分布(原来按速度反方向,被拽着在地上滑时法线水平、一路往回顶把关节撕开)。BLOOD_EXPLOSION 原版散开靠 box2d 块互撞,我们刚体不互撞,补每块离心 30~80 px/s。
+      `hurt()` 加 `opts {ragdollFx, effects}`:弹丸 `p.d.ragdollFx`(prepare 抽 `ragdoll_fx_on_collision`)/ 卡 `c.ragdoll_fx`(Wands C_FIELDS 放行,`_applyC` → `p.ragdollFx`,爆炸经 `_exFx` 传到 hooks.explosion 第 8 参)/ 命中给的 frozen(`e.frozenT` 120 帧)/ disintegrated。
+      探针 `_noita-ragdoll-shot.mjs`:NORMAL 僵尸 12 块 11 关节 0 断、落地关节误差 <0.5px、整具包围盒 ≈11×5px、3s 内 12 块全睡成 ~60 格 meat;朝左镜像同;BLOOD_EXPLOSION 0 关节散 30~60px + 喷血;BLOOD_SPRAY 矿工 10 块连着喷血;FROZEN 一块 72 像素 ice_glass_b2;
+      DISINTEGRATED 0 块 ~50 粒尘;火烧死 3s 内 20+ 格火、尸体烧没;弹丸打死 30 只 ≈ 20% BLOOD_SPRAY。`ragdoll-*.png` 8 倍放大截图。
 
 ## 2.5 接手指南(新会话从这里开始)
 
 **仓库**:`https://github.com/yinyuan1990/noita-web.git`(main;2026-09-04 首推,`.gitignore` 排除 node_modules / dist* / noita-ref / scripts/out / scripts/shots)。
 本机 `git config http.proxy socks5h://127.0.0.1:2801`(用户的本地代理是 SOCKS5,走 http:// 会超时)。`noita-ref/`(原版解包数据 + 存档真值)不在仓库里,只在本机 `e:\soft\xiaoshuodongtai\web\noita-ref`。
-**当前状态(2026-09-04 20:00)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
-怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条)。
+**当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
+怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。
@@ -621,7 +637,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 憋气 / 死亡画面 `_noita-drown-shot.mjs [url]`(出生地挖坑灌水 → 逐秒记气 / 血 → 死亡画面 → 点回出生点);
 lukki 蜘蛛 `_noita-lukki-shot.mjs [lukki|longleg|tiny|eggs|jungle] [url]`(出生地放一只看腿 / 追 / 刺 / 打死,`jungle` 传送到丛林找真生成的;`-z*.png` 是 4 倍放大截图);
 玩法 UI `_noita-ui-shot.mjs [pc|touch|all] [url]`(指引 / 引导 / 背包只读 / 踢 / 暂停 / 底栏 / 手机动作键;测"背包只读"要带 `&free=0`);
-黑洞 `_noita-blackhole-shot.mjs [url]`;怪物随区块重刷 `_noita-tp-spawn-shot.mjs [url]`;走路 AI(跳台子 / 埋住不动 / 1px 地板)`_noita-ai-stuck-shot.mjs [url]`;自由模式 `_noita-free-shot.mjs [url]`;圣山崩塌 + 存档 `_noita-collapse-shot.mjs [url]`;圣山入口传送门 `_noita-portal-shot.mjs [url]`;商店件数 `_noita-shopcount-shot.mjs [count]`(setGlobals 后传送圣山数货);圣山守卫 `_noita-steve-shot.mjs [url]`(检查区材质直方图 → 挪一件货出框 → Stevari 出现追人开火 → 新页挖穿顶砖;输出里有中文提示,在 PowerShell 里请 `> file` 再看)。
+尸体 / RAGDOLL_FX 全分支 `_noita-ragdoll-shot.mjs [url]`(石台上放怪打死:NORMAL 关节数 / 断裂 / 包围盒 / 入睡 / meat 格数,BLOOD_EXPLOSION、BLOOD_SPRAY、FROZEN、DISINTEGRATED、火烧死,8 倍放大截图 `ragdoll-*.png`);黑洞 `_noita-blackhole-shot.mjs [url]`;怪物随区块重刷 `_noita-tp-spawn-shot.mjs [url]`;走路 AI(跳台子 / 埋住不动 / 1px 地板)`_noita-ai-stuck-shot.mjs [url]`;自由模式 `_noita-free-shot.mjs [url]`;圣山崩塌 + 存档 `_noita-collapse-shot.mjs [url]`;圣山入口传送门 `_noita-portal-shot.mjs [url]`;商店件数 `_noita-shopcount-shot.mjs [count]`(setGlobals 后传送圣山数货);圣山守卫 `_noita-steve-shot.mjs [url]`(检查区材质直方图 → 挪一件货出框 → Stevari 出现追人开火 → 新页挖穿顶砖;输出里有中文提示,在 PowerShell 里请 `> file` 再看)。
 调研脚本 `_survey-entities.mjs`、`_dump-spawn-tables.mjs`、`_dump-biome-mats.mjs`、`_dump-wands.mjs`、`_fit-surface.mjs`。
 
 **上线**:`npm run build:noita; tar -czf dist-noita.tar.gz -C dist-noita .; $env:DEPLOY_PW='<密码,文档不存,新会话向用户要>'; python scripts/_deploy.py noita`,

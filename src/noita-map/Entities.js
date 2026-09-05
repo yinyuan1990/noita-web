@@ -4,10 +4,11 @@
 // 精灵 = SpriteComponent 的 Sprite xml(RectAnimation 按名字播:stand/walk/jump_up/jump_fall/attack/swim_*);
 // AI = AnimalAIComponent 的简化版:sense_creatures + creature_detection_range 发现玩家 → 追 → attack_melee_max_distance 内近战
 //      (attack_melee_damage_min/max、frames_between、impulse);helpless 阵营见人就跑;没人时闲逛/站着。
-// 伤害 = DamageModelComponent:hp;被弹丸/爆炸打到掉血,喷 blood_spray_material;死亡洒 blood_material。布娃娃 / 掉金块 下一步。
+// 伤害 = DamageModelComponent:hp;被弹丸/爆炸打到掉血,喷 blood_material;死亡按 KillMe 的 RAGDOLL_FX 分支出尸体(Ragdoll.js:关节连着的一具)/ 冻块 / 化尘,掉金走 drop_money。
 // 物理道具(prop)在这一步只登记,不实例化——像素刚体是第 2 步。
 
 import { RigidBody } from './RigidBody.js'
+import { Ragdoll } from './Ragdoll.js'
 import { NollaPrng } from './core/NollaPrng.js'
 import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from './core/coords.js'
 
@@ -35,6 +36,8 @@ export class Entities {
     this.worms = []        // 虫(WormComponent 节链)
     this.bodies = []       // 像素刚体(物理道具)
     this.pendingProps = [] // 形状图还没到的道具
+    this.ragdolls = []     // 布娃娃组(Ragdoll:部件刚体 + 关节)
+    this.pendingRagdolls = [] // 部件图还没全到的布娃娃
     this.spawnedChunks = new Set() // 放过道具 / 物品的 chunk(只放一次)
     this.liveChunks = new Set()    // 当前有怪在世界里的 chunk(卸载时清)
     this.pendingImages = new Map()
@@ -117,6 +120,7 @@ export class Entities {
     if (d.bodyImage) this._img(d.bodyImage)
     if (d.overlays) for (const o of d.overlays) this._img(o.image)
     if (d.limbs) for (const L of d.limbs) { if (L.a) this._img(L.a.img); if (L.b) this._img(L.b.img); if (L.knee) this._img(L.knee.img) }
+    if (d.ragdoll) for (const img of d.ragdoll) this._img(img) // 尸体部件图提前要,死的那一刻整具一起出来
   }
 
   /** 直接放一只怪(巢吐虫 / 蜘蛛卵出小蜘蛛 / 探针用) */
@@ -400,6 +404,14 @@ export class Entities {
         if (b) this.bodies.push(b)
       }
     }
+    if (this.pendingRagdolls.length) {
+      for (let i = this.pendingRagdolls.length - 1; i >= 0; i--) {
+        const r = this.pendingRagdolls[i]
+        if (r.imgs.some((n) => !this.images.has(n))) continue
+        this.pendingRagdolls.splice(i, 1)
+        this._buildRagdoll(r)
+      }
+    }
     const sim = this.sim
     const pl = this.player
     // 物品之间互相挤开(原版金块 / 药水是 Box2D 刚体会互相碰撞、堆成一小堆;我们的刚体不互撞,不挤的话一箱金块全叠在一个点上,心和金块糊成一团)
@@ -444,7 +456,10 @@ export class Entities {
           b.checkT = 0.4
           const lost = b.audit(sim)
           if (lost) this._bodyDamaged(b, 0, lost)
-          if (!b.dead && !b.supported(this._solidB)) b.wake(sim)
+          // 布娃娃部件:关节钉在像素上,像素被烧 / 挖掉关节就断;支撑看整组(挂在躯干上的手臂自己不着地),没支撑整组醒
+          if (lost && b.group) b.group.checkAnchors()
+          if (!b.dead && b.group?.connected(b)) { if (!b.group.supported(this._solidB)) b.group.wakeAll(sim) }
+          else if (!b.dead && !b.supported(this._solidB)) b.wake(sim)
         }
         continue
       }
@@ -481,11 +496,68 @@ export class Entities {
           }
         }
       }
+      if (b.group?.connected(b)) continue // 布娃娃部件(还连着的):整组一起睡(下面);散开的块各自睡
       if (b.restT > 0.5 && b.supported(this._solidB)) {
         b.sleep(sim)
         // 材质 solid_on_sleep_convert(concrete_collapsed → solid_break_to_type concrete_static):睡着就化成静态混凝土,刚体撤掉
         if (b.sleepConvert && b.cells) { for (let k = 0; k < b.cells.length; k += 2) sim.set(b.cells[k], b.cells[k + 1], b.sleepConvert, 0); b.cells = null; b.dead = true }
       }
+    }
+    this._updateRagdolls(dt, x0, y0, x1, y1)
+  }
+
+  /**
+   * 布娃娃组:部件各自 step 完后解关节(pin joint 顺序冲量),整组慢下来 0.5s 且有一块着地 → 一起睡(像素进世界);
+   * BLOOD_SPRAY / BLOOD_EXPLOSION 的部件按预算往外喷 blood_spray_material(真液体);火烧死的尸体几秒内在部件像素旁不断起火。
+   */
+  _updateRagdolls(dt, x0, y0, x1, y1) {
+    const sim = this.sim
+    for (let i = this.ragdolls.length - 1; i >= 0; i--) {
+      const g = this.ragdolls[i]
+      if (!g.alive) { this.ragdolls.splice(i, 1); continue }
+      const root = g.parts.find((p) => !p.dead)
+      if (root.x < x0 || root.x > x1 || root.y < y0 || root.y > y1) continue
+      g.age += dt
+      // 火烧死(KillMe:伤害类型 FIRE 或身上着火 → 尸体每 RAGDOLL_FIRE_DEATH_IGNITE_EVERY_N_PIXEL=5 个像素点一格火):
+      // 醒着的刚体像素不在格子里,火放在像素上方的空气格;睡了以后像素就是世界里的 meat,火贴着它们放,meat 可燃就烧起来
+      if (g.burn > 0) {
+        g.burn -= dt
+        const P = [0, 0], F = sim.M_FIRE
+        for (const p of g.parts) {
+          if (p.dead) continue
+          if (p.asleep) {
+            if (p.cells) for (let k = 0; k < p.cells.length; k += 10) { if (Math.random() > 0.15) continue; const fx = p.cells[k], fy = p.cells[k + 1] - 1; if (sim.get(fx, fy) === 0) sim.set(fx, fy, F, 8 + ((Math.random() * 10) | 0)) }
+            continue
+          }
+          for (let k = 0; k < p.n; k += 5) {
+            if (Math.random() > 0.15) continue
+            p.worldOf(k, P)
+            const fx = Math.floor(P[0]) + ((Math.random() * 3) | 0) - 1, fy = Math.floor(P[1]) - 1
+            if (sim.get(fx, fy) === 0) sim.set(fx, fy, F, 6 + ((Math.random() * 8) | 0))
+          }
+        }
+      }
+      if (!g.anyAwake) continue
+      g.solve(3)
+      // 血喷(KillMe BLOOD_SPRAY 分支给每块挂 ParticleEmitter:沿伤害方向 ×(0.85~1.15),每 1~2 帧 1~3 粒,总量 ∝ 块的质量)
+      if (g.blood && g.blood.left > 0) {
+        const B = g.blood, P = [0, 0]
+        for (const p of g.parts) {
+          if (p.dead || p.asleep || Math.random() > 0.6 || B.left <= 0) continue
+          const n = 1 + ((Math.random() * 3) | 0)
+          for (let k = 0; k < n && B.left > 0; k++) {
+            p.worldOf((Math.random() * p.n) | 0, P)
+            const sp = 30 + Math.random() * 60, jx = 0.85 + Math.random() * 0.3, jy = 0.85 + Math.random() * 0.3
+            this.hooks.debris?.(P[0], P[1], B.dx * jx * sp + (Math.random() - 0.5) * 20, B.dy * jy * sp - 10 + (Math.random() - 0.5) * 20, B.mat, this.mats.color[B.mat], true)
+            B.left--
+          }
+        }
+      }
+      // 着地的尸体:关节每帧在块之间倒来倒去的动量会让整具慢慢蠕动 / 小块来回摆,按地面摩擦一起耗掉(box2d 里是接触摩擦 + 关节摩擦干的活)
+      const sup = g.supported(this._solidB)
+      if (sup) for (const p of g.parts) if (!p.dead && !p.asleep && g.connected(p)) { p.vx *= 0.9; p.w *= p.n < 12 ? 0.5 : 0.8 }
+      // 整组入睡:相连的块半秒内都没挪窝 + 任一块有支撑;睡了以后关节不再解,像素进世界(meat)
+      if (g.resting(dt) && sup) g.sleepAll(sim)
     }
   }
 
@@ -861,6 +933,7 @@ export class Entities {
       if (e.x < x0 || e.x > x1 || e.y < y0 || e.y > y1) continue
       const f60 = dt * 60
       // GameEffect FROZEN(effect_frozen 120 帧)/ ELECTROCUTION(effect_electricity 40 帧):定在原地什么都不做(场类法术 GameAreaEffectComponent 给的)
+      if (e.frozenT > 0) e.frozenT -= dt
       if (e.stunT > 0) { e.stunT -= dt; e.vx = 0; e.vy = 0; e.dir = 0; continue }
       // ── 感知 / 状态机 ──
       e.think -= dt; e.cool -= dt; e.hurtT -= dt; e.rangedCool -= dt
@@ -1601,8 +1674,11 @@ export class Entities {
     return null
   }
 
-  /** 掉血:喷 blood_spray_material(真材质碎屑),hp≤0 死亡 → 洒 blood_material;刚体走 _bodyDamaged */
-  hurt(e, dmg, ix = 0, iy = 0, src = 'proj', hx = e.x, hy = e.y) {
+  /**
+   * 掉血:喷 blood_material(真材质碎屑),hp≤0 死亡 → 尸体按 RAGDOLL_FX 处理;刚体走 _bodyDamaged
+   * @param {{ragdollFx?:string|number, effects?:string[]}} [opts]  伤害自带的尸体效果(弹丸 ragdoll_fx_on_collision / 卡 c.ragdoll_fx)与命中时给的状态
+   */
+  hurt(e, dmg, ix = 0, iy = 0, src = 'proj', hx = e.x, hy = e.y, opts = null) {
     if (e.dead || dmg <= 0) return
     if (e.isBody) {
       if (e.asleep && (Math.abs(ix) + Math.abs(iy) > 40 || src === 'explosion')) e.wake(this.sim)
@@ -1631,10 +1707,39 @@ export class Entities {
       if (spray > 0) { const n = Math.min(12, 3 + Math.round(dmg * 30)); for (let i = 0; i < n; i++) this.hooks.debris?.(e.x + (Math.random() - 0.5) * 4, e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t), ix * 0.6 + (Math.random() - 0.5) * 80, iy * 0.6 - Math.random() * 60, spray, this.mats.color[spray]) }
       this.hooks.sfx?.('impact', { vol: 0.35, rate: 1.4 + Math.random() * 0.3, minGap: 60 })
     }
-    if (e.hp <= 0) this._die(e, ix, iy)
+    if (e.hp <= 0) this._die(e, ix, iy, src, opts)
   }
 
-  _die(e, ix = 0, iy = 0) {
+  /**
+   * 反 exe DamageModelSystem::KillMe 里 ragdoll_fx 的决定顺序:
+   *   伤害自带的 fx(弹丸 ragdoll_fx_on_collision / 法术卡 c.ragdoll_fx:火箭类 2=BLOOD_EXPLOSION、GORE 3=BLOOD_SPRAY)
+   *   → 身上 GameEffect 的 ragdoll_effect 取最大(effect_frozen FROZEN + ragdoll_material ice_glass_b2、effect_disintegrated DISINTEGRATED + soil)
+   *   → create_ragdoll=0 或 ragdoll_filenames_file 为空 → NO_RAGDOLL_FILE(整张精灵变一块刚体)
+   *   → NORMAL 且弹丸 / 爆炸伤害:DAMAGE_BLOOD_SPRAY_CHANCE 20% 变 BLOOD_SPRAY
+   *   → ragdoll_fx_forced 覆盖一切(幽灵 / 幻影 / 雕像 DISINTEGRATED = 化尘无尸)
+   * 枚举顺序(exe 字符串表):0 NONE 1 NORMAL 2 BLOOD_EXPLOSION 3 BLOOD_SPRAY 4 FROZEN 5 CONVERT_TO_MATERIAL 6 CUSTOM_RAGDOLL_ENTITY 7 DISINTEGRATED 8 NO_RAGDOLL_FILE 9 PLAYER_RAGDOLL_CAMERA
+   */
+  static RAGDOLL_FX = ['NONE', 'NORMAL', 'BLOOD_EXPLOSION', 'BLOOD_SPRAY', 'FROZEN', 'CONVERT_TO_MATERIAL', 'CUSTOM_RAGDOLL_ENTITY', 'DISINTEGRATED', 'NO_RAGDOLL_FILE', 'PLAYER_RAGDOLL_CAMERA']
+  _ragdollFx(e, src, opts) {
+    const FX = Entities.RAGDOLL_FX
+    const idx = (n) => Math.max(0, FX.indexOf(String(n || '').toUpperCase()))
+    let fx = typeof opts?.ragdollFx === 'number' ? Math.min(9, Math.max(0, opts.ragdollFx | 0)) : idx(opts?.ragdollFx)
+    let mat = null
+    // 身上的 game effect(children 的 GameEffectComponent.ragdoll_effect,取最大;它的 ragdoll_material 顶掉 DamageModel 的)
+    const eff = []
+    if (e.frozenT > 0) eff.push(['FROZEN', 'ice_glass_b2'])
+    if (opts?.effects?.includes('frozen')) eff.push(['FROZEN', 'ice_glass_b2'])
+    if (opts?.effects?.includes('disintegrated')) eff.push(['DISINTEGRATED', 'soil'])
+    for (const [n, m] of eff) { const k = idx(n); if (k > fx) { fx = k; mat = m } }
+    const D = e.d.damage || {}
+    if (D.create_ragdoll === 0 || !e.d.ragdoll?.length) fx = Math.max(fx, 8)
+    if (fx <= 1 && (src === 'proj' || src === 'explosion') && Math.random() * 100 < 20) fx = 3 // DAMAGE_BLOOD_SPRAY_CHANCE(exe 默认 20)
+    if (D.ragdoll_fx_forced) fx = idx(D.ragdoll_fx_forced)
+    if (fx === 0) fx = 1 // NONE 和 NORMAL 走同一个分支(switch 表 0/1 → 同一块)
+    return { fx: FX[fx] || 'NORMAL', mat }
+  }
+
+  _die(e, ix = 0, iy = 0, src = 'proj', opts = null) {
     e.dead = true
     this.stats.killed++
     // ExplosionComponent trigger=ON_DEATH(地雷 mine_scavenger:r30 伤 4 起火 80%)
@@ -1643,22 +1748,36 @@ export class Entities {
     if (e.held?.wand) this.hooks.dropWand?.(e.held.wand, e.x, e.y)
     // 幽灵水晶碎了 → 附近的幽灵一起散掉(ghost_crystal.lua)
     if (e.name === 'ghost_crystal') for (const g of this.list) if (!g.dead && g.d.ghost && Math.hypot(g.x - e.x, g.y - e.y) < 500) { g.dead = true; this.hooks.spark?.(g.x, g.y, 0, -30, '#a0c0ff', 0.6) }
-    const blood = this.mats.byName.get(e.d.damage?.blood_material || '')
-    if (blood > 0) { const n = 18 + Math.round(Math.random() * 14); for (let i = 0; i < n; i++) this.hooks.debris?.(e.x + (Math.random() - 0.5) * 6, e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t), (Math.random() - 0.5) * 120, -20 - Math.random() * 90, blood, this.mats.color[blood]) }
+    const D = e.d.damage || {}
+    const { fx, mat: fxMat } = this._ragdollFx(e, src, opts)
+    e.ragdollFx = fx
+    // 致命一击的血(DamageModelSystem 受伤:Random(DAMAGE_BLOOD_AMOUNT_MIN 20, MAX 40) × blood_multiplier 粒,沿伤害方向 ±0.6 rad,速度 ×(0.5~1.25));冻碎 / 化尘不出血
+    const blood = this.mats.byName.get(D.blood_material || '')
+    if (blood > 0 && fx !== 'FROZEN' && fx !== 'DISINTEGRATED') {
+      const n = Math.round((20 + Math.random() * 20) * (D.blood_multiplier ?? 1))
+      const il = Math.hypot(ix, iy), dx0 = il > 1 ? ix / il : (Math.random() - 0.5), dy0 = il > 1 ? iy / il : -0.7, sp0 = Math.max(60, Math.min(160, il))
+      for (let i = 0; i < n; i++) {
+        const a = (Math.random() - 0.5) * 1.2, c = Math.cos(a), s = Math.sin(a), sp = sp0 * (0.5 + Math.random() * 0.75)
+        this.hooks.debris?.(e.x + (Math.random() - 0.5) * 6, e.y + e.hit.t + Math.random() * (e.hit.b - e.hit.t), (dx0 * c - dy0 * s) * sp, (dx0 * s + dy0 * c) * sp - 20, blood, this.mats.color[blood])
+      }
+    }
     this.hooks.sfx?.('clash', { vol: 0.4, rate: 0.7, minGap: 80 })
-    // 布娃娃(DamageModel ragdoll_filenames_file):每张 png 一块像素刚体,材质 ragdoll_material(meat),摔在地上就是尸块,睡了变肉像素
-    const rag = e.d.ragdoll
-    const ragMat = this.mats.byName.get(e.d.damage?.ragdoll_material || 'meat')
-    if (rag?.length && ragMat > 0) {
-      const oy = e.d.damage?.ragdoll_offset_y ?? -6
-      rag.slice(0, 12).forEach((img, i) => {
-        this._img(img)
-        this.pendingProps.push({ name: 'ragdoll', d: { kind: 'prop', shape: { image: img, material: e.d.damage?.ragdoll_material || 'meat' }, body: { friction: 0.6, restitution: 0.1, linear_damping: 0.3, angular_damping: 0.5 } }, x: e.x + (Math.random() - 0.5) * 6, y: e.y + oy + (i - rag.length / 2) * 1.2, vx: ix * 0.4 + (Math.random() - 0.5) * 70, vy: iy * 0.4 - 30 - Math.random() * 60, w: (Math.random() - 0.5) * 12, ragdoll: true })
-      })
+    // 尸体:布娃娃初速 = 自身速度 × RAGDOLL_OWN_VELOCITY_IMPULSE_MULTIPLIER(magic_numbers 3)+ 伤害冲量(hurt 已把 ix/iy 加进 e.vx/vy,先扣掉)
+    const ovx = (e.vx - ix) * 3 + ix, ovy = (e.vy - iy) * 3 + iy
+    const vl = Math.hypot(ovx, ovy), vk = vl > 420 ? 420 / vl : 1
+    const rag = { e, x: e.x, y: e.y, face: e.face || 1, vx: ovx * vk, vy: ovy * vk, ix, iy, fx, mat: fxMat || D.ragdoll_material || 'meat', burn: src === 'fire' || e.fireT > 0, imgs: [] }
+    const ragMat = this.mats.byName.get(rag.mat) ?? this.mats.byName.get('meat')
+    if (fx === 'DISINTEGRATED') this._disintegrate(e, ragMat)
+    else if (fx === 'FROZEN' || fx === 'CONVERT_TO_MATERIAL' || fx === 'NO_RAGDOLL_FILE') this._spriteBody(rag, ragMat)
+    else if (e.d.ragdoll?.length && ragMat > 0) {
+      rag.imgs = e.d.ragdoll.slice()
+      for (const img of rag.imgs) this._img(img)
+      if (rag.imgs.every((n) => this.images.has(n))) this._buildRagdoll(rag)
+      else this.pendingRagdolls.push(rag)
     }
     // ragdollify_child_entity_sprites(lukki):每条腿的两段图各变一块肉刚体,从膝 / 脚的位置摔下去;身体没有布娃娃图,就洒血
-    if (e.legs && ragMat > 0) {
-      const mat = e.d.damage?.ragdoll_material || 'meat'
+    if (e.legs && ragMat > 0 && fx !== 'DISINTEGRATED') {
+      const mat = D.ragdoll_material || 'meat'
       for (const g of e.legs) {
         for (const [img, x, y] of [[g.L.a?.img, (e.x + g.fx) / 2, (e.y + g.fy) / 2], [g.L.b?.img, g.fx, g.fy]]) {
           if (!img) continue
@@ -1674,6 +1793,139 @@ export class Entities {
       for (const [v, n] of [[1000, 'goldnugget_1000'], [200, 'goldnugget_200'], [50, 'goldnugget_50'], [10, 'goldnugget_10']]) while (money >= v) { drop(n, v); money -= v }
     }
     this.hooks.onDeath?.(e)
+  }
+
+  /** 怪当前显示的那一帧在精灵表里的矩形 + 帧左上角的世界坐标(和 draw 同一套:offset 取反、朝左绕 e.x 镜像) */
+  _frameOf(e, x = e.x, y = e.y) {
+    const S = e.d.sprite, a = S?.anims?.[e.anim] || S?.anims?.[S?.def]
+    const sheet = S?.image ? this.images.get(S.image) : null
+    if (!a?.fw || !sheet?.data) return null
+    const sx = a.x + ((e.frame || 0) % a.perRow) * a.fw, sy = a.y + Math.floor((e.frame || 0) / a.perRow) * a.fh
+    const ox = S.offX + S.compOffX, oy = S.offY + S.compOffY
+    const face = (e.face || 1) < 0 ? -1 : 1
+    const left = face > 0 ? x - ox : x - (a.fw - ox), top = y - oy
+    return { sheet, sx, sy, w: a.fw, h: a.fh, left: Math.round(left), top: Math.round(top), face }
+  }
+
+  /**
+   * 布娃娃(反 PhysicsRagdollSystem::LoadRagdoll):filenames.txt 的每张 png 都是整帧,整帧居中放在 实体位置 + ragdoll_offset(x 随朝向翻转,朝左整帧镜像);
+   * 每张图裁到自己的包围盒做一块刚体;每一对图片"两张都有像素"的格子 = 一个 pin 关节(僵尸 12 块 11 个关节,一具骨架);
+   * 初速全部件相同(±RAGDOLL_IMPULSE_RANDOMNESS 4%);BLOOD_EXPLOSION 不建关节 + 每块 ±RAGDOLL_FX_EXPLOSION_ROTATION(0.5)角速度
+   * (原版散开还靠 box2d 块与块互撞,我们刚体不互撞,补一点离心初速)。
+   */
+  _buildRagdoll(r) {
+    const e = r.e, D = e.d.damage || {}
+    const pngs = r.imgs.map((n) => this.images.get(n))
+    if (!pngs.length || pngs.some((p) => !p?.data)) return
+    const matId = this.mats.byName.get(r.mat) ?? this.mats.byName.get('meat')
+    const W = pngs[0].width, H = pngs[0].height, face = r.face
+    const cx = Math.floor(r.x) + (D.ragdoll_offset_x ?? 0) * face, cy = Math.floor(r.y) + (D.ragdoll_offset_y ?? 0)
+    const left = cx - W / 2, top = cy - H / 2
+    const A = (p, x, y) => (x < 0 || y < 0 || x >= p.width || y >= p.height ? 0 : p.data[(y * p.width + x) * 4 + 3])
+    const mx = (x) => (face < 0 ? W - 1 - x : x)
+    const def = { kind: 'prop', shape: { image: 'ragdoll', material: r.mat }, body: { friction: 0.6, restitution: 0.1, linear_damping: 0.3, angular_damping: 0.5 } }
+    const parts = [], boxes = []
+    for (const p of pngs) {
+      let minx = W, miny = H, maxx = -1, maxy = -1
+      for (let y = 0; y < p.height; y++) for (let x = 0; x < p.width; x++) if (A(p, x, y)) { if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y }
+      if (maxx < 0) { parts.push(null); boxes.push(null); continue }
+      const w = maxx - minx + 1, h = maxy - miny + 1
+      const data = new Uint8ClampedArray(w * h * 4)
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const si = ((miny + y) * p.width + minx + x) * 4, di = (y * w + (face < 0 ? w - 1 - x : x)) * 4
+        data[di] = p.data[si]; data[di + 1] = p.data[si + 1]; data[di + 2] = p.data[si + 2]; data[di + 3] = p.data[si + 3]
+      }
+      const bx0 = face < 0 ? W - 1 - maxx : minx
+      const b = new RigidBody(def, { width: w, height: h, data }, left + bx0 + w / 2, top + miny + h / 2, matId)
+      b.name = 'ragdoll'; b.isBody = true; b.isRagdoll = true
+      b.density = this.mats.list[matId]?.density ?? 6
+      const k = 1 + (Math.random() - 0.5) * 0.08
+      b.vx = r.vx * k; b.vy = r.vy * k
+      parts.push(b); boxes.push({ bx0, by0: miny, w, h })
+      this.stats.bodies++
+    }
+    const joints = []
+    const explode = r.fx === 'BLOOD_EXPLOSION'
+    if (!explode) {
+      for (let i = 0; i < pngs.length; i++) for (let j = i + 1; j < pngs.length; j++) {
+        if (!parts[i] || !parts[j]) continue
+        const a = pngs[i], b = pngs[j], w = Math.min(a.width, b.width), h = Math.min(a.height, b.height)
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          if (!A(a, x, y) || !A(b, x, y)) continue
+          const fx = mx(x), bi = boxes[i], bj = boxes[j]
+          joints.push({ a: i, b: j, ax: fx - bi.bx0 + 0.5 - bi.w / 2, ay: y - bi.by0 + 0.5 - bi.h / 2, bx: fx - bj.bx0 + 0.5 - bj.w / 2, by: y - bj.by0 + 0.5 - bj.h / 2 })
+        }
+      }
+    }
+    const live = parts.filter(Boolean)
+    if (!live.length) return
+    // 关节表里的下标要对应 live 数组
+    const remap = new Map(); parts.forEach((p, i) => { if (p) remap.set(i, live.indexOf(p)) })
+    for (const j of joints) { j.a = remap.get(j.a); j.b = remap.get(j.b) }
+    // 整帧居中在 y−6 时脚那两行在地面里(原版 box2d 慢慢顶出来,我们的刚体埋住会一帧顶 24px 把关节撕开):整具先往上挪到没有像素埋在实心里(≤ 8px)
+    const P = [0, 0]
+    const buried = () => { for (const b of live) for (let k = 0; k < b.n; k++) { b.worldOf(k, P); if (this._solidB(Math.floor(P[0]), Math.floor(P[1]))) return true } return false }
+    for (let k = 0; k < 8 && buried(); k++) for (const b of live) b.y -= 1
+    for (const b of live) b.softPush = true // 还埋着的也只轻轻顶(≤ 3px / 帧),别把关节撕了
+    if (explode) for (const b of live) { const dx = b.x - cx, dy = b.y - cy, dl = Math.hypot(dx, dy) || 1; b.vx += (dx / dl) * (30 + Math.random() * 50); b.vy += (dy / dl) * (30 + Math.random() * 50) - 20; b.w = (Math.random() - 0.5) * 1.0 }
+    if (D.ragdollify_root_angular_damping > 0) live[0].angDamp = D.ragdollify_root_angular_damping
+    const g = new Ragdoll(live, joints)
+    g.fx = r.fx
+    if (r.burn) g.burn = 3
+    if (r.fx === 'BLOOD_SPRAY' || explode) {
+      const sm = this.mats.byName.get(D.blood_spray_material || D.blood_material || '')
+      if (sm > 0) {
+        const il = Math.hypot(r.ix, r.iy)
+        const total = live.reduce((s, b) => s + b.n, 0)
+        // 每块的血量 ∝ 质量(ragdoll_blood_amount_absolute > -1 时按质量分摊这个总数)× RAGDOLL_BLOOD_MULTIPLIER 2 × (0.8~1.2)
+        const amount = D.ragdoll_blood_amount_absolute > -1 && D.ragdoll_blood_amount_absolute !== undefined ? D.ragdoll_blood_amount_absolute : total
+        g.blood = { mat: sm, left: Math.round(amount * 2 * (0.8 + Math.random() * 0.4)), dx: il > 1 ? r.ix / il : 0, dy: il > 1 ? r.iy / il : -1 }
+      }
+    }
+    for (const b of live) this.bodies.push(b)
+    this.ragdolls.push(g)
+  }
+
+  /**
+   * FROZEN / CONVERT_TO_MATERIAL / NO_RAGDOLL_FILE(KillMe 0xbd0480):没有部件图,整张当前精灵帧变成**一块**刚体,材质 = 效果的 ragdoll_material
+   * (冻住 ice_glass_b2,精灵调成 (0,0.5,1) 的蓝),初速 = 冲量,角速度 Random(−4, 4)
+   */
+  _spriteBody(r, matId) {
+    const e = r.e
+    const F = this._frameOf(e, r.x, r.y)
+    if (!F || !(matId > 0)) return
+    const data = new Uint8ClampedArray(F.w * F.h * 4)
+    const frozen = r.fx === 'FROZEN'
+    for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) {
+      const si = ((F.sy + y) * F.sheet.width + F.sx + x) * 4, di = (y * F.w + (F.face < 0 ? F.w - 1 - x : x)) * 4
+      if (!F.sheet.data[si + 3]) continue
+      if (frozen) { data[di] = F.sheet.data[si] * 0.35; data[di + 1] = F.sheet.data[si + 1] * 0.5 + 90; data[di + 2] = F.sheet.data[si + 2] * 0.4 + 150 }
+      else { data[di] = F.sheet.data[si]; data[di + 1] = F.sheet.data[si + 1]; data[di + 2] = F.sheet.data[si + 2] }
+      data[di + 3] = F.sheet.data[si + 3]
+    }
+    const def = { kind: 'prop', shape: { image: 'ragdoll', material: r.mat }, body: { friction: 0.6, restitution: 0.1, linear_damping: 0.3, angular_damping: 0.5 } }
+    const b = new RigidBody(def, { width: F.w, height: F.h, data }, F.left + F.w / 2, F.top + F.h / 2, matId)
+    b.name = 'ragdoll'; b.isBody = true; b.isRagdoll = true
+    b.density = this.mats.list[matId]?.density ?? 6
+    b.vx = r.vx; b.vy = r.vy; b.w = Math.random() * 8 - 4
+    this.bodies.push(b); this.stats.bodies++
+    const g = new Ragdoll([b], [])
+    g.fx = r.fx
+    if (r.burn) g.burn = 3
+    this.ragdolls.push(g)
+  }
+
+  /** DISINTEGRATED(KillMe 0xbd0fd3 → 0xbc5a10):精灵每个像素变一粒该材质的真粒子,速度 Random(−100, 100) 两轴,颜色用像素自己的 —— 化尘,没有尸体 */
+  _disintegrate(e, matId) {
+    const F = this._frameOf(e)
+    if (!F) return
+    const col = (r, g, b) => (r << 16) | (g << 8) | b
+    for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) {
+      const si = ((F.sy + y) * F.sheet.width + F.sx + x) * 4
+      if (!F.sheet.data[si + 3]) continue
+      const wx = F.left + (F.face < 0 ? F.w - 1 - x : x) + 0.5, wy = F.top + y + 0.5
+      this.hooks.debris?.(wx, wy, Math.random() * 200 - 100, Math.random() * 200 - 100, matId > 0 ? matId : 0, col(F.sheet.data[si], F.sheet.data[si + 1], F.sheet.data[si + 2]), matId > 0)
+    }
   }
 
   /** 点着(fire_probability_of_ignition):烧 4s,期间 fire_damage_amount / 0.5s,身上往外冒火(会点燃旁边的油/木) */
@@ -1711,15 +1963,16 @@ export class Entities {
     return false
   }
 
-  explosion(x, y, r, dmg, reach2 = null, power = [0, 0.2], kb = 1) {
+  explosion(x, y, r, dmg, reach2 = null, power = [0, 0.2], kb = 1, ragdollFx = 0) {
     const kbOf = (t) => (power[0] + (power[1] - power[0]) * t) * kb * 120 // ×3600 是 box2d 冲量单位,换成我们的 px/s 取 ×120(炸弹 3.6 → 430 px/s)
+    const opts = ragdollFx ? { ragdollFx } : null
     for (const e of this.list) {
       if (e.dead) continue
       const cy = e.y + (e.hit.t + e.hit.b) / 2, dx = e.x - x, dy = cy - y, d = Math.hypot(dx, dy)
       if (d > r) continue
       if (!Entities.los(x, y, reach2, e.x, cy, (e.hit.r - e.hit.l) / 2, (e.hit.b - e.hit.t) / 2)) continue
       const t = Math.max(0, 1 - d / r), n = Math.max(1, d), f = kbOf(t)
-      this.hurt(e, dmg, (dx / n) * f, (dy / n) * f - f * 0.5, 'explosion')
+      this.hurt(e, dmg, (dx / n) * f, (dy / n) * f - f * 0.5, 'explosion', e.x, e.y, opts)
     }
     for (const w of this.worms) {
       if (w.dead) continue

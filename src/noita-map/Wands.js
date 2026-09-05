@@ -23,7 +23,7 @@ export const C_DEFAULTS = {
   sprite: '', extra_entities: '', game_effect_entities: '', sound_loop_tag: '', projectile_file: '',
 }
 /** 会真正影响弹丸的 c 字段(usableSpells 用它判断修饰卡有没有效果) */
-const C_FIELDS = new Set(['fire_rate_wait', 'speed_multiplier', 'explosion_radius', 'spread_degrees', 'damage_projectile_add', 'damage_explosion_add', 'damage_explosion', 'damage_electricity_add', 'damage_fire_add', 'damage_ice_add', 'knockback_force', 'reload_time', 'bounces', 'gravity', 'friendly_fire', 'lifetime_add', 'recoil_knockback', 'trail_material'])
+const C_FIELDS = new Set(['fire_rate_wait', 'speed_multiplier', 'explosion_radius', 'spread_degrees', 'damage_projectile_add', 'damage_explosion_add', 'damage_explosion', 'damage_electricity_add', 'damage_fire_add', 'damage_ice_add', 'knockback_force', 'reload_time', 'bounces', 'gravity', 'friendly_fire', 'lifetime_add', 'recoil_knockback', 'trail_material', 'ragdoll_fx'])
 /**
  * extra_entities 附加实体 → 行为(文件内容见 noita-ref/unpacked/entities/misc/*.xml + scripts/projectiles/*.lua,数值原样抄):
  *   homing*:HomingComponent(反 exe HomingSystem:v = v × velocity_multiplier + 朝目标方向 × targeting_coeff × dt × (1 − d/detect_distance),detect 默认 150;

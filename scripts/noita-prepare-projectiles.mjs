@@ -269,6 +269,8 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
     // 反 exe / 文档:final_knockback = knockback_force × 弹速 × 弹 mass / 目标 mass;damage_scaled_by_speed → damage × min(1, 速度 / (damage_scale_max_speed || 初速))
     knockback: num(pc.knockback_force, 0), dmgBySpeed: pc.damage_scaled_by_speed === '1', dmgMaxSpeed: num(pc.damage_scale_max_speed, 0),
     penetrateEntities: pc.penetrate_entities === '1',
+    // 反 exe DamageModelSystem::KillMe:弹丸打死怪时尸体走哪种 RAGDOLL_FX(激光 / 狙击弹 BLOOD_SPRAY 连着喷血,霰弹 / 锯片 BLOOD_EXPLOSION 散块;默认 NORMAL 一整具)
+    ragdollFx: pc.ragdoll_fx_on_collision && pc.ragdoll_fx_on_collision !== 'NORMAL' ? pc.ragdoll_fx_on_collision : null,
     friction: num(pc.friction, 1), lob: [num(pc.lob_min, 0), num(pc.lob_max, 0)], velocitySetsScale: pc.velocity_sets_scale === '1',
     deathExplode: pc.on_death_explode === '1', lifetimeExplode: pc.on_lifetime_out_explode === '1',
     muzzle, shootFlash: pc.shoot_light_flash_radius ? { r: num(pc.shoot_light_flash_r, 255), g: num(pc.shoot_light_flash_g, 255), b: num(pc.shoot_light_flash_b, 255), radius: num(pc.shoot_light_flash_radius, 0) } : null,
