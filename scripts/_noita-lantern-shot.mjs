@@ -29,10 +29,12 @@ const r = await page.evaluate(async () => {
   res.fire0 = count(F, lx | 0, ly | 0, 12); res.oil0 = count(OIL, lx | 0, ly | 0, 30)
   // 朝它打火花弹,直到起火 / 掉下来 / 碎(最多 40 发)
   let firstFireAt = -1, broken = -1, dead = -1, shots = 0
+  const hps = []
   for (let i = 0; i < 40 && !b.dead; i++) {
     const ang = Math.atan2(b.y - (pl.y - 4), b.x - pl.x)
     ps.spawn('light_bullet', pl.x + 6, pl.y - 4, ang, { owner: 'player' }); shots++
     await wait(120)
+    hps.push(+b.hp.toFixed(2))
     if (firstFireAt < 0 && count(F, b.x | 0, b.y | 0, 14) > 0) firstFireAt = shots
     if (res.firstLostAt === undefined && b.alive < b.n) res.firstLostAt = shots
     if (res.firstOilAt === undefined && count(OIL, b.x | 0, (b.y + 10) | 0, 24) > 0) res.firstOilAt = shots
@@ -40,7 +42,7 @@ const r = await page.evaluate(async () => {
     if (b.dead) { dead = shots; break }
   }
   await wait(1200)
-  res.result = { shots, firstFireAtShot: firstFireAt, ropeBrokenAtShot: broken, deadAtShot: dead, alive: b.alive, lostFrac: +(1 - b.alive / b.n).toFixed(2), fellTo: b.dead ? null : (b.y - ly) | 0, oilNow: count(OIL, lx | 0, (ly + 30) | 0, 40), fireNow: count(F, lx | 0, (ly + 20) | 0, 40), burningCells: (() => { let n = 0; for (let j = ly - 10; j < ly + 60; j++) for (let i = lx - 40; i < lx + 40; i++) if (sim.aux(i, j)) n++; return n })() }
+  res.result = { shots, hps: hps.slice(0, 12), firstFireAtShot: firstFireAt, ropeBrokenAtShot: broken, deadAtShot: dead, alive: b.alive, lostFrac: +(1 - b.alive / b.n).toFixed(2), fellTo: b.dead ? null : (b.y - ly) | 0, oilNow: count(OIL, lx | 0, (ly + 30) | 0, 40), fireNow: count(F, lx | 0, (ly + 20) | 0, 40), burningCells: (() => { let n = 0; for (let j = ly - 10; j < ly + 60; j++) for (let i = lx - 40; i < lx + 40; i++) if (sim.aux(i, j)) n++; return n })() }
   // 怪:把一只怪硬塞进石头里,3s 后应被撤掉;生成点实心 → 不出
   const rock = np.mats.byName.get('rock_static')
   const gx = pl.x - 60, gy = pl.y - 40

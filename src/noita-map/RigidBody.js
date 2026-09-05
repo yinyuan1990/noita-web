@@ -375,6 +375,8 @@ export class RigidBody {
     // skin:显示用的另一张图(药水 = 上色的瓶子,形状图是法线图;心/法术刷新 = 精灵本身)
     const img = this.frames ? this.frames[Math.floor(this.age / (this.animWait || 0.12)) % this.frames.length] : (this.skin || this._canvas())
     ctx.drawImage(img, -Math.floor(img.width / 2), -Math.floor(img.height / 2))
+    // over:叠在形状图上面的帧动画(灯笼火苗:SpriteComponent z_index −1,Noita 的 z 越小越靠前,火苗画在玻璃壳前面)
+    if (this.over) { const u = this.over[Math.floor(this.age / (this.animWait || 0.12)) % this.over.length]; ctx.drawImage(u, -Math.floor(u.width / 2), -Math.floor(u.height / 2)) }
     ctx.restore()
   }
 }

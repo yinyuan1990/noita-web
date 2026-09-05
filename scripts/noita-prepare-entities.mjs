@@ -226,7 +226,12 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     const ps = first(e, 'PhysicsImageShapeComponent'); if (ps) d.shape = { image: copyGfx(ps.image_file), material: ps.material || '', centered: ps.centered === '1', offX: num(ps.offset_x, 0), offY: num(ps.offset_y, 0), z: num(ps.z_index, 0) }
     const pb = first(e, 'PhysicsBodyComponent') || first(e, 'PhysicsBody2Component'); if (pb) d.body = pick(pb, ['friction', 'restitution', 'linear_damping', 'angular_damping', 'density', 'is_bullet', 'is_static', 'allow_sleep', 'hax_fix_going_through_ground', 'kill_entity_after_initialized', 'buoyancy', 'auto_clean'])
     // 钉在墙上的关节(挖掘场的轮子 nail_to_wall + 马达慢转 / 吊桶挂在钉子上摆)
-    const pj = first(e, 'PhysicsJointComponent'); if (pj) d.joint = { nail: pj.nail_to_wall === '1', px: num(pj.pos_x, 0), py: num(pj.pos_y, 0), motor: pj.mMotorEnabled === '1' ? num(pj.mMotorSpeed, 0) : 0 }
+    const pj = first(e, 'PhysicsJointComponent'); if (pj) d.joint = { nail: pj.nail_to_wall === '1', px: num(pj.pos_x, 0), py: num(pj.pos_y, 0), motor: pj.mMotorEnabled === '1' ? num(pj.mMotorSpeed, 0) : 0, breakable: pj.breakable === '1' }
+    // 新格式 PhysicsJoint2Component(props/physics/lantern_small):REVOLUTE_JOINT_ATTACH_TO_NEARBY_SURFACE = 在 offset 处找最近的墙钉一个铰链,break_force 超了 / 像素被打掉(break_on_body_modified)就断
+    const pj2 = first(e, 'PhysicsJoint2Component')
+    if (pj2 && !d.joint) d.joint = { nail: true, attach: /ATTACH_TO_NEARBY_SURFACE/.test(pj2.type || ''), px: num(pj2.offset_x, 0), py: num(pj2.offset_y, 0), motor: 0, breakable: true, breakForce: num(pj2.break_force, 0), breakOnModified: pj2.break_on_body_modified === '1' }
+    // PhysicsBody2Component root_offset:图的根(中心)相对实体位置的偏移(lantern_small 5,7 ≈ 9×13 图的中心)—— 按标记点放的时候用它对齐
+    const pb2 = first(e, 'PhysicsBody2Component'); if (pb2 && d.body) { d.body.rootOffX = num(pb2.root_offset_x, 0); d.body.rootOffY = num(pb2.root_offset_y, 0) }
     // chain_to_ceiling.lua:VariableStorage chain_N_x/y 是挂点(相对实体),没有就 (0,0);每根链往上找 200px 内的顶
     if ((e.comps.get('LuaComponent') || []).some((l) => /chain_to_ceiling/.test(l.script_source_file || ''))) {
       const vs = e.comps.get('VariableStorageComponent') || []

@@ -595,18 +595,20 @@ function spawnScene(ctx, biome, func, x, y) {
  */
 // spawn_lamp:spawn(g_lamp, x+dx, y+dy, 0, 0);g_lamp = [空 prob, 灯 prob] → PR·Σ ≤ 空 就没灯。coalmine/excavationsite/snowcave 0.4/0.7 小灯笼,snowcastle 1/1 管灯
 // lampMax:灯那一行的累计上限(rainforest g_lamp 第三行是地雷 0.1,不算灯)
+// ent:kind=lantern 的灯是真道具(g_lamp 里的实体:coalmine/excavationsite = props/physics/lantern_small.xml,snowcave/sandcave/meat = physics_lantern_small.xml,liquidcave = physics_lantern.xml),
+//     主线程按标记点放成刚体(能打、掉、碎、漏油、起火),光和火苗由道具自己出;没有 ent 的(圣山 temple_lantern / 蜡烛 / 火把)还是只画光
 const LAMP = {
-  coalmine: { dx: 0, dy: 0, empty: 0.4, total: 1.1, kind: 'lantern' }, coalmine_alt: { dx: 0, dy: 0, empty: 0.3, total: 1.0, kind: 'lantern', lampFirst: true },
-  excavationsite: { dx: 0, dy: 2, empty: 0.4, total: 1.1, kind: 'lantern' }, snowcave: { dx: 5, dy: 10, empty: 0.4, total: 1.1, kind: 'lantern', safe: snowcaveSafe },
+  coalmine: { dx: 0, dy: 0, empty: 0.4, total: 1.1, kind: 'lantern', ent: 'lantern_small' }, coalmine_alt: { dx: 0, dy: 0, empty: 0.3, total: 1.0, kind: 'lantern', lampFirst: true, ent: 'lantern_small' },
+  excavationsite: { dx: 0, dy: 2, empty: 0.4, total: 1.1, kind: 'lantern', ent: 'lantern_small' }, snowcave: { dx: 5, dy: 10, empty: 0.4, total: 1.1, kind: 'lantern', safe: snowcaveSafe, ent: 'physics_lantern_small' },
   snowcastle: { dx: 5, dy: 0, empty: 1, total: 2, kind: 'tubelamp', safe: snowcastleSafe },
   rainforest: { dx: 0, dy: -10, empty: 0.3, total: 1.0, lampMax: 0.9, kind: 'torchstand', lamp2: { dx: -8, dy: -4, empty: 0, total: 1, kind: 'tubelamp' } },
   vault: { dx: 0, dy: 0, empty: 0.4, total: 1.72, lampMax: 1.4, kind: 'tubelamp', safe: vaultSafe }, // 剩下 0.32 是滴水/滴油/滴放射液(dripping_*,先不做)
   crypt: { dx: 4, dy: -8, empty: 0.3, total: 1.3, lampMax: 0.9, kind: 'torchstand', lamp2: { dx: -1, dy: 0, empty: 0.2, total: 1.2, kind: 'torch' } }, // g_lamp 剩下 0.3 是三种头骨道具
-  liquidcave: { dx: 0, dy: 4, empty: 0.5, total: 2.0, kind: 'lantern' }, // spawn(g_lamp, x, y+4):[空 0.5, physics_lantern 1.5 ×1~2]
+  liquidcave: { dx: 0, dy: 4, empty: 0.5, total: 2.0, kind: 'lantern', ent: 'physics_lantern' }, // spawn(g_lamp, x, y+4):[空 0.5, physics_lantern 1.5 ×1~2]
   wandcave: { dx: 0, dy: 0, empty: 0, total: 1, kind: 'torch' }, // g_lamp = chain_torch_ghostly 必出(幽绿火把)
   pyramid: { dx: 4, dy: -8, empty: 0.3, total: 1.3, lampMax: 1.0, kind: 'torchstand', lamp2: { dx: 0, dy: 0, empty: 0, total: 1, kind: 'torch' } }, // 蓝火炬座 0.7(剩 0.3 头骨);lamp2 = chain_torch_blue 必出
-  sandcave: { dx: 5, dy: 10, empty: 0.4, total: 1.1, kind: 'lantern', lamp2: { dx: 0, dy: 0, empty: 0, total: 1, kind: 'tubelamp' } },
-  meat: { dx: 5, dy: 10, empty: 0.4, total: 1.1, kind: 'lantern' },
+  sandcave: { dx: 5, dy: 10, empty: 0.4, total: 1.1, kind: 'lantern', ent: 'physics_lantern_small', lamp2: { dx: 0, dy: 0, empty: 0, total: 1, kind: 'tubelamp' } },
+  meat: { dx: 5, dy: 10, empty: 0.4, total: 1.1, kind: 'lantern', ent: 'physics_lantern_small' },
   robobase: { dx: 0, dy: 0, empty: 0.4, total: 1.72, lampMax: 1.4, kind: 'tubelamp' }, // 同 vault:剩下 0.32 是滴水 / 滴油 / 滴放射液
   the_end: { dx: 4, dy: 0, empty: 0.3, total: 0.9, kind: 'torchstand' },
   wizardcave: { dx: 4, dy: -8, empty: 0.3, total: 1.2, lampMax: 0.9, kind: 'torchstand', lamp2: { dx: -1, dy: 0, empty: 0.2, total: 1.2, kind: 'torch' } },
@@ -631,7 +633,7 @@ export function collectLights(layer, ctx) {
         const r = prng.ProceduralRandom(ctx.seed + ctx.ng, x + L.dx, y + L.dy) * L.total
         // coalmine_alt 的表是 [灯 0.7, 空 0.3](灯在前)
         const hit = L.lampFirst ? r <= L.total - L.empty : r > L.empty && r <= (L.lampMax ?? L.total)
-        if (hit) out.push({ x: x + L.dx, y: y + L.dy, kind: L.kind })
+        if (hit) out.push({ x: x + L.dx, y: y + L.dy, kind: L.kind, ent: L.ent || null })
       } else if (func === 'spawn_candles') out.push({ x, y, kind: 'candle' })
       else if (func === 'spawn_altar_torch') out.push({ x, y, kind: 'torch' })
       else if (func === 'spawn_ghostlamp') out.push({ x, y, kind: 'ghost' })

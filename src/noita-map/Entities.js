@@ -72,6 +72,18 @@ export class Entities {
     if (!entry?.ready || !entry.spawns || this.liveChunks.has(entry.key)) return
     const first = !this.spawnedChunks.has(entry.key)
     this.spawnedChunks.add(entry.key); this.liveChunks.add(entry.key)
+    // spawn_lamp 掷出来的灯笼是真道具(g_lamp:physics/lantern_small 等,见 scenes.js LAMP.ent):按标记点放成刚体,钉在最近的墙上,能打下来 / 碎 / 漏油;
+    // lights 表带 64px 边距会在相邻 chunk 里重复出现,只在标记点落在本 chunk 里时放一次
+    if (first && entry.lights) {
+      const x0 = (entry.cx - WCX) * CHUNK, y0 = (entry.cy - WCY) * CHUNK
+      for (const l of entry.lights) {
+        if (!l.ent || l.x < x0 || l.x >= x0 + CHUNK || l.y < y0 || l.y >= y0 + CHUNK) continue
+        const d = this.defs[l.ent]
+        if (!d?.shape?.image) continue
+        this._img(d.shape.image); if (d.sprite?.image) this._img(d.sprite.image)
+        this.pendingProps.push({ name: l.ent, d, x: l.x + (d.body?.rootOffX || 0), y: l.y + (d.body?.rootOffY || 0) })
+      }
+    }
     for (const s of entry.spawns) {
       const d = this.defs[s.entity]
       const creature = d && (d.worm && d.parts?.length || d.kind === 'creature')
@@ -342,7 +354,12 @@ export class Entities {
         b.skin = cv
       }
     } else if (fr) { b.frames = fr.frames; b.animWait = fr.wait; b.skin = fr.frames[0]; b.fixedRot = true } // SimplePhysics 的东西不打滚
-    else if (p.d.sprite?.image && p.d.sprite.image !== this._shapeImage(p.d)) { const sp = this.images.get(p.d.sprite.image); if (sp?.image) b.skin = sp.image }
+    else if (p.d.sprite?.image && p.d.sprite.image !== this._shapeImage(p.d)) {
+      // 形状图之外还有精灵(灯笼的火苗 lantern_small_flame.xml:19 帧 9×13 的表,z_index −1 = 画在玻璃壳前面):按帧播,和形状图同心叠着画;单张图的直接当皮
+      const fr = p.d.sprite.anims && Object.keys(p.d.sprite.anims).length ? this._spriteFrames(p.d) : null
+      if (fr && fr.frames.length > 1) { b.over = fr.frames; b.animWait = fr.wait }
+      else { const sp = this.images.get(p.d.sprite.image); if (sp?.image) b.skin = fr ? fr.frames[0] : sp.image }
+    }
     this.stats.bodies++
     return b
   }
@@ -365,8 +382,20 @@ export class Entities {
     }
     if (d.joint?.nail && !b.motor) {
       const lx = d.joint.px - b.w0 / 2, ly = d.joint.py - b.h0 / 2
-      if (Math.hypot(lx, ly) < 2) { b.nailed = true } // 钉在图心:等同轮子
-      else { b.nailed = false; ropes.push({ ax: b.x + lx, ay: b.y + ly, lx, ly, len: 0, breakDist: 24 }) }
+      if (Math.hypot(lx, ly) < 2 && !d.joint.attach) { b.nailed = true } // 钉在图心:等同轮子
+      else if (d.joint.attach) {
+        // PhysicsJoint2 REVOLUTE_JOINT_ATTACH_TO_NEARBY_SURFACE(矿里的小灯笼):从挂钩点找最近的实心格钉上去,挂钩到墙的距离就是"链"长;
+        // 12px 内没有墙就不钉(原版一样掉下来)。break_force 0.5 很脆:拽 8px 就断;break_on_body_modified:任何像素被打掉关节就断
+        const hx = b.x + lx, hy = b.y + ly
+        let best = null, bd = Infinity
+        for (let dy = -12; dy <= 12; dy++) for (let dx = -12; dx <= 12; dx++) {
+          const dd = dx * dx + dy * dy
+          if (dd >= bd || dd > 144) continue
+          if (this._solid(Math.floor(hx) + dx, Math.floor(hy) + dy)) { bd = dd; best = [Math.floor(hx) + dx + 0.5, Math.floor(hy) + dy + 0.5] }
+        }
+        b.nailed = false
+        if (best) ropes.push({ ax: best[0], ay: best[1], lx, ly, len: Math.max(0, Math.sqrt(bd) - 1), breakDist: d.joint.breakForce > 0 && d.joint.breakForce < 1 ? 8 : 24, attach: true, breakOnModified: !!d.joint.breakOnModified })
+      } else { b.nailed = false; ropes.push({ ax: b.x + lx, ay: b.y + ly, lx, ly, len: 0, breakDist: d.joint.breakable ? 12 : 24 }) }
     }
     if (ropes.length) b.ropes = ropes
   }
@@ -446,8 +475,9 @@ export class Entities {
         continue
       }
       // 链的锚点被挖掉 / 炸掉 → 断链(醒着睡着都查,便宜)
-      if (b.ropes) for (const r of b.ropes) if (!r.broken && !this._solid(Math.floor(r.ax), Math.floor(r.ay) - 1)) { r.broken = true; if (b.asleep) b.wake(sim) }
+      if (b.ropes) for (const r of b.ropes) if (!r.broken && !this._solid(Math.floor(r.ax), Math.floor(r.ay) - (r.attach ? 0 : 1))) { r.broken = true; if (b.asleep) b.wake(sim) }
       if (b.asleep) {
+        b.age += dt // 火苗这类垫底动画睡着也要走
         // 尸块睡够 8s 就"化"进世界:刚体对象撤掉,肉像素留着(原作尸体最后也就是一堆 meat)
         if (b.isRagdoll) { b.sleptT = (b.sleptT || 0) + dt; if (b.sleptT > 8) { b.dead = true; continue } }
         // 睡着:定期清点缺损 / 支撑
@@ -598,7 +628,7 @@ export class Entities {
     // script_physics_body_modified = physics_lantern_damaged.lua:像素被打掉就在原地 EntityLoad(misc/fire.xml)—— 灯笼一被打中就起火,漏出来的油跟着烧
     if (lost > 0 && d.scripts?.some((s) => s.endsWith('physics_lantern_damaged'))) this._fireAt(hx, hy, 3)
     // 钉子 / 链子挂着的像素被打掉 → 关节断,掉下来(Box2D 关节锚在像素上;大灯笼钉在墙里的走地形检查)
-    if (lost > 0 && b.ropes) for (const r of b.ropes) if (!r.broken && !b.hasPixelNear(r.lx, r.ly)) { r.broken = true; if (b.asleep) b.wake(this.sim) }
+    if (lost > 0 && b.ropes) for (const r of b.ropes) if (!r.broken && (r.breakOnModified || !b.hasPixelNear(r.lx, r.ly))) { r.broken = true; if (b.asleep) b.wake(this.sim) }
     if (b.destroyed > 0.6) die = true
     if (die) this._destroyBody(b, hx, hy)
   }

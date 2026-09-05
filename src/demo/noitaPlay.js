@@ -1822,7 +1822,8 @@ function render() {
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
     const e = streamer.get(cx, cy)
     if (!e?.lights) continue
-    for (const l of e.lights) { if (l.x >= ox - 64 && l.x < ox + VW + 64 && l.y >= oy - 64 && l.y < oy + VH + 64 && !lamps.some((q) => q.x === l.x && q.y === l.y)) lamps.push(l) }
+    // 带 ent 的灯(矿里的小灯笼)已经是真道具(Entities 按标记点放的刚体,自带火苗与光),这里不再画
+    for (const l of e.lights) { if (!l.ent && l.x >= ox - 64 && l.x < ox + VW + 64 && l.y >= oy - 64 && l.y < oy + VH + 64 && !lamps.some((q) => q.x === l.x && q.y === l.y)) lamps.push(l) }
   }
   for (const l of lamps) {
     const lx = Math.round(l.x - ox), ly = Math.round(l.y - oy)

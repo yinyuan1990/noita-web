@@ -571,6 +571,13 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       我们缺的:① 弹丸打刚体不抠像素(现在命中点抠 1.5px,才触发 physics_body_modified);② `leak_on_damage_percent` 之前当"伤害占比阈值"用,文档原话是"might leak when projectile damage happens" = 漏的概率;
       ③ 缺 physics_lantern_damaged 起火;④ 缺 PhysicsBodyCollisionDamage(抽进 entities.json:speed_threshold / damage_multiplier 1/60);⑤ 钉子 / 链子挂着的像素被打掉关节要断(`hasPixelNear`);
       ⑥ **矿里的灯笼从来没出现过**:带皮肤图(火苗)的道具只请求了形状图,pendingProps 永远等不到皮肤图。探针 `_noita-lantern-shot.mjs`:大灯笼第 1 发起火 + 缺像素、第 4 发漏油、第 8 发碎(0.9/0.12)炸 + 5 格油;没顶的直接掉下来砸碎。
+    - **09-05 用户再报"灯笼无法击落"**:上面只修了生成表里的 physics_lantern_small;墙上到处挂的那些是 wang `spawn_lamp` 掷出来的(coalmine.lua g_lamp = `props/physics/lantern_small.xml`),
+      我们一直只在 `collectLights` 里当"光源"由 noitaPlay 手画一个 5×6 的小方块 + 光圈,根本不是实体,子弹穿过去。改:LAMP 表按群系记 `ent`(coalmine/excavationsite → lantern_small,snowcave/sandcave/meat → physics_lantern_small,liquidcave → physics_lantern;
+      圣山 temple_lantern / 蜡烛 / 火把没 ent 仍只画光),`Entities.spawnChunk` 第一次就位时按标记点(+ PhysicsBody2 `root_offset` 5,7 = 图心)放成刚体,noitaPlay 不再画带 ent 的灯。
+      `props/physics/lantern_small.xml` 是新格式:`PhysicsBody2Component` + `PhysicsJoint2Component type=REVOLUTE_JOINT_ATTACH_TO_NEARBY_SURFACE offset 4.75,3.5 break_force 0.5 break_on_body_modified=1` —— prepare 抽成 `d.joint {attach, breakForce, breakOnModified}`,
+      `_attachRopes` 从挂钩点(图顶中)12px 内找最近实心格钉上去、挂钩到墙的距离当链长(12px 内没墙就掉,原版一样),拽 8px 断,**任何像素被打掉关节就断**(灯 hp 0.15,火花弹 0.12 → 第一发起火漏油、掉下来 / 第二发碎)。
+      火苗 `lantern_small_flame.xml` 19 帧 z_index −1:Noita 的 z 越小越靠前,火苗画在玻璃壳**前面**(之前把整张 171×13 的帧表当皮直接画了)→ RigidBody `over` 叠帧,睡着也走帧。
+      探针 `_noita-lamp-shot.mjs`:传送到煤矿 (300,400),lights 表 56 个带 ent 的标记 → 54 只 lantern_small 刚体、53 只挂着(链长 2~5px、锚点是实心);正下方朝上打:第 2 发抠像素 + 起火 + 碎,洒 4 格油。
 16. **金块颜色 / 刚体摇晃 / 怪穿墙 / 圣山崩塌 / 捡心效果(09-05 第三批)**:
     - 金块是绿红黄的:`items_gfx/goldnugget_*.png` 不是颜色图,`gold_box2d` 的父材质 gem_box2d `Graphics normal_mapped="1"` —— png 是**法线图**,显示 = 材质 color(ffc74e 金)按法线打光。
       materials.json 抽 `normalMapped`,RigidBody `_canvas` 对这类按法线(左上来光)给材质色明暗;碎屑也用材质色。宝石 / 药瓶玻璃同一套。头顶状态图标改原图 12×12 不缩放(缩到 8 就糊)。
