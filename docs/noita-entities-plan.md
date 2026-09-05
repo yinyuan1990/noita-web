@@ -659,6 +659,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     `stainActive(kind)` 按材质阈值;防火 / 沾油易燃 / 辐射掉血 / 黏液减速 / 精灵染色(几种一层层叠)/ HUD 与头顶图标全部按"生效中的每一种";三个字段抽进 materials.json。
     旧接口 `player.wet`(总量)/ `stain`(量最大的)/ `wetMat` 留成 getter 给探针。验证:泡满水 WET 100% → 走进毒液 150ms:WET 54% + RADIOACTIVE 46% 两个图标同亮,650ms 后 6% / 94%;湿身碰火探针数值不变。
 
+23. **09-05 第六批(用户:灯笼打掉后浮空 / 石块无外力左右晃 / 人跳进水没有水花)**:
+    - 灯笼浮空:睡着的刚体格子被爆炸坑挖掉(或别的原因没了)→ `wake()` 清点出全部像素都丢了 → 一个 alive=0 的空刚体还挂着光、还有碰撞在飘。`_updateBodies` 开头:`alive ≤ 0` 或缺损 >60%(非物品)→ `_destroyBody`(灯笼 = 炸 + 洒油)。
+      顺带两处补全:① 弹丸命中刚体抠像素用**真正打中的点**(`p.hitX/hitY`,之前用子步前的 p.x 差 1~2px 经常抠不到 → 没起火、`break_on_body_modified` 不断);② 爆炸也挖刚体像素(`carve(x,y,r,reach2)`,原版坑里的 box2d 格一样被摧毁),睡着的刚体醒来清点出的缺损也算这次伤。
+    - 石块无外力晃:崎岖地面上石头搁在两个小凸起上,接触跨度 < 短边 60% 就当"点接触"给扭矩,两个支点轮流当支点 → 永远摇。加"静定"判定:接触跨度 ≥2px 且刚体中心投影落在两端之间(重心在支点之间)→ 面接触不给扭矩、慢速时 w×0.5。
+      8 块石头落真实地形 4s 内全部入睡(之前 6 块里 4 块 2~4s 还在 0.2~3.4 rad 地晃)。
+    - 人入水:player_base 的 VelocityComponent 一样带 `displace_liquid`(+ LiquidDisplacerComponent radius 1 / velocity 30 把身体挤到的格挪开),按 VelocitySystem 的规则:换格时 3×3 液体格 75% 以 −0.1×自身速度 ±0.3rad 顶回去,
+      几十 px/s 的小鼓包;之前按落速掀 8~45 粒 40~230 px/s 的水珠(自创)—— 水探针入水 debris 59 → 0。
+
 ## 2.5 接手指南(新会话从这里开始)
 
 **仓库**:`https://github.com/yinyuan1990/noita-web.git`(main;2026-09-04 首推,`.gitignore` 排除 node_modules / dist* / noita-ref / scripts/out / scripts/shots)。

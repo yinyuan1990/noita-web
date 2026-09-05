@@ -485,6 +485,8 @@ export class Entities {
       const b = this.bodies[i]
       if (b.dead) { this.bodies.splice(i, 1); continue }
       if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) continue
+      // 像素被挖光(睡着时格子被爆炸 / 挖掘拿掉,醒来 wake() 发现全没了)的刚体:什么都不剩还挂着光和碰撞 —— 用户看到的"灯笼打掉后浮空",是一盏没有壳只剩光的空刚体在飘
+      if (b.alive <= 0 || (b.destroyed > 0.6 && !b.isItem)) { this._destroyBody(b, b.x, b.y); continue }
       // 物品(金块):LifetimeComponent 到点消失;auto_pickup 碰到玩家就捡
       if (b.isItem) {
         b.life -= dt
@@ -2056,10 +2058,13 @@ export class Entities {
       if (d > r + b.r) continue
       if (!Entities.los(x, y, reach2, b.x, b.y, b.r, b.r)) continue
       const t = Math.max(0, 1 - Math.max(0, d - b.r) / r), n = Math.max(1, d)
-      if (b.asleep) b.wake(this.sim)
+      let lost = 0
+      if (b.asleep) lost += b.wake(this.sim) // 睡着的格子已经被这次爆炸的坑挖掉一部分,醒来清点出来的缺损也算这次的伤
       const imp = kbOf(t) * 1.8 * (30 / Math.max(30, b.m))
       b.vx += (dx / n) * imp; b.vy += (dy / n) * imp - imp * 0.5; b.w += (Math.random() - 0.5) * 6 * t; b.restT = 0
-      this._bodyDamaged(b, dmg, 0, b.x, b.y)
+      // 爆炸也挖 box2d 体的像素(原版坑里的刚体格一样被摧毁,physics_body_modified / break_on_body_modified 就是这么触发的):半径内、能被射线够到的像素抠掉
+      lost += b.carve(x, y, r, reach2)
+      this._bodyDamaged(b, dmg, lost, b.x, b.y)
     }
   }
 

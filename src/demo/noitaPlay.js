@@ -297,7 +297,7 @@ const projectiles = new ProjectileSystem({
       const kb = ((p.d.knockback || 0) + (p.kbAdd || 0)) * 0.15
       if (t === PLAYER_TARGET) { damagePlayer(dmg, p.vx * kb, p.vy * kb - (kb ? 10 : 0), p.name); return }
       // 尸体效果:弹丸 ragdoll_fx_on_collision(激光 / 狙击 BLOOD_SPRAY,霰弹 / 锯片 BLOOD_EXPLOSION)或卡的 c.ragdoll_fx(火箭 2 / GORE 3);命中同时给的状态(冻 / 化尘)也决定尸体
-      entities.hurt(t, dmg * (p.owner === 'enemy' ? 1 : (flags.damageMul || 1) * effectMul.dmgOut), p.vx * kb, p.vy * kb - (kb ? 15 : 0), 'proj', p.x, p.y, { ragdollFx: p.ragdollFx || p.d.ragdollFx || null, effects: p.effects })
+      entities.hurt(t, dmg * (p.owner === 'enemy' ? 1 : (flags.damageMul || 1) * effectMul.dmgOut), p.vx * kb, p.vy * kb - (kb ? 15 : 0), 'proj', p.hitX ?? p.x, p.hitY ?? p.y, { ragdollFx: p.ragdollFx || p.d.ragdollFx || null, effects: p.effects })
       // damage_game_effect_entities(修饰卡 game_effect_entities 或弹自带):命中时给目标状态
       if (p.effects && !t.isBody && !t.dead) for (const f of p.effects) {
         if (f === 'frozen') { t.stunT = Math.max(t.stunT || 0, 120 / 60); t.frozenT = 120 / 60 } // effect_frozen frames=120,期间死了走 FROZEN 尸体
@@ -1414,25 +1414,27 @@ function displaceLiquid() {
   }
   return moved
 }
-/** 入水一刻:按落速把水面附近的液体格掀成飞溅碎屑(落回世界),响一声 */
-function splash(speed, dy = 0) {
-  const b = bodyBox()
-  const n = Math.min(45, Math.max(8, Math.round(speed / 4)))
-  const k = Math.min(1.6, speed / 120)
+/**
+ * 人在液体里(VelocityComponent.displace_liquid,player_base 也带;反 exe VelocitySystem::Update 0xd67458):这一帧所在格变了 → 位置周围 3×3 的液体格
+ * 各以 75% 概率抛成粒子,速度 = −(自身速度 × 0.1) 转 Random(−0.3, 0.3) rad —— 跳进水里只是把脚下几格水以一成速度顶回去(几十 px/s 的小鼓包),
+ * 原版没有别的水花;之前我们按落速掀 8~45 粒 40~230 px/s 的水珠(自创)。响一声还留着(入水那一帧)
+ */
+let dispPX = NaN, dispPY = NaN
+function splash(speed) {
+  const cx = Math.floor(player.x), cy = Math.floor(player.y)
+  if (cx === dispPX && cy === dispPY) return false
+  dispPX = cx; dispPY = cy
   let done = 0
-  for (let tries = 0; tries < n * 4 && done < n; tries++) {
-    const x = b.x0 - 4 + Math.floor(Math.random() * (b.x1 - b.x0 + 9))
-    const y = b.y0 - 2 + dy + Math.floor(Math.random() * (b.y1 - b.y0 + 6))
+  for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) {
     const m = sim.get(x, y)
     if (m <= 0 || sim.kind[m] !== 3) continue
+    if (Math.random() * 100 >= 75) continue
+    const a = (Math.random() - 0.5) * 0.6, ca = Math.cos(a), sa = Math.sin(a), vx = -player.vx * 0.1, vy = -player.vy * 0.1
     sim.set(x, y, 0, 0)
-    const side = x < player.x ? -1 : 1
-    // 飞溅的水珠画得比水体亮一截(原作液体粒子迎光),落回去还是原材质
-    const c = mats.color[m], lt = ((Math.min(255, ((c >> 16) & 255) + 70) << 16) | (Math.min(255, ((c >> 8) & 255) + 70) << 8) | Math.min(255, (c & 255) + 70))
-    debris.push({ x, y: y - 1, vx: side * (10 + Math.random() * 80) * k + player.vx * 0.3, vy: -(40 + Math.random() * 190) * k, m, col: lt, dust: false })
+    debris.push({ x: x + 0.5, y: y + 0.5, vx: vx * ca - vy * sa, vy: vx * sa + vy * ca, m, col: mats.color[m], dust: false })
     done++
   }
-  if (done) sfx.play('water', { vol: Math.min(0.9, 0.25 + speed / 250), rate: 0.9 + Math.random() * 0.2, minGap: 120 })
+  if (done && speed > 40) sfx.play('water', { vol: Math.min(0.9, 0.25 + speed / 250), rate: 0.9 + Math.random() * 0.2, minGap: 120 })
   return done
 }
 /**
@@ -1567,8 +1569,8 @@ function step(dt) {
     const b = bodyBox()
     sim.setObstacle(b.x0, b.y0, b.x1, b.y1)
     displaceLiquid()
-    if ((inLiq || feetWet) && !player.wasWet && Math.abs(player.vy) > 40) { splash(Math.abs(player.vy)); oplog.ev('splash', { vy: player.vy | 0 }) }
-    else if (!(inLiq || feetWet) && player.wasWet && player.vy < -60) splash(-player.vy * 0.6, 6) // 蹿出水面也带起一片水
+    // 每帧(换格才算)把 3×3 里的液体顶回去;入水那一帧速度够快就响一声(splash 里按 speed 判)
+    if (inLiq || feetWet) { splash(!player.wasWet ? Math.hypot(player.vx, player.vy) : 0); if (!player.wasWet && Math.abs(player.vy) > 40) oplog.ev('splash', { vy: player.vy | 0 }) }
   }
   player.wasWet = inLiq || feetWet
   player.iframe = Math.max(0, player.iframe - dt); player.hurtFlash = Math.max(0, (player.hurtFlash || 0) - dt)

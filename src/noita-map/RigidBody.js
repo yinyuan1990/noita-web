@@ -181,7 +181,12 @@ export class RigidBody {
     let tmin = Infinity, tmax = -Infinity
     for (let i = 0; i < n; i++) { const t = (cs[i * 2] - cx) * tx + (cs[i * 2 + 1] - cy) * ty; if (t < tmin) tmin = t; if (t > tmax) tmax = t }
     // 几个像素的小块(尸块碎肉 3~10 像素):惯量极小,点接触的扭矩冲量会把它甩到 20 rad/s 以上乱转、转着钻进地里 —— 一律按面接触算(不给扭矩)
-    const face = this.n < 12 || tmax - tmin > Math.min(this.w0, this.h0) * 0.6
+    // 静定:接触点沿切向的跨度 ≥2px 且刚体中心投影落在两端之间(重心在支点之间)= 稳稳搁着,不该再有翻倒的扭矩;
+    // 不然崎岖地面上的石头两个小凸起轮流当支点,每帧一个方向的扭矩冲量,永远左右摇(用户截图里那块石头)
+    const tc = (this.x - cx) * tx + (this.y - cy) * ty
+    const stable = tmax - tmin >= 2 && tc >= tmin - 0.5 && tc <= tmax + 0.5
+    const face = this.n < 12 || stable || tmax - tmin > Math.min(this.w0, this.h0) * 0.6
+    if (stable && Math.abs(this.vx) < 20 && Math.abs(this.vy) < 20) this.w *= 0.5
     // 冲量(接触点 C,法线 N)
     const rx = cx - this.x, ry = cy - this.y
     const vrx = this.vx - this.w * ry, vry = this.vy + this.w * rx
@@ -304,15 +309,20 @@ export class RigidBody {
 
   _idx(k) { return Math.round(this.py[k] + this.h0 / 2 - 0.5) * this.w0 + Math.round(this.px[k] + this.w0 / 2 - 0.5) }
 
-  /** 世界点 (wx,wy) 半径 r 内的像素抠掉(弹丸命中 / 小爆炸打掉刚体一块 —— 原版是 config_explosion 挖穿 box2d 像素),返回抠掉几个 */
-  carve(wx, wy, r) {
+  /**
+   * 世界点 (wx,wy) 半径 r 内的像素抠掉(弹丸命中 / 爆炸挖穿 box2d 像素),返回抠掉几个;
+   * reach2 = 爆炸 360 条射线的到达距离²(有墙挡着的方向够不到),没有就按圆
+   */
+  carve(wx, wy, r, reach2 = null) {
     const P = [0, 0]
     let lost = 0
     for (let k = 0; k < this.n; k++) {
       const idx = this._idx(k)
       if (!this.mask[idx]) continue
       this.worldOf(k, P)
-      if ((P[0] - wx) ** 2 + (P[1] - wy) ** 2 > r * r) continue
+      const dx = P[0] - wx, dy = P[1] - wy, d2 = dx * dx + dy * dy
+      if (d2 > r * r) continue
+      if (reach2) { let a = Math.round(Math.atan2(dy, dx) * 180 / Math.PI) % 360; if (a < 0) a += 360; if (d2 > reach2[a]) continue }
       this.mask[idx] = 0; lost++
     }
     if (lost) { this.alive -= lost; this._rebuildEdge() }

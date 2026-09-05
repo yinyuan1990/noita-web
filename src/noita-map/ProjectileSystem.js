@@ -167,6 +167,7 @@ export class ProjectileSystem {
             p.lastHit = t
             // damage_scaled_by_speed:伤害 × min(1, 当前速度 / (damage_scale_max_speed || 初速))(箭 / 飞盘慢下来就软)
             const scale = d.dmgBySpeed ? Math.min(1, sp / ((d.dmgMaxSpeed || p.speed0) || 1)) : 1
+            p.hitX = nx; p.hitY = ny // 真正打中的那个点(p.x/p.y 还是子步前的位置,差 1~2px 就抠不到刚体像素)
             this.hooks.hitEntity?.(t, p, ((d.damage || 0) + (p.dmgAdd || 0)) * scale)
             if (d.collisionDie && !d.penetrateEntities && !p.beh?.pierce) { p.x = nx; p.y = ny; hit = true; break } // penetrate_entities / 穿透射击:穿过去,每个实体只伤一次
           }
