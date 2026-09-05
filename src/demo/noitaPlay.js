@@ -229,6 +229,19 @@ let VW = VIEW_W, VH = 240, SCALE = 1
 let overlay = null, overlayCv = document.createElement('canvas'), lightCv = document.createElement('canvas')
 const glowPts = [] // 本帧发光格 [x,y,glow,color,...](视口坐标)
 let fireCells = 0
+// 液体折射表(post_final.frag ENABLE_REFRACTION):本帧每列的 dx / 每行的 dy(见 render 里的计算),wobOx/wobOy = 本帧视口左上世界坐标
+let wobX = new Int8Array(1), wobY = new Int8Array(1), wobOx = 0, wobOy = 0
+/** 世界点 (wx,wy) 落在液体格里 → 这一格的折射偏移 [dx,dy](采样到的那格也得是液体),否则 null。弹丸 / 人 / 怪在水里画的时候用 */
+function liquidWobble(wx, wy) {
+  const i = Math.floor(wx) - wobOx, j = Math.floor(wy) - wobOy
+  if (i < 0 || j < 0 || i >= VW || j >= VH) return null
+  const m = sim.get(Math.floor(wx), Math.floor(wy))
+  if (!(m > 0 && sim.kind[m] === 3)) return null
+  const dx = wobX[i], dy = wobY[j]
+  if (!dx && !dy) return null
+  const m2 = sim.get(Math.floor(wx) + dx, Math.floor(wy) + dy)
+  return m2 > 0 && sim.kind[m2] === 3 ? [dx, dy] : null
+}
 function resize() {
   game.width = innerWidth; game.height = innerHeight
   SCALE = innerWidth / VIEW_W
@@ -237,6 +250,7 @@ function resize() {
   overlayCv.width = VW; overlayCv.height = VH
   overlay = new ImageData(VW, VH)
   lightCv.width = Math.ceil(VW / 4); lightCv.height = Math.ceil(VH / 4)
+  wobX = new Int8Array(VW); wobY = new Int8Array(VH)
 }
 window.addEventListener('resize', resize); resize()
 const toWorld = (sx, sy) => [cam.x - VW / 2 + sx / SCALE, cam.y - VH / 2 + sy / SCALE]
@@ -262,6 +276,7 @@ const projectiles = new ProjectileSystem({
     debris: (x, y, vx, vy, m, col, real = false) => { const k = mats.kind[m]; if (debris.length < (real ? 3000 : 900)) debris.push({ x, y, vx, vy, m, col, dust: !real && (k === 'static' || k === 'solid') }) },
     shake: (t) => { shakeT = Math.max(shakeT, t) },
     sfx: (n, o) => sfx.play(n, o),
+    wobble: (x, y) => liquidWobble(x, y), // 水里的弹跟液体一起晃(折射)
     // 命中实体(HitboxComponent)/ 爆炸伤害 → 实体层
     // 玩家的弹打怪 + 刚体;敌人的弹打玩家(player_base Hitbox ≈ x −3..3, y −12..4)+ 刚体,不打自己人
     hitTest: (x, y, p) => p.owner === 'enemy'
@@ -360,6 +375,7 @@ const projectiles = new ProjectileSystem({
 entities = await new Entities({
   res: RES, decodePng: decodePngBrowser, mats, sim, matAt, player, projectiles, seed: SEED,
   hooks: {
+    wobble: (x, y) => liquidWobble(x, y), // 泡在液体里的怪跟液体一起晃(折射)
     // 血 / 油落地留下(真材质);箱子木屑 / 石块碎片(box2d 材质)是尘,飞一下就散
     debris: (x, y, vx, vy, m, col, real = false) => { const k = mats.kind[m]; if (debris.length < (real ? 3000 : 900)) debris.push({ x, y, vx, vy, m, col, dust: !real && (k === 'static' || k === 'solid') }) },
     sfx: (n, o) => sfx.play(n, o),
@@ -1580,7 +1596,12 @@ function step(dt) {
     player.vy += (-P.flyUpMax * effectMul.fly - player.vy) * Math.min(1, P.flyChange * f60)
     player.fly = Math.max(0, player.fly - dt)
     if (player.fly <= 0) { player.flyExhausted = true; oplog.ev('fly_exhausted', { y: player.y | 0 }); tut.show('fly') }
-    if (Math.random() < 0.8) sparks.push({ x: player.x + (Math.random() - 0.5) * 3, y: player.y + P.boxB, vx: (Math.random() - 0.5) * 30, vy: 60 + Math.random() * 60, life: 0.3, c: '#ffb050' })
+    // 喷气(base_jetpack_nosound.xml ParticleEmitter jetpack,player_base 覆盖 offset (−2,5) / lifetime_min 0):材质 rocket_particles(66FFFFFE = 40% 白),
+    // x_pos ±1,x_vel ±7,y_vel 80~180 向下,count 3~7,lifetime 0~0.2s,每 0~1 帧一次;cosmetic 粒子,collide_with_grid → 碰到地就没;不按寿命淡出 —— 是一股白色的"火箭尾气",不是橙色火星
+    if (Math.random() < 0.75) {
+      const n = 3 + ((Math.random() * 5) | 0)
+      for (let k = 0; k < n; k++) sparks.push({ x: player.x - 2 * player.face + (Math.random() * 2 - 1), y: player.y + 5, vx: Math.random() * 14 - 7, vy: 80 + Math.random() * 100, life: Math.random() * 0.2, c: 'rgba(255,255,255,0.4)', noFade: true, grid: true })
+    }
   } else if (inLiq && wantUp) player.vy -= 500 * dt
   if (!player.thrusting) {
     player.sinceFly += f60
@@ -1669,7 +1690,7 @@ function step(dt) {
     p.life -= dt; if (p.g) p.vy += 300 * dt
     if (p.stopAt !== undefined) { p.stopAt -= dt; if (p.stopAt <= 0) { p.vx = 0; p.vy = 0 } } // 描图形的火花:飞到轮廓就停
     p.x += p.vx * dt; p.y += p.vy * dt
-    if (p.life <= 0) sparks.splice(i, 1)
+    if (p.life <= 0 || (p.grid && solidAt(Math.floor(p.x), Math.floor(p.y)))) sparks.splice(i, 1) // collide_with_grid 的化妆粒子撞到实心就没
   }
   if (simBound) updateDebris(dt)
   shakeT = Math.max(0, shakeT - dt)
@@ -1707,7 +1728,6 @@ function drawPlayer(ctx, ox, oy) {
     ctx.fillStyle = 'rgba(225,242,255,0.8)'
     for (const b of bubbles) ctx.fillRect(Math.round(b.x - ox) - 1, Math.round(b.y - oy) - 1, b.f ? 2 : 1, b.f ? 2 : 1)
   }
-  if (player.thrusting) { ctx.fillStyle = Math.random() < 0.5 ? '#ffb040' : '#ff7020'; ctx.fillRect(Math.round(player.x - ox) - 1, Math.round(player.y - oy) + FEET, 2, 2) }
   drawStatusIcons(ctx, ox, oy)
 }
 // ── 状态图标(ui_gfx/status_indicators/*.png 12×12,原版画在 HUD 血条下;手机屏小,直接挂在头顶):图标 + 下面一条剩余量(stain_effects 的占比 / 着火剩余时间)──
@@ -1779,11 +1799,15 @@ function render() {
     d.fill(0)
     const KD = sim.kind, COL = mats.color, ALP = mats.alpha, GLOW = sim.glow
     const fireM = sim.M_FIRE
-    // 液体折射(post_final.frag ENABLE_REFRACTION):液体像素按 sin/cos(time, 位置) 偏 ±1px 采样 → 边缘微微晃动的水光
-    const tW = performance.now() * 0.007
-    const wobX = new Int8Array(VH), wobY = new Int8Array(VW)
-    for (let j = 0; j < VH; j++) wobX[j] = Math.round(Math.sin(tW + (oy + j) * 0.3) * 0.9)
-    for (let i = 0; i < VW; i++) wobY[i] = Math.round(Math.cos(tW * 1.3 + (ox + i) * 0.3) * 0.9)
+    // 液体折射(post_final.frag ENABLE_REFRACTION,原式):液体格的采样坐标偏
+    //   dx = sin(time×DISTORTION_TIME_SPD(10) + (u + cam.x/VW)×DISTORTION_SCALE_MULT(50)) × DISTORTION_SCALE_MULT2(0.002)  → 世界 x 的函数,幅度 0.002×427 ≈ 0.85px
+    //   dy = cos(time×10 + (v − cam.y/VH)×50) × 0.002                                                                        → 世界 y 的函数,幅度 0.002×242 ≈ 0.5px
+    // 只有采样到的那格也是液体才偏。液体像素和落在液体里的东西(弹丸 / 人 / 怪,见 liquidWobble)都按这张表偏
+    const tW = performance.now() / 1000 * 10
+    wobOx = ox; wobOy = oy
+    // 我们的画布 1 世界像素 = 1 格,0.5px 以下的偏移四舍五入就没了;原版屏幕是 4~5 倍缩放、亚像素采样看得见 —— y 向 0.48px 的幅度按 |cos|>0.5 量化成 ±1
+    for (let i = 0; i < VW; i++) wobX[i] = Math.round(Math.sin(tW + (ox + i) * (50 / VW)) * 0.002 * VW)
+    for (let j = 0; j < VH; j++) { const c = Math.cos(tW + (oy + j) * (50 / VH)); wobY[j] = c > 0.5 ? 1 : c < -0.5 ? -1 : 0 }
     for (let j = 0; j < VH; j++) {
       const wy = oy + j
       for (let i = 0; i < VW; i++) {
@@ -1795,7 +1819,7 @@ function render() {
         if (m === 0) continue
         const k = KD[m]
         let o = (j * VW + i) * 4
-        if (k === 3) { const ii = i + wobX[j], jj = j + wobY[i]; if (ii >= 0 && ii < VW && jj >= 0 && jj < VH) o = (jj * VW + ii) * 4 }
+        if (k === 3) { const ii = i + wobX[i], jj = j + wobY[j]; if (ii >= 0 && ii < VW && jj >= 0 && jj < VH) o = (jj * VW + ii) * 4 }
         if (k >= 2) {
           const c = COL[m]
           let r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255, a = k === 2 ? 255 : ALP[m]
@@ -1815,7 +1839,7 @@ function render() {
   // 碎屑:1px 真材质色
   for (const p of debris) { const c = p.col; vctx.fillStyle = `rgb(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255})`; vctx.fillRect(Math.round(p.x - ox), Math.round(p.y - oy), 1, 1) }
   projectiles.render(vctx, ox, oy)
-  for (const p of sparks) { vctx.fillStyle = p.c; vctx.globalAlpha = Math.min(1, p.life * 3); vctx.fillRect(Math.round(p.x - ox), Math.round(p.y - oy), 1, 1) }
+  for (const p of sparks) { vctx.fillStyle = p.c; vctx.globalAlpha = p.noFade ? 1 : Math.min(1, p.life * 3); vctx.fillRect(Math.round(p.x - ox), Math.round(p.y - oy), 1, 1) }
   vctx.globalAlpha = 1
   // 灯:wang 标记 spawn_lamp/candles/torch 掷出来的光源,画个小灯笼/蜡烛
   const lamps = []
@@ -1845,7 +1869,9 @@ function render() {
   veg.render(vctx, ox, oy)
   entities.render(vctx, ox, oy)
   renderPortals(vctx, ox, oy)
-  drawPlayer(vctx, ox, oy)
+  // 人在液体里:整个人跟着液体折射偏(post_final.frag 是对整张前景按液体格采样,人 / 弹在水里都跟着晃)
+  const pw = liquidWobble(player.x, player.y - 4)
+  drawPlayer(vctx, ox - (pw ? pw[0] : 0), oy - (pw ? pw[1] : 0))
   if (player.hurtFlash > 0) { vctx.fillStyle = `rgba(255,0,0,${(player.hurtFlash * 1.2).toFixed(2)})`; vctx.fillRect(0, 0, VW, VH) }
   // 光照:Noita 洞穴是黑的,画面由光源驱动。低分辨率光图(1/4)叠加所有光源 → multiply 回主画面
   const depth = Math.max(0, Math.min(1, (cam.y + 40) / 240)) // 地表 0 → 地下 1
@@ -1967,4 +1993,4 @@ function loop(now) {
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }

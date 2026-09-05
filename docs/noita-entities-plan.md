@@ -631,6 +631,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       探针 `_noita-ragdoll-shot.mjs`:NORMAL 僵尸 12 块 11 关节 0 断、落地关节误差 <0.5px、整具包围盒 ≈11×5px、3s 内 12 块全睡成 ~60 格 meat;朝左镜像同;BLOOD_EXPLOSION 0 关节散 30~60px + 喷血;BLOOD_SPRAY 矿工 10 块连着喷血;FROZEN 一块 72 像素 ice_glass_b2;
       DISINTEGRATED 0 块 ~50 粒尘;火烧死 3s 内 20+ 格火、尸体烧没;弹丸打死 30 只 ≈ 20% BLOOD_SPRAY。`ragdoll-*.png` 8 倍放大截图。
 
+20. **喷气尾气 / 水中折射(用户 09-05:"飞的时候脚下那一坨像火箭的效果"、"子弹射进水里有折射")**:
+    - 喷气:`player_base.xml` 引 `base_jetpack_nosound.xml` 的 ParticleEmitter(`_tags=jetpack`):材质 **rocket_particles**(66FFFFFE = 40% 透明的白,liquid 材质只是借它的颜色),offset (−1,−4) 被 player_base 覆盖成 (−2,5),
+      x_pos ±1、x_vel ±7、y_vel 80~180 向下、count 3~7、lifetime 0.1~0.2(player_base 把 min 覆盖成 0)、每 0~1 帧一次、cosmetic 粒子 + collide_with_grid(撞地就没)、不按寿命淡。
+      同文件还有 `jetpack_smoke` 的 SpriteParticleEmitter 但 `is_emitting=0`(`PLAYER_USE_NEW_JETPACK=0`)。所以原版是一股向下的白色"火箭尾气",不是我们之前的橙色火星 + 脚下 2×2 橙块 —— 已换成原参数(`sparks` 带 `noFade` / `grid`)。
+    - 折射:`post_final.frag ENABLE_REFRACTION`:液体格(extra_data.a ≥ 0.99)的采样坐标偏 `dx = sin(time×10 + (u + cam.x/VW)×50)×0.002`、`dy = cos(time×10 + (v − cam.y/VH)×50)×0.002`(采样到的那格也得是液体),
+      即世界 x 的函数 → 幅 0.85px、波长 ≈ 53px;y 同理幅 0.48px。整张前景(世界像素 + 精灵)都按这个坐标采样,所以泡在水里的弹丸 / 人 / 怪跟水一起晃。
+      之前我们只晃液体像素、且相位轴写反了(x 偏移是行的函数)。改:`wobX[列] / wobY[行]` 按原式算(y 幅 0.48 在 1:1 画布上按 |cos|>0.5 量化成 ±1),`liquidWobble(wx,wy)` 给弹丸(`hooks.wobble`)/ 玩家 / 怪的绘制位置加同样的偏移。
+
 ## 2.5 接手指南(新会话从这里开始)
 
 **仓库**:`https://github.com/yinyuan1990/noita-web.git`(main;2026-09-04 首推,`.gitignore` 排除 node_modules / dist* / noita-ref / scripts/out / scripts/shots)。

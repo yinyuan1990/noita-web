@@ -1081,7 +1081,13 @@ export class ProjectileSystem {
       ctx.strokeStyle = 'rgb(255,170,255)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 - nx * l * 0.6, y0 - ny * l * 0.6); ctx.stroke()
     }
     ctx.restore()
-    for (const p of this.list) if (p.bhR === undefined) drawSprite(p.d, p.x - ox, p.y - oy, p.rot, p.frame, Math.hypot(p.vx, p.vy), p.spr || null) // 黑洞本体上面画过了
+    // 液体折射(post_final.frag ENABLE_REFRACTION):落在液体格里的弹,采样坐标跟着液体一起晃 → hooks.wobble 给出这一格的 (dx,dy)
+    const wob = this.hooks.wobble
+    for (const p of this.list) {
+      if (p.bhR !== undefined) continue // 黑洞本体上面画过了
+      const w = wob ? wob(p.x, p.y) : null
+      drawSprite(p.d, p.x - ox + (w ? w[0] : 0), p.y - oy + (w ? w[1] : 0), p.rot, p.frame, Math.hypot(p.vx, p.vy), p.spr || null)
+    }
     for (const a of this.anims) {
       const frame = a.loop ? Math.floor(a.t / a.wait) % a.frames : Math.min(a.frames - 1, Math.floor(a.t / a.wait))
       ctx.save()

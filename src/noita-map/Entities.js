@@ -2183,7 +2183,9 @@ export class Entities {
       const S = e.d.sprite, a = S.anims[e.anim] || S.anims[S.def]
       if (!a) continue
       const fx = a.x + (e.frame % a.perRow) * a.fw, fy = a.y + Math.floor(e.frame / a.perRow) * a.fh
-      const px = Math.round(e.x - ox), py = Math.round(e.y - oy)
+      // 液体折射(post_final.frag):怪泡在液体里时整只跟着液体格的采样偏移晃
+      const wb = this.hooks.wobble?.(e.x, e.y + (e.hit.t + e.hit.b) / 2)
+      const px = Math.round(e.x - ox) + (wb ? wb[0] : 0), py = Math.round(e.y - oy) + (wb ? wb[1] : 0)
       if (e.hurtT > 0) ctx.globalAlpha = 0.75
       if (e.legs) for (const g of e.legs) this._drawLeg(ctx, e, g, ox, oy) // 腿 z_index 1.1:在身体后面
       ctx.save()
