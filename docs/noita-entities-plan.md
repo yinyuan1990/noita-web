@@ -592,6 +592,12 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     - 尸块碎了以后一直晃:碎肉 3~10 像素的小块惯量极小,点接触的扭矩冲量甩到 20+ rad/s 乱转、转着钻进地里。改:n<12 的小块一律按面接触(不给扭矩)、法线按来向;
       角速度封顶 12 rad/s(box2d 默认量级)。探针 `_noita-body-shot.mjs`:僵尸 12 块尸块 3s 后 10 块睡着(之前 3 块)。
 18. 没反完的:DamageModelSystem(电水接触伤害每帧多少、火伤 0.2 / 坠落 0.1~1.2 常量在 0xbc6980)、LooseGroundSystem 细节(144 条,和文档描述一致就没细读)、PhysicsThrowable。
+19. **下一件(用户 09-05 提出,还没动)——怪物死亡 / 尸体**:用户实际玩原版的感觉是"怪死了基本是一整具尸体倒下,不是很多碎块";我们现在是 `ragdoll_filenames_file` 里每张 png 一块刚体
+    (僵尸 12 块)散开来。要反:`DamageModelComponent` 的 ragdoll 系列字段(`ragdoll_filenames_file` / `ragdoll_material` / `ragdollify_child_entity_sprites` / `ragdollify_root_angular_damping` /
+    `ragdollify_disintegrate_nonroot` / `create_ragdoll` / `ragdoll_fx_forced` / `blood_spray_material` / `blood_sprite_large`),`data/temp/ragdoll/filenames.txt` 与 `ragdolls/*.png` 的对应关系
+    (一张 png 是一块 Box2D 体,块与块之间原版用 **joint 连着**才是"一整具"——RAGDOLL_FX / `ragdoll_fx` 枚举:NORMAL / BLOOD_EXPLOSION / BLOOD_SPRAY / FROZEN / CONVERT_TO_MATERIAL / CUSTOM_RAGDOLL_ENTITY /
+    DISINTEGRATED / NO_RAGDOLL / PLAYER_RAGDOLL_CAMERA),每种怪 xml 里 `ragdoll_fx_forced` / 伤害类型决定走哪种(火烧死 = 焦尸、爆炸 = 血爆、冰 = 冻住整块、DISINTEGRATED = 化灰无尸)。
+    还要看 `data/scripts/...` 里 `death` 脚本(掉金 / 分裂 / 变蛋)和 `blood_spray_material` 溅血量。改法方向:一具尸体 = 各块用关节串起来的一个刚体组(或简化成按 root 块整体落地),按 ragdoll_fx 分支。
 
 ## 2.5 接手指南(新会话从这里开始)
 
