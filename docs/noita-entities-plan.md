@@ -639,6 +639,11 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       即世界 x 的函数 → 幅 0.85px、波长 ≈ 53px;y 同理幅 0.48px。整张前景(世界像素 + 精灵)都按这个坐标采样,所以泡在水里的弹丸 / 人 / 怪跟水一起晃。
       之前我们只晃液体像素、且相位轴写反了(x 偏移是行的函数)。改:`wobX[列] / wobY[行]` 按原式算(y 幅 0.48 在 1:1 画布上按 |cos|>0.5 量化成 ±1),`liquidWobble(wx,wy)` 给弹丸(`hooks.wobble`)/ 玩家 / 怪的绘制位置加同样的偏移。
 
+21. **毒液不是亮绿的(用户 09-05:原版截图里 radioactive_liquid 亮黄绿带光晕,我们是暗橄榄色)**:materials.xml `radioactive_liquid` Graphics color `44B4FF10`(alpha 只有 27%)+ `gfx_glow=60`。
+    原版靠 glow:`post_final.frag` 把 glow 贴图(材质色 × gfx_glow/255,低分辨率 + 模糊 = 光晕)`lights += glow`(发光格不被黑暗压暗)再 `color = max(color + glow×0.6 − 0.6×lights, color + glow − color×sky×glow)` screen 叠上去,
+    黑暗里毒液 ≈ 72% 的本色 = (130,184,12)。我们之前只按 27% alpha 混色 + 每 5 格一个 0.08 alpha 的小光 → (24,32,4)。改:发光材质 alpha += gfx_glow(毒液 68+60 = 50%),光源表上限 400 → 1600、每点 alpha 0.3 + 0.35×gl(火 0.65 / 熔岩 0.5 / 毒液 0.38)。
+    探针 `_noita-glow-shot.mjs`:黑处并排毒液池 / 水池,毒液均色 (24,32,4) → (55,78,5),水不变 (18,30,25);满屏毒液(2.6 万格、光源表打满 1600)56fps。
+
 ## 2.5 接手指南(新会话从这里开始)
 
 **仓库**:`https://github.com/yinyuan1990/noita-web.git`(main;2026-09-04 首推,`.gitignore` 排除 node_modules / dist* / noita-ref / scripts/out / scripts/shots)。

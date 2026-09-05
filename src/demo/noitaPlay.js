@@ -1830,8 +1830,9 @@ function render() {
         if (k >= 2) {
           const c = COL[m]
           let r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255, a = k === 2 ? 255 : ALP[m]
-          // 发光材质(gfx_glow:火 255 / 熔岩 150 / 荧光岩…)采样进光源表,每 3 格取一个
-          if (GLOW[m] && glowPts.length < 400 && ((wx + wy * 3) % 5) === 0) glowPts.push(i, j, GLOW[m], c)
+          // 发光材质(gfx_glow:火 255 / 熔岩 150 / 毒液 60 / 荧光岩…):post_final.frag 把 glow 贴图(材质色 × gfx_glow/255)加进 lights(自己不被黑暗压暗)
+          // 再 screen 叠到画面上 —— 毒液 Graphics color 44B4FF10 只有 27% 的 alpha,靠 glow 才是原版那种亮黄绿。这里:alpha 加上 gfx_glow,再每 5 格采一点进光源表(halo + 不被压暗)
+          if (GLOW[m]) { a = Math.min(255, a + GLOW[m]); if (glowPts.length < 1600 && ((wx + wy * 3) % 5) === 0) glowPts.push(i, j, GLOW[m], c) }
           if (m === fireM) { fireCells++; const f = 0.7 + Math.random() * 0.3; r = 255; g = (140 + Math.random() * 90) | 0; b = 40; a = (255 * f) | 0 }
           else if (k === 4) a = Math.min(a, 140) // 气体更透
           else if (k === 2) { const h = ((wx * 374761393 + wy * 668265263) >>> 0) % 100; const jt = 0.86 + h / 100 * 0.28; r *= jt; g *= jt; b *= jt }
@@ -1897,9 +1898,10 @@ function render() {
   }
   light(player.x - ox, player.y - oy, 150, '255,240,210', 0.95)
   for (const l of lamps) light(l.x - ox, l.y - oy - (l.kind === 'torchstand' ? 16 : 2), l.kind === 'lantern' ? 120 : l.kind === 'candle' ? 55 : l.kind === 'tubelamp' ? 150 : l.kind === 'torchstand' ? 96 : 90, l.kind === 'candle' ? '255,200,120' : l.kind === 'tubelamp' ? '200,230,255' : '255,190,110', 0.9)
+  // lights += glow:发光格照亮自己那一小圈(火 gl=1 → 0.65,熔岩 0.59 → 0.5,毒液 0.235 → 0.38),半径 14~36
   for (let k = 0; k < glowPts.length; k += 4) {
     const c = glowPts[k + 3], gl = glowPts[k + 2] / 255
-    light(glowPts[k], glowPts[k + 1], 14 + gl * 22, `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`, 0.35 * gl)
+    light(glowPts[k], glowPts[k + 1], 14 + gl * 22, `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`, Math.min(0.8, 0.3 + 0.35 * gl))
   }
   // 投射物 LightComponent 彩色光 + 发射/爆炸闪光;道具的光(矿灯)
   projectiles.lights(light, ox, oy)
