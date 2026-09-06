@@ -811,6 +811,10 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         用它的地方:PhysicsBodyCollisionDamageComponent(`impact > speed_threshold` → 伤 impact × damage_multiplier,灯笼 120 / 药水 80)、混凝土块撞碎(>60)、药水碎(potion.xml:阈值 80、×1/60、hp 0.5 → 撞击 >80 px/s 必碎;从 44px 以上掉下来才到 80,手边掉地不碎;扔出去 180 必碎,点射墙也碎)。
         踩过的坑:一开始用法向分量,扔出去贴地滑着落地法向分量只有几十不碎;又加了 0.1s 出生保护,把"扔出去当帧撞墙"的 205 吞了 —— 出生静止的刚体本来没有接触速度,保护撤掉。手写求解器分支仍看前后帧速度差。
         浮力 `buoyancy 0.7` 没反出来(physics_bridge.cpp 6 个函数里没看到明显的按格数算力的常量;木箱 density 6 在水里能浮,说明不是简单阿基米德),先留现在按密度比的近似。
+        **浮力改走 Box2D 的力 + 浮睡**(用户反馈:几具尸体挤在水坑里一直动、fps 掉到 20 —— 探针复现 5 具 60 块全醒 12s 不歇):之前浮力每帧改 rb.vy 再 pushToPhysics,setLinearVelocity 顺手 setAwake(true),泡水的刚体永远醒着。
+        现在 `Physics.applyBuoyancy`:applyForceToCenter(重力 × buoy × 淹没比例,wake=false)+ 液体阻尼(线 2/s 角 2.5/s,出水复原),不碰 rb 速度;泡水(>50%)的静止阈值放宽到 4px/s / 0.25rad/s(边缘采样的台阶浮力让水面永远有 2~3px/s 起伏);
+        歇下但脚下没格子且泡着 → `_floatSleep`:planck setAwake(false)、不写格子(水照常从旁边流),记入睡时淹没比例,水位降到 −0.15 以下 / 被撞 / 关节邻居醒 → 醒过来掉下去再走正常入睡。planck 自己睡着的物品(金块)定期查:没接触又没泡水就叫醒。
+        探针 `_noita-corpse-water-shot`:1 具 2s 全浮睡、5 具 7s 全睡(醒 0),放水后全醒掉到底;木箱泡水 7s 浮到水面睡。
         ✅(已上线)**挖掘场多体机械 excavationsite_machine_3b/3c**(`spawn_physicsstructure` 标记 0a50ff,−5,−5 处):机身 PhysicsBodyComponent `is_static=1` → planck 静态体(`rb.isStatic`),
         `centered=0` → 画布左上角在实体;三个轮子写着 centered=1 但和机身共用一张 150×125 画布(轮子包围盒中心 (35.5,64.5)(93.5,37.5)(82.5,89.5) 正好是关节 pos_x/pos_y),
         所以老式多体统一按"根图定画布左上角(根 centered 则 实体 − 画布/2),所有图都画在这张画布里,关节 pos = 画布像素"—— 矿车 / 轮架全 centered 的情况结果不变。

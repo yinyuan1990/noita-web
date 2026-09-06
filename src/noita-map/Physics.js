@@ -264,6 +264,20 @@ export class Physics {
     if (rb.w !== rb._sw) { b.setAngularVelocity(rb.w); b.setAwake(true) }
     if (rb.fixDirty) this.rebuild(rb)
   }
+  /**
+   * 浮力:向上的力 = 重力 × buoy × 淹没比例(wake=false:睡着的浮体不被叫醒),液体阻尼叠在 xml 阻尼上
+   * (线 2/s、角 2.5/s:比手写求解器的 35% / 30% 再重些,把水面起伏压小让它能歇下;Box2D 自带 b2BuoyancyController 的默认拖拽也是这个量级);出水后阻尼复原
+   */
+  applyBuoyancy(rb, wetF, buoy, gravity) {
+    const b = rb.pb
+    if (!b || b.isStatic()) return
+    if (wetF > 0) {
+      const m = b.getMass()
+      b.applyForceToCenter(new Vec2(0, -(gravity / PPM) * (rb.gravScale || 1) * buoy * wetF * m), false)
+      b.setLinearDamping((rb.linDamp || 0) + 2 * wetF); b.setAngularDamping((rb.angDamp || 0) + 2.5 * wetF)
+      rb._wetDamp = true
+    } else if (rb._wetDamp) { rb._wetDamp = false; b.setLinearDamping(rb.linDamp || 0); b.setAngularDamping(rb.angDamp || 0) }
+  }
   /** step 之后:planck → rb(位置 / 角度 / 速度),记下"上一帧"的速度给碎裂 / 摔落判定 */
   _syncAll() {
     for (let b = this.world.getBodyList(); b; b = b.getNext()) {

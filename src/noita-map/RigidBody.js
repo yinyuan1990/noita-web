@@ -77,17 +77,24 @@ export class RigidBody {
    * 返回 wetF(0~1),调用方按需要再加阻尼
    */
   buoyancy(dt, gravity, liquidDensity, myDensity) {
-    let wet = 0
-    const P = [0, 0]
-    for (let k = 0; k < this.edge.length; k += 3) { this.worldOf(this.edge[k], P); if (liquidDensity(Math.floor(P[0]), Math.floor(P[1])) > 0) wet++ }
-    const wetF = this.edge.length ? wet / Math.ceil(this.edge.length / 3) : 0
+    const wetF = this.wetFraction(liquidDensity)
     if (wetF > 0) {
-      const ld = liquidDensity(Math.floor(this.x), Math.floor(this.y)) || 3
-      const buoy = (ld / Math.max(1, myDensity)) * 1.6 // 木(6)在水(4)里 ≈ 1.07 → 漂;金属(8) ≈ 0.8 → 慢沉
-      this.vy -= gravity * buoy * wetF * dt
+      this.vy -= gravity * this.buoyFactor(liquidDensity, myDensity) * wetF * dt
       this.vx *= Math.pow(0.35, dt * wetF); this.vy *= Math.pow(0.35, dt * wetF); this.w *= Math.pow(0.3, dt * wetF)
     }
     return wetF
+  }
+  /** 泡在液体里的边缘像素比例(每 3 个边缘像素采一个) */
+  wetFraction(liquidDensity) {
+    let wet = 0
+    const P = [0, 0]
+    for (let k = 0; k < this.edge.length; k += 3) { this.worldOf(this.edge[k], P); if (liquidDensity(Math.floor(P[0]), Math.floor(P[1])) > 0) wet++ }
+    return this.edge.length ? wet / Math.ceil(this.edge.length / 3) : 0
+  }
+  /** 浮力 / 重力 之比(全泡时):木(6)在水(4)里 ≈ 1.07 → 漂;金属(8) ≈ 0.8 → 慢沉 */
+  buoyFactor(liquidDensity, myDensity) {
+    const ld = liquidDensity(Math.floor(this.x), Math.floor(this.y)) || 3
+    return (ld / Math.max(1, myDensity)) * 1.6
   }
 
   step(dt, gravity, solid, liquidDensity, myDensity) {

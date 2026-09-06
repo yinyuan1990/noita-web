@@ -617,11 +617,17 @@ export class Entities {
    */
   _stepPhysBody(b, dt) {
     b.age += dt
-    b.buoyancy(dt, BODY_GRAVITY, this._liqDensity, b.density)
+    // 浮力走 Box2D 的力(wake=false)+ 液体里加阻尼,不改 rb 速度 —— 之前每帧改 vy 再 pushToPhysics 会 setAwake(true),泡在水里的尸块 / 箱子永远睡不着
+    // (用户反馈:几具尸体挤在水坑里一直动、掉帧)。planck 睡着的浮体不受力也不受重力,水退了要叫醒(floatSleep 记入睡时的淹没比例)
+    const wetF = b.wetF = b.wetFraction(this._liqDensity)
+    this.physics.applyBuoyancy(b, wetF, wetF > 0 ? b.buoyFactor(this._liqDensity, b.density) : 0, BODY_GRAVITY)
+    if (b.floatSleep != null) { if (wetF < b.floatSleep - 0.15) { b.floatSleep = null; b.pb.setAwake(true) } else if (b.pb.isAwake()) b.floatSleep = null }
     this.physics.pushToPhysics(b)
     // 自己的静止计时:附近滴水 / 落沙让地形块重建,planck 拆 fixture 时会把压着的刚体叫醒,永远攒不够它的 0.5s —— 速度 ≈0 且贴着东西 0.5s 就算歇下了(写格子后就不受重建影响)
     // 阈值 1.5px/s / 0.06rad/s:一串铰链吊着浮力(蘑菇)会有 0.2~0.5px/s 的残留微抖,0.5s 内最多挪 0.75px,写格子就冻住了
-    if (Math.abs(b.vx) < 1.5 && Math.abs(b.vy) < 1.5 && Math.abs(b.w) < 0.06) b.restT += dt; else b.restT = 0
+    // 泡在水里的放宽到 4px/s / 0.25rad/s:浮力按边缘采样是台阶式的,漂着的东西在水面有 2~3px/s 的永久小起伏,按陆上阈值永远歇不下(浮睡把速度清零,4px/s 的一顿看不出来)
+    const vl = wetF > 0.5 ? 4 : 1.5, wl = wetF > 0.5 ? 0.25 : 0.06
+    if (Math.abs(b.vx) < vl && Math.abs(b.vy) < vl && Math.abs(b.w) < wl) b.restT += dt; else b.restT = 0
     // 全埋进实心里的刚体(塌方 / 落沙压住、出生点在墙里)看不到 chain 的边会一直往下掉 —— 原版 hax_fix_going_through_ground:在地里就往上抬
     if (b.age > 0.5 && b.alive > 0 && !b.isStatic) {
       const P = [0, 0]
@@ -694,7 +700,8 @@ export class Entities {
           // 物品在 planck 上:睡着 = Box2D 自己睡(body 留着,不写格子,金块堆互相压着);砸到东西看上一帧到这一帧的速度骤降
           b.age += dt
           b.asleep = !b.pb.isAwake()
-          if (b.asleep) continue
+          // planck 自己睡着的物品(现在浮力不再每帧叫醒,漂在水里的金块也会睡):定期看脚下 —— 没支撑又没泡在水里(水退了)就叫醒掉下去
+          if (b.asleep) { b.checkT -= dt; if (b.checkT <= 0) { b.checkT = 0.4; if (!this.physics.touching(b) && b.wetFraction(this._liqDensity) < 0.3) b.pb.setAwake(true) } continue }
           const touching = this._stepPhysBody(b, dt)
           // 药水(potion.xml):PhysicsBodyCollisionDamageComponent speed_threshold 80、damage_multiplier 1/60,hp 0.5 → 撞击速度 >80 px/s 就碎
           // (从 44px 以上掉下来才到 80,手边掉地不碎;扔出去 180 必碎);手写求解器没有接触速度,仍看前后帧速度差
@@ -781,7 +788,8 @@ export class Entities {
       if (b.group?.connected(b)) continue // 布娃娃部件(还连着的):整组一起睡(下面);散开的块各自睡
       if (b.isStatic || b.multi?.hasStatic) continue // 静态机身的机械(挖掘场机械):一直留在 planck 里,电机轮子永远转
       // 入睡:planck 的睡眠判定(0.5s 线速 <0.03m/s 角速 <2°/s)/ 手写求解器 restT;脚下要真有格子 —— planck 上的先攒着,下面一起从低到高连锁写格子
-      const rest = b.pb ? (!b.pb.isAwake() || (b.restT > 0.5 && (touching || b.multi?.joints.some((J) => !J.B)))) : b.restT > 0.5 // 吊在地上的(灯笼)没接触也算歇下
+      // 泡在液体里(淹没 >50%)漂着不动 0.5s 也算歇下:进 restList 后没支撑就"浮睡"(planck setAwake(false),水退 / 被撞再醒)
+      const rest = b.pb ? (!b.pb.isAwake() || (b.restT > 0.5 && (touching || b.wetF > 0.5 || b.multi?.joints.some((J) => !J.B)))) : b.restT > 0.5 // 吊在地上的(灯笼)没接触也算歇下
       if (!rest) continue
       if (b.pb) { (restList ||= []).push(b); continue }
       if (b.supported(this._solidB)) this._gridSleep(b)
@@ -797,13 +805,16 @@ export class Entities {
           if (b.multi) {
             // 多体:全部部件都在 planck 里睡了 + 整组有支撑 → 整组一起写格子(部件之间的关节随 body 停用)
             const M = b.multi
-            if (!M.parts.every((q) => q.dead || q.asleep || !q.pb?.isAwake() || q.restT > 0.5) || !this._multiSupported(M)) { restList.splice(i, 1); continue }
-            for (const q of M.parts.slice().sort((a, b) => a.z - b.z)) if (!q.dead && !q.asleep) this._gridSleep(q) // z 小(靠前)的先写格子:重叠处留前面那块的像素(轮子在车身前)
+            if (!M.parts.every((q) => q.dead || q.asleep || !q.pb?.isAwake() || q.restT > 0.5)) { restList.splice(i, 1); continue }
+            if (this._multiSupported(M)) { for (const q of M.parts.slice().sort((a, b) => a.z - b.z)) if (!q.dead && !q.asleep) this._gridSleep(q) } // z 小(靠前)的先写格子:重叠处留前面那块的像素(轮子在车身前)
+            else if (M.parts.every((q) => q.dead || q.asleep || (q.wetF || 0) > 0.3)) { for (const q of M.parts) if (!q.dead && !q.asleep) this._floatSleep(q) } // 整具尸体漂在水里:planck 里睡,不写格子
+            else { restList.splice(i, 1); continue }
             restList = restList.filter((q) => !M.parts.includes(q)); n++
             i = restList.length // 数组换了,从尾重来
             continue
           }
           if (b.supported(this._solidB)) { this._gridSleep(b); restList.splice(i, 1); n++ }
+          else if (b.wetF > 0.5) { this._floatSleep(b); restList.splice(i, 1); n++ }
         }
         if (!n) break
       }
@@ -833,6 +844,13 @@ export class Entities {
     return false
   }
   /** 写进格子睡觉(+ 材质 solid_on_sleep_convert:concrete_collapsed → concrete_static,睡着就化成静态混凝土,刚体撤掉) */
+  /** 浮睡:漂在液体里歇下的刚体在 planck 里睡(速度清零、不解算、不受力),像素不写格子(水还得从它旁边流);水位降到入睡时的 85% 以下 / 被撞 / 关节邻居醒 → 醒 */
+  _floatSleep(b) {
+    if (!b.pb) return
+    if (b.floatSleep == null) b.floatSleep = b.wetF // 已经浮睡的别每帧刷新,不然水慢慢退时基准跟着走,永远叫不醒
+    if (b.pb.isAwake()) b.pb.setAwake(false)
+    b.vx = b.vy = b.w = 0; b._sx = b._sy = b._sw = 0 // setAwake(false) 已把 planck 速度清零;_s* 跟上,下一帧 pushToPhysics 别又把它叫醒
+  }
   _gridSleep(b) {
     const sim = this.sim
     b.sleep(sim)
