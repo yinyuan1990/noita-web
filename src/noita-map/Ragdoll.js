@@ -3,8 +3,8 @@
 // LoadCachedRagdoll 对每一对图片找"两张都有像素"的格子(FindOverlap),每个重叠像素 = 一个 box2d 关节(pin);
 // 一具僵尸的骨架:上躯干~下躯干 / 上躯干~头 / 上躯干~左右臂 / 下躯干~左右腿~脚 / 臂~手 …… 各 1 个像素,所以是一整具连着倒下。
 // KillMe 里 NORMAL / BLOOD_SPRAY / FROZEN 都建关节(LoadRagdoll 第 7 个参数 = 1),只有 BLOOD_EXPLOSION 不建 → 块散开。
-// 这里:各部件是普通 RigidBody(材质 ragdoll_material),Ragdoll 持有关节表,每帧在所有部件 step 之后做几轮顺序冲量(pin joint:
-// 消掉两锚点的相对速度 + 位置直接拉回),整组一起睡 / 一起醒;关节被拉开太多(爆炸 / 被砸)或锚点像素被打掉就断。
+// 这里:各部件是普通 RigidBody(材质 ragdoll_material)。有 Box2D(planck)时部件挂成多体组(Entities._buildRagdoll:每个重叠像素一个 revolute,
+// 刚度 2 / 0.05 当电机刹车,断裂 max(200,(mA+mB)×400)),本类只留血喷 / 烧尸的记账(g.planck);没 planck 时才用下面的手写 pin joint 顺序冲量求解。
 
 export class Ragdoll {
   /**

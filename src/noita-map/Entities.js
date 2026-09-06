@@ -508,6 +508,8 @@ export class Entities {
           if (J.breakDist > 0 && PH.jointGap(J.j) > J.breakDist) broken = true
           if (J.breakN > 0 && PH.jointForce(J.j) > J.breakN) broken = true
           if (J.breakOnModified && (J.A.alive !== J.aliveA || (J.B && J.B.alive !== J.aliveB))) broken = true
+          // 尸体关节钉在像素上:两边的锚点像素被打掉 / 烧掉就断
+          if (J.anchorPix && (J.A.alive !== J.aliveA || J.B.alive !== J.aliveB)) { const p = J.anchorPix; if (!J.A.hasPixelNear(p[0], p[1]) || !J.B.hasPixelNear(p[2], p[3])) broken = true; else { J.aliveA = J.A.alive; J.aliveB = J.B.alive } }
         }
         if (broken) { if (!dead) PH.destroyJoint(J.j); M.joints.splice(k, 1) }
       }
@@ -667,7 +669,7 @@ export class Entities {
       }
       if (b.frozen) { b.frozen = false; PH.setFrozen(b, false) }
       // Box2D(planck):形状图刚体 / 物品 / 崩塌块挂到 planck 上;钉的 / 挂链的 / 布娃娃部件还走手写求解器(关节在第 ④ 步)
-      if (PH && !b.pb && !b.nailed && !b.ropes && !b.isRagdoll && !b.group) { PH.attach(b); if (b.asleep) PH.setGridSleep(b, true) }
+      if (PH && !b.pb && !b.nailed && !b.ropes && !b.group) { PH.attach(b); if (b.asleep) PH.setGridSleep(b, true) } // group = 手写求解器的布娃娃组(没 planck 时才有)
       // 像素被挖光(睡着时格子被爆炸 / 挖掘拿掉,醒来 wake() 发现全没了)的刚体:什么都不剩还挂着光和碰撞 —— 用户看到的"灯笼打掉后浮空",是一盏没有壳只剩光的空刚体在飘
       if (b.alive <= 0 || (b.destroyed > 0.6 && !b.isItem)) { this._destroyBody(b, b.x, b.y); continue }
       // 物品(金块):LifetimeComponent 到点消失;auto_pickup 碰到玩家就捡
@@ -851,26 +853,33 @@ export class Entities {
         }
       }
       if (!g.anyAwake) continue
-      g.solve(3)
-      // 血喷(KillMe BLOOD_SPRAY 分支给每块挂 ParticleEmitter:沿伤害方向 ×(0.85~1.15),每 1~2 帧 1~3 粒,总量 ∝ 块的质量)
-      if (g.blood && g.blood.left > 0) {
-        const B = g.blood, P = [0, 0]
-        for (const p of g.parts) {
-          if (p.dead || p.asleep || Math.random() > 0.6 || B.left <= 0) continue
-          const n = 1 + ((Math.random() * 3) | 0)
-          for (let k = 0; k < n && B.left > 0; k++) {
-            p.worldOf((Math.random() * p.n) | 0, P)
-            const sp = 30 + Math.random() * 60, jx = 0.85 + Math.random() * 0.3, jy = 0.85 + Math.random() * 0.3
-            this.hooks.debris?.(P[0], P[1], B.dx * jx * sp + (Math.random() - 0.5) * 20, B.dy * jy * sp - 10 + (Math.random() - 0.5) * 20, B.mat, this.mats.color[B.mat], true)
-            B.left--
-          }
-        }
+      if (g.planck) {
+        // Box2D 版:关节 / 睡醒 / 支撑都在多体路径里(_updateBodies / _updateMultis),这里只剩血喷
+        if (g.blood && g.blood.left > 0) this._ragdollBlood(g)
+        continue
       }
+      g.solve(3)
+      if (g.blood && g.blood.left > 0) this._ragdollBlood(g)
       // 着地的尸体:关节每帧在块之间倒来倒去的动量会让整具慢慢蠕动 / 小块来回摆,按地面摩擦一起耗掉(box2d 里是接触摩擦 + 关节摩擦干的活)
       const sup = g.supported(this._solidB)
       if (sup) for (const p of g.parts) if (!p.dead && !p.asleep && g.connected(p)) { p.vx *= 0.9; p.w *= p.n < 12 ? 0.5 : 0.8 }
       // 整组入睡:相连的块半秒内都没挪窝 + 任一块有支撑;睡了以后关节不再解,像素进世界(meat)
       if (g.resting(dt) && sup) g.sleepAll(sim)
+    }
+  }
+
+  /** 血喷(KillMe BLOOD_SPRAY 分支给每块挂 ParticleEmitter:沿伤害方向 ×(0.85~1.15),每 1~2 帧 1~3 粒,总量 ∝ 块的质量) */
+  _ragdollBlood(g) {
+    const B = g.blood, P = [0, 0]
+    for (const p of g.parts) {
+      if (p.dead || p.asleep || Math.random() > 0.6 || B.left <= 0) continue
+      const n = 1 + ((Math.random() * 3) | 0)
+      for (let k = 0; k < n && B.left > 0; k++) {
+        p.worldOf((Math.random() * p.n) | 0, P)
+        const sp = 30 + Math.random() * 60, jx = 0.85 + Math.random() * 0.3, jy = 0.85 + Math.random() * 0.3
+        this.hooks.debris?.(P[0], P[1], B.dx * jx * sp + (Math.random() - 0.5) * 20, B.dy * jy * sp - 10 + (Math.random() - 0.5) * 20, B.mat, this.mats.color[B.mat], true)
+        B.left--
+      }
     }
   }
 
@@ -958,7 +967,7 @@ export class Entities {
     if (b.asleep) b.wake(sim) // 先把世界里的像素收回
     if (b.pb) this.physics.detach(b)
     // 多体的根死了(蘑菇炸了):整组撤掉(kill_entity_if_body_destroyed);部件死了根还在(轮子被打飞)→ 别的照旧
-    if (b.multi && b.multi.root === b) for (const q of b.multi.parts) if (q !== b && !q.dead) { if (q.asleep) q.wake(sim); q.dead = true }
+    if (b.multi && b.multi.root === b && !b.multi.isRagdoll) for (const q of b.multi.parts) if (q !== b && !q.dead) { if (q.asleep) q.wake(sim); q.dead = true }
     const d = b.d
     // 装的液体全洒出来(油桶 300 油 / 药水)
     if (b.inventory) for (const slot of b.inventory) {
@@ -2260,10 +2269,35 @@ export class Entities {
     const buried = () => { for (const b of live) for (let k = 0; k < b.n; k++) { b.worldOf(k, P); if (this._solidB(Math.floor(P[0]), Math.floor(P[1]))) return true } return false }
     for (let k = 0; k < 8 && buried(); k++) for (const b of live) b.y -= 1
     for (const b of live) b.softPush = true // 还埋着的也只轻轻顶(≤ 3px / 帧),别把关节撕了
-    if (explode) for (const b of live) { const dx = b.x - cx, dy = b.y - cy, dl = Math.hypot(dx, dy) || 1; b.vx += (dx / dl) * (30 + Math.random() * 50); b.vy += (dy / dl) * (30 + Math.random() * 50) - 20; b.w = (Math.random() - 0.5) * 1.0 }
+    const PH = this.physics
+    // BLOOD_EXPLOSION 散开:原版靠 box2d 块互撞;手写求解器不互撞才补的离心初速,planck 上不用
+    if (explode && !PH) for (const b of live) { const dx = b.x - cx, dy = b.y - cy, dl = Math.hypot(dx, dy) || 1; b.vx += (dx / dl) * (30 + Math.random() * 50); b.vy += (dy / dl) * (30 + Math.random() * 50) - 20 }
+    if (explode) for (const b of live) b.w = (Math.random() - 0.5) * 1.0 // RAGDOLL_FX_EXPLOSION_ROTATION 0.5
     if (D.ragdollify_root_angular_damping > 0) live[0].angDamp = D.ragdollify_root_angular_damping
     const g = new Ragdoll(live, joints)
     g.fx = r.fx
+    if (PH) {
+      // Box2D 版(第 29 条 ⑥):部件挂成多体组,每个重叠像素一个 revolute(LoadRagdoll 0x76ad40);刚度 = 每具掷 rand<0.75 → VERY_STIFF 2 否则 0.05,当电机刹车(× 关节力基准);
+      // 断裂 max(200, (mA+mB)×400)(0x76ac8d);锚点像素被打掉也断;BLOOD_EXPLOSION 不建关节、部件互撞散开(不设碰撞组)
+      for (const p of live) p.group = null // 不走手写求解器的 group 路径
+      if (this._multiSeq === undefined) this._multiSeq = 1
+      const M = { parts: live, joints: [], name: 'ragdoll', age: 0, group: explode ? 0 : -(++this._multiSeq), root: live[0], isRagdoll: true }
+      const stiff = Math.random() < 0.75 ? 2 : 0.05
+      for (const b of live) { b.multi = M; b.filterGroup = M.group; PH.attach(b) }
+      if (!explode) {
+        for (const j of joints) {
+          const A = live[j.a], B = live[j.b]
+          const ax = A.x + j.ax, ay = A.y + j.ay // 出生时 rot=0,局部锚点直接加
+          // 刹车扭矩按两端较轻那块算(× 关节力基准的口径 160):躯干 10 kg 对 3 像素的手 0.5 kg,按质量和算的刹车会把手甩成螺旋桨
+          const mAB = A.pb.getMass() + B.pb.getMass(), mMin = Math.min(A.pb.getMass(), B.pb.getMass())
+          const pj = PH.revolute(A, B, ax, ay, { motorTorque: stiff * mMin / Math.max(1e-6, mAB) }) // revolute 内部再 × (mA+mB)×160 → 实际 = stiff × mMin × 160
+          if (!pj) continue
+          M.joints.push({ j: pj, A, B, breakDist: 16, breakN: Math.max(200, mAB * 400), anchorPix: [j.ax, j.ay, j.bx, j.by], aliveA: A.alive, aliveB: B.alive })
+        }
+      }
+      g.planck = true; g.multi = M
+      ;(this.multis ||= []).push(M)
+    }
     if (r.burn) g.burn = 3
     if (r.fx === 'BLOOD_SPRAY' || explode) {
       const sm = this.mats.byName.get(D.blood_spray_material || D.blood_material || '')
@@ -2305,6 +2339,7 @@ export class Entities {
     const g = new Ragdoll([b], [])
     g.fx = r.fx
     if (r.burn) g.burn = 3
+    if (this.physics) { b.group = null; g.planck = true } // 单块:普通 planck 刚体(下一帧 _updateBodies 挂上)
     this.ragdolls.push(g)
   }
 
