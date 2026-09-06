@@ -2020,7 +2020,8 @@ function render() {
 const SIM_MARGIN = 512
 function simWindow() {
   const mx = Math.min(SIM_MARGIN, Math.floor((1530 - VW) / 2)), my = Math.min(SIM_MARGIN, Math.floor((1530 - VH) / 2))
-  return { x0: cam.x - VW / 2 - mx, y0: cam.y - VH / 2 - my, x1: cam.x + VW / 2 + mx, y1: cam.y + VH / 2 + my }
+  // 顺带带上视口(相机范围):实体层的 is_in_camera_bounds(蘑菇的摆动只在相机 ±50 内做)用
+  return { x0: cam.x - VW / 2 - mx, y0: cam.y - VH / 2 - my, x1: cam.x + VW / 2 + mx, y1: cam.y + VH / 2 + my, cx0: cam.x - VW / 2, cy0: cam.y - VH / 2, cx1: cam.x + VW / 2, cy1: cam.y + VH / 2 }
 }
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now
