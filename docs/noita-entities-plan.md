@@ -718,6 +718,42 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       soil → 第二带在 90px 内线性过渡(真值 24~48px 一半一半);山桩 sand 里 rock_static 的概率按**世界 y**爬升 P=(y−140)/330 封顶 0.8(真值左桩 y<160 0% → 320 42% → 448 83%,右桩早 80px、封顶 70%),
       山体 rock_hard 里 rock_static P=0.35+y/900;颗粒 = 20px simplex 斑块 + 2px 细麻点。右桩 sand 48.7/rock 39.6 vs 真值 47.2/35.9、段长 22.6/20 vs 18.9/21.2;左桩 rock 40 vs 27(两桩剖面本就不同,取了折中)。之前是 soil<52px / sand<325px 的硬阈值,山桩整片沙。
       ④ 丘陵 wood_loose 树 vs 真值空气:原版树是 PixelSprite 实体不在材质层里,对照不了。
+29. **接 Box2D(用户 09-05:"矿车轮子 / 多体机械 / 刚体互撞堆叠确实要做,看到底能复刻到什么程度;对接前先反,再定计划,看 web 选哪个 box2d")—— 先反 + 选型 + 计划,还没动代码**:
+    - **原版怎么用 Box2D(反 `noita_dev.exe` + 组件文档 + xml 统计)**:
+      · 内嵌 **Box2D 2.3.0**(源码路径 `Source/external/box2d_2.3.0`),跑在独立线程(`GridWorld::UpdateBox2D` 0x763280 固定 dt = 1/60;`BOX2D_THREAD_MAX_WAIT_IN_MS` / `BOX2D_FREEZE_STUCK_BODIES` 两个 magic number 名字)。
+      · **单位:1 Box2D 米 = 6 游戏像素**。`PhysicsPosToGamePos`(0x83e040 → 0x752c30)= `phys × scale + offset`,scale 全局 0x132aad8 由 0x405c50 静态初始化 = (6.0, 6.0) double,offset = 512 × 0.5 = 256;`PhysicsVecToGameVec`(0x83e710)只乘 6。所以 xml 里 `PhysicsThrowable max_throw_speed 180` 是 px/s,进 Box2D 要 ÷6;`b2_force_on_leak` 之类是 Box2D 单位。
+      · **地形 → 碰撞体**:`Box2DTerrain::ParseIntoPolygons_Threaded`(box2d_terrain.cpp 0x884ce0,`box2d_terrain_array.h` 每个 gridworld 点一张 `mArray2D`)在线程里用 `marching_squares_with_holes.h` 描轮廓 + `TriangulatePixels`(triangulate_pixels_impl.h)三角化;
+        只在 `GridWorld::Box2D_SetUpdateRect`(0x76f950)定的更新区里做,里面两个阈值 **350² / 750²**(距离平方,px)—— 近圈全更新、远圈只维持。刚体像素与格子靠 `PhysicsBridge`(`mCellPhysicsLink.GetB2Body()`)双向连接;`csolidcell.cpp` 里 solid 格必须挂 b2Body(断言 "Sole solid cells shouldn't be created")。
+      · **组件**(component_documentation.txt 1849~2088,已全文核对):`PhysicsBodyComponent`(老式,uid 分体;linear/angular_damping、allow_sleep、fixed_rotation、is_bullet、is_static/kinematic、**buoyancy 0.7**、go_through_sand、auto_clean(埋沙里被清掉,矿车轮子要关)、
+        on_death_leave_physics_body、update_entity_transform=0 给非主体、hax_fix_going_through_ground)· `PhysicsBody2Component`(新式,mPixelCountOrig / mPixelCount 记原始与当前像素数 → ExplodeOnDamage 的 destruction_required 就是 1 − cur/orig)·
+        `PhysicsImageShapeComponent`(image_file + material + body_id / is_root / is_circle / centered / offset)· `PhysicsShapeComponent`(无图:box / circle / capsule,friction 0.75 / restitution 0.1 / density 0.75)·
+        `PhysicsJointComponent`(老式:默认 revolute,body1_id/body2_id + pos_x/pos_y 锚,`nail_to_wall` = 和 ground body 连,`grid_joint`,`breakable`,`mMotorEnabled/mMotorSpeed/mMaxMotorTorque`)·
+        `PhysicsJoint2Component`(新式:type REVOLUTE / WELD / *_ATTACH_TO_NEARBY_SURFACE(沿 ray_x/ray_y 默认 (0,−10) 找地面钉到 ground body,surface_attachment_offset_y 2.5),break_force 1.3 / break_distance 1.4142 / break_on_body_modified / break_on_shear_angle_deg)+ `PhysicsJoint2MutatorComponent`(motor_speed / motor_max_torque,destroy)·
+        `PhysicsThrowableComponent`(throw_force_coeff 1 / max_throw_speed 180 / torque 0.5~8 / attach_min_speed 70 / knife_style)· `PhysicsBodyCollisionDamage`(speed_threshold 60 / damage_multiplier 1/60)· `PhysicsAIComponent`(force_coeff 30 / torque_coeff 50 / force_max 100 / levitate,无人机 / 水晶 / 石像)·
+        `PhysicsKeepInWorld` · `PhysicsPickUp`(两个 weld joint 抓东西)· `PhysicsRagdollComponent`(0 处使用,尸体走 LoadRagdoll 引擎路径,见第 19 条)。
+      · **材质表给 Box2D 的字段**(materials.xml 出现次数):`density` 232 · `platform_type` 106 · `solid_friction` 96 · `solid_static_type` 51 · `solid_break_to_type` 38 · `solid_on_collision_material` 32 · `solid_collide_with_self` 25 · `solid_restitution` 20 · `solid_gravity_scale` 11 ·
+        `solid_on_sleep_convert` 10 · `solid_on_collision_splash_power` 9 · `solid_on_collision_explode` 6 · `solid_break_on_explosion_rate` 6 · `solid_go_through_sand` 5 · `solid_on_break_explode` / `solid_on_collision_convert` 1。magic_numbers:`PHYSICS_JOINT_MAX_FORCE_MULTIPLIER 160`、`PHYSICS_RAGDOLL_VERY_STIFF_JOINT_STIFFNESS 2`、
+        `PHYSICS_FLOATER_FORCE_COEFF 15 / FORCE_VEC_MAX 5 / TORQUE_COEFF 50 / FORCE_BALANCING 2.3 / TORQUE_BALANCING 0.2`(PhysicsAI 浮空体)、`RAGDOLL_OWN_VELOCITY_IMPULSE_MULTIPLIER 3`。
+      · **实体侧用量**(3030 个 xml):PhysicsBody 174 / PhysicsBody2 96 / PhysicsImageShape 359 / PhysicsShape 24 / PhysicsJoint 22 / PhysicsJoint2 31 / Joint2Mutator 14 / Throwable 54 / PhysicsAI 45 / CollisionDamage 42 / **VerletPhysics 111**(链、触手、藤、电线,是另一套 verlet,不进 Box2D,只靠 VERLET_ROPE_ONE/TWO_JOINTS 挂到刚体上)。
+        关节类型:REVOLUTE 93 · REVOLUTE_ATTACH_TO_NEARBY_SURFACE 19 · WELD 26 · WELD_ATTACH 3 · VERLET_ROPE_ONE/TWO 15/14。**多体实体 39 个**:矿车 / 木车 / 滑板(车身 + 两轮 revolute,`physics_minecart.xml` 轮 `is_circle` + `auto_clean=0` + `update_entity_transform=0`)、
+        wheel_stand ×3、physics_fungus ×11(帽 + 4 节茎 + 脚,5 个 revolute break_force 10 / break_distance 5 + 脚 ATTACH_TO_NEARBY_SURFACE break 35/8,Mutator 电机 0 / 扭矩 10 = 只当阻尼)、家具 bunk / cryopod / locker / table、tubelamp、templedoor2(齿轮 + 齿条)、
+        excavationsite_machine_3b/3c、chain_torch、banner、grass_01/02、boss_centipede body_chunks、goldnugget_x、bomb_cart。
+      · **还没反、动手时补**:b2World 重力值与 Step 的 velocity/position 迭代数(b2World 构造在 gridworld_thread_impl.cpp 附近,字符串定位不到,可用真机录像量落体加速度兜底);像素盖章顺序(推测每帧 擦 → Step → 按新 xform 重写);Box2DTerrain 单块尺寸;`solid_break_on_explosion_rate` 语义。
+    - **Web 选型 → planck.js 1.5.0**(2026-04,MIT,5.2k★,活跃):理由 ① 它是 **Box2D 2.3 的 JS 重写**,和原版内嵌的 2.3.0 同源 —— friction / restitution / damping / joint 类型与电机 / `getReactionForce`(break_force)/ bullet / sleep 语义一一对应,xml 参数直接抄;
+      ② 纯 JS 可读可改 —— 我们一定要动内部(自定义 contact filter 做 go_through_sand / 与人不碰、fixture userData 挂像素、睡眠阈值),wasm 库改不了;③ 我们同屏醒着的刚体几十个、地形边几百条,JS 足够(<1ms),不需要 wasm 的量级;
+      ④ 主线程跑(必须和 CellSim 同线程盖章),iOS 无 wasm 内存问题;Canvas2D debug draw 几行。**不选**:box2d-wasm(2.4,行为略变、emscripten 手动释放对象,改不了内部)、Rapier(不是 Box2D,求解器不同,原版常数对不上,优点确定性我们不需要)、box2d3-wasm(v3 软步进求解器,行为和 2.3 差更多)、matter.js(堆叠差)。
+    - **计划(每步单独上线 + 探针 `_noita-box2d-shot.mjs`)**:
+      ① `Physics.js`:planck World 封装,6px = 1m,dt 1/60,子步与 CellSim 同帧;地形 → 静态碰撞:按 32×32 格子块做 marching squares(带洞)+ Douglas-Peucker → **chain/edge 形状**(地形不需要三角化),只在有醒着刚体的 ±350px 内生成、格子变了标脏重建、750px 外释放;`_solidB`(platform_type 不管刚体)当实心。
+      ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
+      ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
+        **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
+      ④ 关节:PhysicsJoint(revolute 默认;nail_to_wall → 与 ground body 在世界锚点;grid_joint;电机)+ PhysicsJoint2(REVOLUTE / WELD;ATTACH_TO_NEARBY_SURFACE 沿 ray 找实心格钉 ground;break_force × PHYSICS_JOINT_MAX_FORCE_MULTIPLIER 160 对 getReactionForce;break_distance;break_on_body_modified;Mutator 电机)。
+        先做:矿车 / 木车 / 滑板轮子 → wheel_stand → physics_fungus 链 → 家具 / tubelamp → templedoor2 / 挖掘场机械。现有 `RigidBody.ropes` 的绳约束保留给 verlet 类(吊链)。
+      ⑤ 互动搬到 Box2D:爆炸 → applyLinearImpulse(现有 physics_explosion_power 公式 ÷6)、弹丸命中 → dir×5(已反)、玩家推 / 踢 → 冲量、`PhysicsBodyCollisionDamage` 用 postSolve 的法向冲量 / 质量 ÷ dt 当速度对 speed_threshold、
+        浮力 = buoyancy 0.7 × 淹没像素数(按材质密度差)、go_through_sand 用 contact filter、`solid_on_collision_explode / splash / convert`、`solid_break_to_type`(碎成小块)、auto_clean(埋沙 3s 撤掉)。刚体互撞 / 堆叠 / 金块堆由 Box2D 自带。
+      ⑥ 收尾:PhysicsThrowable(药水扔 / 刀插墙)、PhysicsAI 浮空体(无人机 / 水晶按 force_coeff / torque_coeff 施力,替掉现在的飞行模型)、第 19 条的 `Ragdoll.js` 换成 revolute 关节 + 刚度 / 断裂(0.75 掷 2 或 0.05 刚度、break 200~400×)、
+        黑洞 / 崩塌块 `LooseGround` 走同一套。手写的 `RigidBody.js` 求解器在 ⑤ 之后退役,保留像素 / 盖章 / audit 部分。
+      预算:iPhone 物理 ≤0.5ms/帧(醒着 ≤60 体)、地形块重建节流每帧 ≤2 块;探针:10 箱堆叠 3s 稳、矿车推着走轮子转、蘑菇被打断裂倒、炸药箱连锁把箱子炸飞后互相弹开、睡着写回格子 / 挖脚下再醒、崩塌块与旧探针(`_noita-body-shot` / `_noita-ragdoll-shot`)不回归。
 
 ## 2.5 接手指南(新会话从这里开始)
 
@@ -725,6 +761,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 本机 `git config http.proxy socks5h://127.0.0.1:2801`(用户的本地代理是 SOCKS5,走 http:// 会超时)。`noita-ref/`(原版解包数据 + 存档真值)不在仓库里,只在本机 `e:\soft\xiaoshuodongtai\web\noita-ref`。
 **当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
+**下一件:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条,还没动代码;先从 ① `Physics.js` + 地形碰撞 开始。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。
