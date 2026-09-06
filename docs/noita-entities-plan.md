@@ -676,6 +676,8 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     所以钻头是挖一条 1px 隧道:岩石(hp 1e5)一格掉 1.5~3% 速度,一发钻 ~29px;神殿砖(hp 1e6,耐久 14 刚好 ≤14)一格掉 15%,一发 3~4 格;长枪(coeff 6 / 400px/s / mass 0.65)扎岩石 2~3 格就停。
     顺带两处:① 穿地弹子步改 1px(2px 步会隔格挖);② `terminal_velocity` 夹速(0xd67cf7,`|v| > t → v̂·t`)在**位置积分之后**,1400 的初速第一帧仍跑满 23px,第二帧才夹到 1000 —— 之前先夹后走少跑一帧。
     探针 `_noita-drill-shot.mjs`:岩墙 depth 29 / 神殿砖 4 / 长枪 3 / 连发 12 发穿 47px。
+    **楔形隧道**(用户截图:连发挖出靠人这头宽、光标那头尖的黑楔子):gun.lua → `GameShootProjectile(shooter, x, y, target_x, target_y)`,x,y 是杖的 shoot_pos 热点、target 是光标 →
+    每发方向 = **杖尖→光标**,所有弹汇聚在光标那一点,杖尖随手臂 / 走路晃就在近端散开。我们 `fire()` 之前用"身体中心→光标"算角度、只是从杖尖出生 → 平行的 1~2px 细线;改成杖尖→光标(光标贴着杖尖 4px 内退回身体算)。
 25. **手机背包滑不动(用户 09-05)**:`#editor` 只拦了 touchstart 的冒泡,touchmove 还是冒到 window 那个 `preventDefault` 的处理器 → 浏览器不滚。
     `#editor` 再拦 touchmove / touchend(passive)+ CSS `touch-action: pan-y`。CDP 真实触摸拖 180px:旧版 scrollTop 0 → 新版 165。
 26. **矿洞"大蜘蛛"= Äitinuljaska(`animals/giantshooter_weak`,用户 09-05:"第一关 boss…我看有个大蜘蛛")**:矿洞 g_big_enemies 8% / g_unique_enemy 10%,不是 boss 但是矿洞最大的怪。

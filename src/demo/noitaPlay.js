@@ -989,11 +989,14 @@ function renderSlots() {
 let wandTip = { x: 0, y: 0 }
 function fire() {
   const w = curWand()
-  const a = Math.atan2(player.aimY - (player.y - 2), player.aimX - player.x)
+  // gun.lua → GameShootProjectile(shooter, x, y, target_x, target_y):x,y 是杖的 shoot_pos 热点、target 是光标 → 方向 = 杖尖→光标,
+  // 所有弹都汇聚在光标那一点(杖尖随走路 / 手臂晃 → 光明穿凿连发挖出靠人这头宽、光标那头尖的楔形)。药水扔出去还是从身体算
+  const ab = Math.atan2(player.aimY - (player.y - 2), player.aimX - player.x)
+  const a = Math.hypot(player.aimX - wandTip.x, player.aimY - wandTip.y) > 4 ? Math.atan2(player.aimY - wandTip.y, player.aimX - wandTip.x) : ab
   if (w.potion) {
     // PhysicsThrowable:max_throw_speed 180,朝瞄准方向扔出去
     const sp = 180
-    entities.throwItem('potion', player.x + Math.cos(a) * 6, player.y - 4 + Math.sin(a) * 6, Math.cos(a) * sp + player.vx * 0.3, Math.sin(a) * sp - 20, { potion: w.potion })
+    entities.throwItem('potion', player.x + Math.cos(ab) * 6, player.y - 4 + Math.sin(ab) * 6, Math.cos(ab) * sp + player.vx * 0.3, Math.sin(ab) * sp - 20, { potion: w.potion })
     player.items.splice(player.items.indexOf(w), 1)
     payload = Math.min(payload, slots().length - 1)
     player.fireCd = 0.4
