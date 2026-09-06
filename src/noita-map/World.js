@@ -279,7 +279,7 @@ export class NoitaWorld {
       const sx = sc.x + WORLD_CENTER_CHUNK_X * CHUNK, sy = sc.y + WORLD_CENTER_CHUNK_Y * CHUNK
       if (sx >= ax0 + CHUNK || sy >= ay0 + CHUNK || sx + s.w <= ax0 || sy + s.h <= ay0) return
       // LoadBackgroundSprite 只画在背景层,不进材质
-      if (!sc.bgSprite) this._stampScene(mat, s, sc, sx - ax0, sy - ay0, wx0, wy0)
+      if (!sc.bgSprite) this._stampScene(mat, s, sc, sx - ax0, sy - ay0, wx0, wy0, biome)
       out.scenes.push({ ...sc, ax: sx, ay: sy, w: s.w, h: s.h })
     }
     for (const sc of this.staticScenesNear(cx, cy)) stamp(sc)
@@ -648,11 +648,13 @@ export class NoitaWorld {
     }
   }
 
-  _stampScene(mat, s, sc, ox, oy, wx0, wy0) {
+  _stampScene(mat, s, sc, ox, oy, wx0, wy0, chunkBiome = null) {
     const d = s.mat.data, W = s.w, H = s.h
     const mats = this.mats
     const cm = sc.colorMaterial
-    const bandBiome = sc.biome && this.bands.config(sc.biome) ? sc.biome : 'coalmine'
+    // 图里的白 / 亮灰 = "这里填群系材质":材质按**这一格所在 chunk 的群系**取(真值 chunk(0,0):山体大图伸进煤矿的那一角是煤矿的 sand/rock_wet,不是山的 rock_hard),
+    // 该群系没有 MaterialComponent 表(纯布景群系)才退回布景自己的群系 / 煤矿
+    const bandBiome = chunkBiome && this.bands.xml(chunkBiome) ? chunkBiome : sc.biome && (this.bands.xml(sc.biome) || this.bands.config(sc.biome)) ? sc.biome : 'coalmine'
     const x0 = Math.max(0, -ox), y0 = Math.max(0, -oy)
     const x1 = Math.min(W, CHUNK - ox), y1 = Math.min(H, CHUNK - oy)
     for (let y = y0; y < y1; y++) {
