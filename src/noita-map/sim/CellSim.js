@@ -19,6 +19,7 @@ const N = CHUNK * CHUNK
 // 写格子 / 交换 / 点燃 / 障碍盒移动都会把所在块(贴边时连邻块)标脏 WAKE 帧;块里这一帧有东西动了就续命,没动就倒计时到睡
 const BS = 32, BSH = 5, BN = CHUNK >> BSH, NB = BN * BN
 const WAKE = 3
+const SIM_BLOCK_BUDGET = 160 // 活跃块超过这个数就对外围块隔帧步进(见 step)
 
 export class CellSim {
   /**
@@ -234,6 +235,11 @@ export class CellSim {
     const dirR = this.frame & 1 // 交替扫描方向,消除横向偏置
     const K = this.kind
     let moved = 0, active = 0
+    // 过载 LOD:上一帧活跃块超过 SIM_BLOCK_BUDGET(连开陨石一屏 300 个火坑块、6 万格在动,手机上模拟 60~100ms)时,窗口中央一半之外的块隔帧步进 ——
+    // 远处坑里的火慢一倍看不出来;正常一屏 80~150 块不触发。跳过的块 ttl 不减(别把它们提前睡掉)
+    // 再翻一倍(> 2×预算,陨石坑都在窗口中央时外围 LOD 帮不上)就所有块都隔帧:整体半速换一半开销,总比手机上 5fps 强
+    const lod = this.activeBlocks > SIM_BLOCK_BUDGET, lodAll = this.activeBlocks > SIM_BLOCK_BUDGET * 2
+    const cxm = (this.wx0 + this.wx1) >> 1, cym = (this.wy0 + this.wy1) >> 1, lodX = (this.wx1 - this.wx0) >> 2, lodY = (this.wy1 - this.wy0) >> 2
     for (let j = this.ch - 1; j >= 0; j--) {
       for (let by = BN - 1; by >= 0; by--) {
         for (let i = 0; i < this.cw; i++) {
@@ -245,10 +251,11 @@ export class CellSim {
             const ttl = e.act[b]
             if (!ttl) continue
             active++
-            e.act[b] = ttl - 1 // 这一帧里有格子动了会被 mark() 重新续成 WAKE
             const x0 = Math.max(this.wx0, ax0 + bx * BS), x1 = Math.min(this.wx1, ax0 + bx * BS + BS - 1)
             const y0 = Math.max(this.wy0, ay0 + by * BS), y1 = Math.min(this.wy1, ay0 + by * BS + BS - 1)
             if (x0 > x1 || y0 > y1) continue
+            if (lod && ((bx + by + this.frame) & 1) && (lodAll || Math.abs(((x0 + x1) >> 1) - cxm) > lodX || Math.abs(((y0 + y1) >> 1) - cym) > lodY)) continue
+            e.act[b] = ttl - 1 // 这一帧里有格子动了会被 mark() 重新续成 WAKE
             for (let wy = y1; wy >= y0; wy--) {
               const row = (wy & 511) * CHUNK
               for (let k = 0; k <= x1 - x0; k++) {

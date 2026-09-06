@@ -17,6 +17,7 @@ const TERRAIN_NEAR = 24         // 醒着的刚体包围盒外扩多少 px 就�
 const TILE_TTL = 120            // 块 N 帧没被任何刚体用到就释放
 const MAX_BUILD_PER_FRAME = 2   // 每帧最多重建几块(单块 34×34 采样 + 描边 + 三角化 ≈ 0.45ms;真菌洞落沙不停,不限的话地形重建就 2.7ms/帧)
 const MIN_REBUILD_GAP = 6       // 同一块两次重建至少隔几帧(落沙区每帧都在变;歇着的刚体不在乎 100ms 的滞后,掉下来的最多陷进新沙 1~2px)
+const CATCHUP_SKIP_MS = 6         // 上一帧物理超过这个毫秒数就不补步(见 step)
 const TOI_OFF_CONTACTS = 200, TOI_OFF_AWAKE = 40 // 醒着的刚体 > 40 且接触 > 200 就关连续碰撞(见 step);正常一屏醒着的个位数、接触一两百,十具尸体挤一坑 60~90 醒 / 500~800 对
 const CAT_RAGDOLL_TINY = 2, CAT_RAGDOLL_BIG = 4 // 碰撞类别位(默认 1):尸块碎渣 / 尸块大块,见 _makeFixtures
 const SIMPLIFY_EPS = 0.3        // Douglas-Peucker 容差(px):1:1 的 45° 台阶已经是直线;0.6 会把"平台上落了一粒土"拉成 1° 的斜线,整摞箱子跟着歪
@@ -74,9 +75,13 @@ export class Physics {
   static toM(px) { return px / PPM }
   static toPx(m) { return m * PPM }
 
-  /** 每帧调用:按固定 1/60 步进(dt 大于一帧就多步,最多 3 步,别在掉帧时越追越慢) */
+  /**
+   * 每帧调用:按固定 1/60 步进(dt 大于一帧就多步,最多 2 步)。上一帧物理本身就超过 CATCHUP_SKIP_MS 时不补步(1 步/帧,慢动作):
+   * 掉帧 → 补 3 步 → 物理 ×3 → 更掉帧,是个正反馈 —— 连开陨石时手机上"物理 80ms 然后像暂停了"就是这么滚起来的
+   */
   step(dt) {
-    this.acc = Math.min(this.acc + dt, FIXED_DT * 3)
+    const maxSteps = this.stats.ms > CATCHUP_SKIP_MS ? 1 : 2
+    this.acc = Math.min(this.acc + dt, FIXED_DT * maxSteps)
     const t0 = performance.now()
     let tT = 0, tS = 0, tY = 0
     while (this.acc >= FIXED_DT - 1e-9) {

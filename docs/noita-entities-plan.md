@@ -870,6 +870,10 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         Box2D 对每一对"动态 vs 静态"接触每步都算 TimeOfImpact 防穿地,和 bullet 无关 —— 这才是尖峰。试过:尸块关 bullet(没差别)、3px 碎渣不和尸块互撞(接触没少多少,留着)、
         碎渣做圆 fixture(窄相 / TOI 便宜但像弹珠滚个不停,3 秒还 80 块醒着,撤)。定稿:**醒着的刚体 > 40 且接触 > 200 时关连续碰撞**(`setContinuousPhysics`,面板显示 "TOI关"),散了再开 ——
         堆成一坑的都很慢,穿地风险本来就低,还有埋地上抬兜底;正常一屏醒着的个位数不会触发。首秒物理 1.7~3.1ms / 峰值 5~7 → 0.9~1.3 / ≤3.9(本机,手机 ×5~8)。
+        ✅(已上线)**连开陨石把手机打到"物理 80ms 像暂停了"**(用户 09-06;自由模式无限法力,陨石 r45 一秒 28 发,原版靠 mana 150 / max_uses 10 限着):探针 `_noita-meteor-shot`。
+        三个放大器:① 物理掉帧补 3 步 → 物理 ×3 → 更掉帧的正反馈 → 现在最多补 2 步,上一帧物理 > 6ms 就 1 步/帧(慢动作);② 每帧十几个 r45 爆炸(360 射线 × 45 步 + 8000 格坑 + 100% 生火)→
+        半径 ≥ 20 的爆炸每帧最多 2 个,多的排到下一帧(`_die` 排队,带着 looseGround / ragdollFx 上下文);③ 元胞模拟 300~450 个活跃块、每帧 6~10 万格在动(坑里全是火、煤层烧起来)→
+        CellSim 两级 LOD:活跃块 > 160 时窗口中央一半以外的块隔帧步进,> 320 时所有块棋盘隔帧(跳过的块 ttl 不减)。PC:模拟 21~27 → 11~15ms、最低 fps 20 → 30、物理中位 ≤2ms;手机仍会掉帧但不再滚雪球,停火几秒恢复。
         还差:Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、PhysicsBridge+0x48 帧戳门、沙阻力 / splash 那条、飞刀插墙。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);

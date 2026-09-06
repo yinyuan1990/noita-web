@@ -7,6 +7,7 @@
 import { EXTRA_BEHAVIOR } from './Wands.js'
 
 const K_STATIC = 1, K_SAND = 2, K_LIQUID = 3, K_GAS = 4, K_FIRE = 5
+const EXPLODE_BIG_PER_FRAME = 2 // 半径 ≥ 20 的爆炸每帧最多处理几个,多的排到下一帧(见 _die)
 const DX8 = [1, 1, 0, -1, -1, -1, 0, 1], DY8 = [0, 1, 1, 1, 0, -1, -1, -1]
 // 世界格坐标 → Map 键(坐标可负:各偏移 2^19,再拼成一个 ≤ 2^40 的整数,double 精确)
 const KOFF = 1 << 19, KMUL = 1 << 20
@@ -45,6 +46,7 @@ export class ProjectileSystem {
     for (const m of mats.list) this.conductive[m.id] = m.electricalConductivity ? 1 : 0
     this.warmTo = new Uint16Array(mats.list.length) // warmth_melts_to_material(水 → 蒸汽):电流加热用
     for (const m of mats.list) if (m.kind === 'liquid' && m.warmthMeltsToMaterial) this.warmTo[m.id] = mats.byName.get(m.warmthMeltsToMaterial) || 0
+    this._exQueue = []; this._exBig = 0 // 大爆炸限额(见 _die / _flushExplosions)
     this.bhParts = []         // 黑洞崩出来的飞行像素 {x,y,vx,vy,col,p}
     this.zaps = []            // {x,y,dx,dy,energy,speed,heat,owner}
     this.elec = new Map()     // key(x,y) → 熄灭时刻(秒,以 this.time 计);渲染成闪的亮蓝格,活物碰到就被电
@@ -129,6 +131,7 @@ export class ProjectileSystem {
     const sim = this.sim
     this.time += dt
     this.loops.clear()
+    this._flushExplosions()
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i]
       const d = p.d
@@ -848,10 +851,22 @@ export class ProjectileSystem {
     // explosion_tiny.lua(聚爆卡的附加实体):不管加减多少,半径直接设成 5
     if (p.beh?.explosionRadiusSet !== undefined && ex) ex = { ...ex, radius: p.beh.explosionRadiusSet }
     if (!ex || !(byHit ? d.deathExplode : d.lifetimeExplode) && !(p.exR > 0)) return
-    this._lg = d.looseGround || null
-    this._exFx = p.ragdollFx || p.d.ragdollFx || 0 // 火箭类 c.ragdoll_fx=2:被爆炸炸死的尸体 BLOOD_EXPLOSION 散块
-    this.explode(p.x, p.y, ex, Math.atan2(-p.vy, -p.vx))
+    // 大爆炸限额:半径 ≥ 20 的每帧最多 EXPLODE_BIG_PER_FRAME 个,多的排到下一帧 —— 自由模式无限法力连开陨石(r45,360 条射线 × 45 步 + 8000 格坑 + 100% 生火)一秒 28 发,
+    // 手机上一帧几十毫秒、物理再补 3 步就滚雪球到"暂停";延后一两帧看不出来
+    const lg = d.looseGround || null, exFx = p.ragdollFx || p.d.ragdollFx || 0 // 火箭类 c.ragdoll_fx=2:被爆炸炸死的尸体 BLOOD_EXPLOSION 散块
+    if (ex.radius >= 20 && this._exBig >= EXPLODE_BIG_PER_FRAME) { this._exQueue.push({ x: p.x, y: p.y, ex, back: Math.atan2(-p.vy, -p.vx), lg, exFx }); return }
+    this._runExplode(p.x, p.y, ex, Math.atan2(-p.vy, -p.vx), lg, exFx)
+  }
+  _runExplode(x, y, ex, back, lg, exFx) {
+    if (ex.radius >= 20) this._exBig++
+    this._lg = lg; this._exFx = exFx
+    this.explode(x, y, ex, back)
     this._lg = null; this._exFx = 0
+  }
+  /** 每帧开头:大爆炸限额归零,把上一帧排队的先放(仍受限额) */
+  _flushExplosions() {
+    this._exBig = 0
+    while (this._exQueue.length && this._exBig < EXPLODE_BIG_PER_FRAME) { const q = this._exQueue.shift(); this._runExplode(q.x, q.y, q.ex, q.back, q.lg, q.exFx) }
   }
 
   /**
