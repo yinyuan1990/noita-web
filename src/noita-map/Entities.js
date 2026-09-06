@@ -646,12 +646,10 @@ export class Entities {
    */
   _stepPhysBody(b, dt) {
     b.age += dt
-    // 浮力走 Box2D 的力(wake=false)+ 液体里加阻尼,不改 rb 速度 —— 之前每帧改 vy 再 pushToPhysics 会 setAwake(true),泡在水里的尸块 / 箱子永远睡不着
-    // (用户反馈:几具尸体挤在水坑里一直动、掉帧)
+    // 浮力照原版:只看刚体原点下方 8px 那一格是不是液体,是就施 −0.7×m×(v+g)(细节见 Physics.applyBuoyancy)—— 原版没有东西会浮,都是慢慢沉底;
+    // 走 Box2D 的力(wake=false)不改 rb 速度(改 vy 再 pushToPhysics 会 setAwake(true),泡水的永远睡不着)。wetF 只给下面的静止判定 / 浮睡用
     const wetF = b.wetF = b.wetFraction(this._liqDensity)
-    // 施力用平滑过的淹没比例:按边缘像素数的台阶式浮力在水面会来回跳(一个像素出水浮力少 1/N),一坑尸块互相顶着永远歇不下;低通一下起伏小得多
-    const wetS = b.wetS = b.wetS === undefined ? wetF : b.wetS + (wetF - b.wetS) * 0.25
-    this.physics.applyBuoyancy(b, wetS, wetS > 0 ? b.buoyFactor(this._liqDensity, b.density) : 0, BODY_GRAVITY)
+    this.physics.applyBuoyancy(b, this._liqDensity(Math.floor(b.x), Math.floor(b.y) + 8) > 0)
     b.floatSleep = false
     this.physics.pushToPhysics(b)
     // 自己的静止计时:附近滴水 / 落沙让地形块重建,planck 拆 fixture 时会把压着的刚体叫醒,永远攒不够它的 0.5s —— 速度 ≈0 且贴着东西 0.5s 就算歇下了(写格子后就不受重建影响)

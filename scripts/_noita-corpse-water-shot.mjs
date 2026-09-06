@@ -9,12 +9,30 @@ const PROP = process.argv[4] || ''
 const out = 'C:/Users/admin/AppData/Local/Temp'
 const browser = await chromium.launch({ channel: 'msedge', headless: true, args: process.env.ORIGIN_IP ? [`--host-resolver-rules=MAP update.cocoaihj.com ${process.env.ORIGIN_IP}`] : [] })
 const page = await browser.newPage({ viewport: { width: 854, height: 480 }, deviceScaleFactor: 2, ignoreHTTPSErrors: process.env.IGNORE_CERT === '1' })
-page.on('pageerror', (e) => console.log('PAGEERROR', e.message, e.stack))
-page.on('console', (m) => { if (m.text().startsWith('ERRSTACK')) console.log(m.text()) })
-await page.addInitScript(() => { window.addEventListener('error', (e) => console.log('ERRSTACK', e.message, e.filename, e.lineno, e.colno, e.error && e.error.stack)) })
+let sawError = false
+page.on('pageerror', (e) => { sawError = true; console.log('PAGEERROR', e.message, e.stack) })
+page.on('console', (m) => { if (m.text().startsWith('ERRSTACK') || m.type() === 'error') console.log('CONSOLE', m.type(), m.text(), JSON.stringify(m.location())) })
+await page.addInitScript(() => {
+  Error.stackTraceLimit = 60
+  window.addEventListener('error', (e) => console.log('ERRSTACK ' + e.message + ' ' + e.filename + ':' + e.lineno + ':' + e.colno + ' ' + (e.error && e.error.stack) + ' lastPolySet=' + JSON.stringify(window.__lastPolySet)))
+  // worker 里的未捕获异常不会冒到 window,包一层 Worker 把它们打出来
+  const W = window.Worker
+  window.Worker = class extends W { constructor(...a) { super(...a); this.addEventListener('error', (e) => console.log('ERRSTACK worker', e.message, e.filename, e.lineno, e.colno)) } }
+})
 await page.goto(url, { timeout: 120000, waitUntil: 'commit' })
 await page.waitForFunction(() => window.__np && window.__np.player.onGround && window.__np.physics, null, { timeout: 90000 })
 await page.waitForTimeout(800)
+// 给 planck Polygon._set 打补丁记录最后一次输入:它继承的 Box2D 2.3 礼物包装凸包遇到退化顶点会死循环 → RangeError: Invalid array length,出错时把顶点打出来
+await page.evaluate(() => {
+  const ph = window.__np.physics
+  for (let b = ph.world.getBodyList(); b; b = b.getNext()) for (let f = b.getFixtureList(); f; f = f.getNext()) {
+    const sh = f.getShape()
+    if (sh.getType() !== 'polygon') continue
+    const proto = Object.getPrototypeOf(sh), orig = proto._set
+    proto._set = function (vs) { window.__lastPolySet = vs.map((v) => [v.x * 6, v.y * 6]); return orig.call(this, vs) }
+    return
+  }
+})
 const r = await page.evaluate(async ([N, PROP]) => {
   const np = window.__np, pl = np.player, sim = np.sim, ent = np.entities, ph = np.physics, wait = (ms) => new Promise((r) => setTimeout(r, ms))
   const rock = np.mats.byName.get('rock_static'), water = np.mats.byName.get('water')
@@ -71,9 +89,12 @@ const r = await page.evaluate(async ([N, PROP]) => {
   await wait(6000)
   const parts = ent.bodies.filter(isPart)
   const wetN = parts.filter((b) => np.entities._liqDensity(Math.floor(b.x), Math.floor(b.y)) > 0).length
-  const drain = { parts: parts.length, stillWet: wetN, fellAvg: +(parts.reduce((s, b, i) => s + (b.y - (before[i] ?? b.y)), 0) / Math.max(1, parts.length)).toFixed(1), gridAsleep: parts.filter((b) => b.asleep).length, planckAwake: parts.filter((b) => b.pb?.isAwake()).length, floatSleep: parts.filter((b) => b.floatSleep === true).length, inPit: parts.filter((b) => b.y > PY + 40).length }
+  const drain = { parts: parts.length, stillWet: wetN, fellAvg: +(parts.reduce((s, b, i) => s + (b.y - (before[i] ?? b.y)), 0) / Math.max(1, parts.length)).toFixed(1), gridAsleep: parts.filter((b) => b.asleep).length, planckAwake: parts.filter((b) => b.pb?.isAwake()).length, floatSleep: parts.filter((b) => b.floatSleep === true).length, inPit: parts.filter((b) => b.y > PY + 40).length,
+    // 每块相对槽的位置 / 睡态 / 有没有支撑(PROP 模式块少,看得过来)
+    each: parts.length <= 12 ? parts.map((b) => [Math.round(b.x - X0), Math.round(b.y - PY), b.asleep ? 'grid' : b.pb?.isAwake() ? 'awake' : 'planckSleep', b.floatSleep ? 'float' : '', b.supported(ent._solidB) ? 'sup' : 'nosup'].join('/')) : undefined }
   return { N, rows, resettle, drain, totalBodies: ent.bodies.length, ragdollParts: ent.bodies.filter((b) => b.isRagdoll && !b.dead).length }
 }, [N, PROP])
+if (sawError) console.log('lastPolySet(px)=', JSON.stringify(await page.evaluate(() => window.__lastPolySet)))
 console.table(r.rows)
 console.log('resettle(awake per 0.5s)', JSON.stringify(r.resettle))
 console.log('drain', JSON.stringify(r.drain), 'bodies', r.totalBodies, 'ragdollParts', r.ragdollParts)

@@ -8,6 +8,7 @@
 //   (和原版一样是多边形;chain 在 Box2D 2.3 里会让平放的箱子在顶点上永远抖,见 _buildTile);
 //   只给动态刚体包围盒 ±TERRAIN_NEAR 内的块建;块里格子的实心性变了(CellSim.tver)就重建;久不用的块释放。
 import { World, Vec2, Box, Circle, Polygon, Settings, RevoluteJoint, WeldJoint } from 'planck'
+import { BUOYANCY } from './RigidBody.js'
 
 export const PPM = 6            // pixels per meter
 export const FIXED_DT = 1 / 60
@@ -185,10 +186,12 @@ export class Physics {
     for (const [key, f] of t.fixtures) { if (!fresh.has(key)) { this.ground.destroyFixture(f); t.fixtures.delete(key); t.verts -= f.getShape().m_count } }
     for (const [key, d] of fresh) {
       if (t.fixtures.has(key)) continue
-      const f = this.ground.createFixture(new Polygon(d.pts.map((p) => new Vec2(p[0] / PPM, p[1] / PPM))), { friction: d.friction, restitution: 0 })
+      const shape = toPolygon(d.pts)
+      if (!shape) continue
+      const f = this.ground.createFixture(shape, { friction: d.friction, restitution: 0 })
       f.setUserData({ terrain: true, tx, ty })
       t.fixtures.set(key, f)
-      t.verts += d.pts.length
+      t.verts += shape.m_count
     }
   }
 
@@ -252,7 +255,7 @@ export class Physics {
       b.createFixture(new Box(Math.max(0.5, (bb.x1 - bb.x0 + 1) / 2) / PPM, Math.max(0.5, (bb.y1 - bb.y0 + 1) / 2) / PPM, new Vec2(cx / PPM, cy / PPM), 0), opt)
       return
     }
-    for (const poly of polys) b.createFixture(new Polygon(poly.map((p) => new Vec2(p[0] / PPM, p[1] / PPM))), opt)
+    for (const poly of polys) { const shape = toPolygon(poly); if (shape) b.createFixture(shape, opt) }
     if (b.getMass() <= 0) b.setMassData({ mass: Math.max(1, rb.alive) * (rb.density || 1) / (PPM * PPM), center: new Vec2(0, 0), I: 0.01 })
   }
   /** 外部改了 rb 的位置 / 速度(爆炸冲量 / 玩家推 / 顶出实心 / 浮力)→ 写进 planck */
@@ -265,18 +268,22 @@ export class Physics {
     if (rb.fixDirty) this.rebuild(rb)
   }
   /**
-   * 浮力:向上的力 = 重力 × buoy × 淹没比例(wake=false:睡着的浮体不被叫醒),液体阻尼叠在 xml 阻尼上
-   * (线 3/s、角 4/s:比手写求解器的 35% / 30% 重得多,把水面起伏和一坑尸块的互相碰撞压下去让它们能歇下;Box2D 自带 b2BuoyancyController 的默认拖拽 2 / 1);出水后阻尼复原
+   * 浮力,照原版(反 exe physicsbody_system.cpp 0xcff75b / physicsbody2_system.cpp 0xd040f7,两套一字不差):
+   *   if (comp.buoyancy > 0 && comp.mBody) {
+   *     cell = GridWorld.GetCell((int)entity.x, (int)entity.y + 8)                 // 只采实体原点下方 8px 的一格
+   *     if (cell && cell.IsLiquid() && !cell.CellData.liquid_sand)                  // 虚表 +0x58 / +0x64(后者读 CellData+0x160 = liquid_sand)
+   *       body.ApplyForce(-buoyancy × body.mass × (body.linearVelocity + world.gravity × body.gravityScale), body.worldCenter, wake=false)   // 0x4b9410 = b2Body::ApplyForce
+   *   }
+   * 没有淹没比例、没有液体密度:在液体里有效重力 = (1−0.7)×g 向下 + 0.7/s 的速度衰减,终端速度 0.3/0.7×12 m/s² = 5.1 m/s = 31 px/s ——
+   * 原版**没有东西会浮起来**,木箱 / 尸体都是慢慢沉到底再睡。之前按密度差拟合让它们漂在水面,正是"泡水尸体永远歇不下 / 20fps"的根源。
+   * 前面还有一道门:PhysicsBridge+0x48 帧戳(构造时 INT_MIN)>= frame−1 就跳过,打戳处没定位,先不做。buoyancy 0.7 全局(xml 里没实体改过)。
+   * 传进来的 inLiquid 由调用方按上面的采样规则算(Entities._stepPhysBody 用 _liqDensity(⌊x⌋, ⌊y⌋+8) > 0,沙在我们这是 'sand' 不算液体)
    */
-  applyBuoyancy(rb, wetF, buoy, gravity) {
+  applyBuoyancy(rb, inLiquid, buoy = BUOYANCY) {
     const b = rb.pb
-    if (!b || b.isStatic()) return
-    if (wetF > 0) {
-      const m = b.getMass()
-      b.applyForceToCenter(new Vec2(0, -(gravity / PPM) * (rb.gravScale || 1) * buoy * wetF * m), false)
-      b.setLinearDamping((rb.linDamp || 0) + 3 * wetF); b.setAngularDamping((rb.angDamp || 0) + 4 * wetF)
-      rb._wetDamp = true
-    } else if (rb._wetDamp) { rb._wetDamp = false; b.setLinearDamping(rb.linDamp || 0); b.setAngularDamping(rb.angDamp || 0) }
+    if (!b || !inLiquid || !(buoy > 0) || b.isStatic()) return
+    const g = this.world.getGravity(), gs = b.getGravityScale(), v = b.getLinearVelocity(), k = -buoy * b.getMass()
+    b.applyForceToCenter(new Vec2(k * (v.x + g.x * gs), k * (v.y + g.y * gs)), false)
   }
   /** step 之后:planck → rb(位置 / 角度 / 速度),记下"上一帧"的速度给碎裂 / 摔落判定 */
   _syncAll() {
@@ -606,6 +613,35 @@ function mergeConvex(pts, tris, max) {
     }
   }
   return polys.map((poly) => poly.map((i) => pts[i]))
+}
+/**
+ * 交给 planck 前剔掉共线中间点 / 重合点(顶点顺序、形状原样保留,凸包仍由 planck 自己算)。
+ * planck 的 Polygon._set 原样继承了 Box2D 2.3 b2PolygonShape::Set 的礼物包装法:三点共线时叉积该是 0 走"取更远的"分支,但像素坐标 ÷6 进米以后带浮点噪声,
+ * 从中间那个共线点出发时 "前一点" 和 "后一点" 方向正好相反、叉积 ±1e-17,方向选反就在两点间来回跳、永远回不到起点,
+ * hull[m] 一直涨到数组上限 → RangeError: Invalid array length(探针十次里两三次,栈顶 planck.js Polygon._set;线上抓到的顶点 [[1,-1],[2,0],[2,1],[-0.5,-2.5]],
+ * 是被打掉像素后重建的 3 像素尸块)。mergeConvex 的 isConvex 允许共线(<-1e-9),合并后的凸块常带这种顶点;只有共线三元组会触发,凹一点的输入礼物包装法本来就能处理。
+ */
+export function dropCollinear(pts) {
+  const EPS = 1e-3 // px²;marching squares 的点都在 0.5px 格上,真正共线的叉积严格为 0,最瘦的三角面积也有 0.125
+  let p = pts.slice()
+  const between = (m, u, v) => (u[0] - m[0]) * (v[0] - m[0]) + (u[1] - m[1]) * (v[1] - m[1]) <= 0 // m 在 u、v 之间(含端点重合)
+  for (let changed = true; changed && p.length >= 3;) {
+    changed = false
+    for (let i = 0; i < p.length; i++) {
+      const ia = (i + p.length - 1) % p.length, ic = (i + 1) % p.length
+      const a = p[ia], b = p[i], c = p[ic]
+      if (Math.abs(a[0] - b[0]) <= 1e-3 && Math.abs(a[1] - b[1]) <= 1e-3) { p.splice(i, 1); changed = true; break }
+      if (Math.abs(cross(a, b, c)) > EPS) continue
+      // 三点共线:剔掉夹在中间的那个(通常是 b;a→b→c 折回去的"尖刺"则中间的是 a 或 c)
+      p.splice(between(b, a, c) ? i : between(a, b, c) ? ia : ic, 1); changed = true; break
+    }
+  }
+  return p.length >= 3 ? p : null
+}
+/** 像素坐标多边形 → planck Polygon(米);退化(全共线 / 不足 3 点)返回 null,调用方跳过 */
+function toPolygon(pts) {
+  const h = dropCollinear(pts)
+  return h ? new Polygon(h.map((p) => new Vec2(p[0] / PPM, p[1] / PPM))) : null
 }
 /** 兜底:凸包(Andrew 单调链) */
 function convexHull(pts) {

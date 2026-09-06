@@ -830,7 +830,24 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         `centered=0` → 画布左上角在实体;三个轮子写着 centered=1 但和机身共用一张 150×125 画布(轮子包围盒中心 (35.5,64.5)(93.5,37.5)(82.5,89.5) 正好是关节 pos_x/pos_y),
         所以老式多体统一按"根图定画布左上角(根 centered 则 实体 − 画布/2),所有图都画在这张画布里,关节 pos = 画布像素"—— 矿车 / 轮架全 centered 的情况结果不变。
         含静态部件的多体永远不写格子(`M.hasStatic`:机身进格子轮子就跟地形卡上;电机 12 / −5 / 10 rad/s、3c 22 rad/s 反正一直转)、算有支撑、不做埋地上抬。探针 `_noita-machine-shot`:轮心落在关节 ±2px,角速度 = 电机速度,物理 0.6ms。
-        还差:PhysicsThrowable、Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、⑤ 的 buoyancy 0.7 / go_through_sand / solid_on_collision_*。
+        ✅(已上线)**偶发 `RangeError: Invalid array length` 定位 + 修**:探针里给 planck `Polygon._set` 打补丁记录最后一次输入,抓到 `[[1,-1],[2,0],[2,1],[-0.5,-2.5]]`(被打掉像素后 `Physics.rebuild` 重建的 3 像素尸块凸块)——
+        (−0.5,−2.5)(1,−1)(2,0) 三点共线、(1,−1) 是中间点。planck 原样继承了 Box2D 2.3 `b2PolygonShape::Set` 的礼物包装凸包:共线叉积该为 0 走"取更远的"分支,但像素坐标 ÷6 进米后带浮点噪声(±1e-17),
+        从中间点出发时前后两点方向相反、符号选反就在两点间来回跳永远回不到起点,`hull[m]` 涨到数组上限才抛(node 复现:转 3s 后 RangeError;页面表现就是卡一下然后报错)。
+        `mergeConvex` 的 isConvex 允许共线(< −1e-9)所以合并后的凸块常带这种顶点。修:`dropCollinear`(只剔叉积 ≤ 1e-3 px² 的共线中间点和重合点,顶点顺序 / 形状原样,凸包仍让 planck 算)→ `toPolygon`,刚体 / 地形两处都过一遍;
+        node 单测加了这组顶点的回归(`_noita-box2d-unit.mjs`);1~5px 随机小 mask 3.2 万个凸块里 21 个会让 planck 死循环(0.07%,一具尸体十几块 × 挨打重建就是探针 20% 的复现率),处理后 0 个;大 blob / 地形 30 万个本来就 0。
+        顺手修的老 bug:`RigidBody.supported()` 把睡着刚体自己写进格子的像素也当支撑(11×11 箱子 40 个边缘像素里 29 个下面是自己的木头)→ 单个睡着的道具脚下挖空永远不醒(多体 `_multiSupported` 早就按 cellSet 排除了,单体没排;
+        之前"挖脚下醒"的探针用的是没像素的测试箱所以没暴露)。现在按 cellSet 排除:沉底的木箱放水 0.5s 醒、掉 160px 再睡。
+        ✅(已上线)**浮力反出来了(推翻之前"木箱在水里能浮"的拟合)**:`buoyancy` 字段 PhysicsBodyComponent +0x78 / PhysicsBody2Component +0x6c,施力处在两套组件系统里各一份、一字不差
+        (physicsbody_system.cpp 0xcff75b / physicsbody2_system.cpp 0xd040f7):
+        `if (buoyancy > 0 && mBody) { cell = GetCell((int)entity.x, (int)entity.y + 8); if (cell && cell->IsLiquid() /*vtbl+0x58*/ && !cell->CellData.liquid_sand /*vtbl+0x64 → CellData+0x160*/)`
+        `  body->ApplyForce(−buoyancy × m_mass × (m_linearVelocity + world.gravity × m_gravityScale), m_sweep.c, wake=false) }`(0x4b9410 = b2Body::ApplyForce,b2Body.h:0x334 断言 force.IsValid)。
+        **只采一格、按整块质量、没有淹没比例也没有液体密度**:在液体里有效重力 = 0.3g 向下 + 0.7/s 的速度衰减,终端速度 0.3/0.7×12 = 5.1 m/s = **31 px/s 慢沉** —— 原版**没有东西会浮起来**,木箱 / 尸体都是沉到底再睡。
+        前面还有一道门 `PhysicsBridge+0x48 帧戳(ctor 0x79f260 初始 INT_MIN)>= frame−1 就跳过`(csolidcell 0x74da00 的每像素施力也用同一道门),打戳处没定位,先不做。xml 里没有实体改过 buoyancy,全 0.7。
+        顺手反到的布局:b2Body(双精度)m_xf +0x18、m_sweep +0x38(c +0x58、alpha0 +0x78)、m_linearVelocity +0x80、m_angularVelocity +0x90、m_force +0x98、m_torque +0xa8、m_world +0xb0、m_mass +0xd0、m_invMass +0xd8、m_I +0xe0、m_invI +0xe8、
+        m_gravityScale +0x108、m_sleepTime +0x110、userData(PhysicsBridge*)+0x124;b2World 重力 +0x19240;CLiquidCell 虚表 0x11a33dc / CSolidCell 0x1190580(`_reva.py vtbl <RTTI 名字串 VA>`)。
+        代码:`Physics.applyBuoyancy(rb, inLiquid)` 只做那一个力(液体阻尼 / 淹没比例 / 密度差全撤),`_stepPhysBody` 用 `_liqDensity(⌊x⌋, ⌊y⌋+8) > 0` 采样(沙在我们这是 'sand' 不算液体),兜底求解器 `RigidBody.buoyancy` 同规则;
+        `wetF` 只留给静止判定 / 浮睡用。探针 10 具尸体入水:4s 内 96 块全部沉底睡进格子(醒 0 / 浮睡 0),物理 2.5 → 0.4ms;之前"泡水尸体永远歇不下"的根就是让它们漂着。
+        还差:PhysicsThrowable、Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、⑤ 的 go_through_sand / solid_on_collision_*、PhysicsBridge+0x48 帧戳门。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
@@ -849,7 +866,11 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 **当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
 **正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① 地形(多边形)② 形状图刚体 / 物品 / 崩塌块上 planck + 睡醒桥接 ④ 关节第一批(矿车 / 滑板 / 轮架 / 物理蘑菇 / 家具 / 钉墙轮)已上线;
-**Box2D 尺度常数已反 exe 定稿(见 ④ 末):重力 12 m/s² = 72 px/s²、fixture 密度 = 材质 density 原值、关节力基准 = (mA+mB)×160**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时 / 物理蘑菇进真菌洞)、⑥ 尸体换 Box2D 关节、⑤ 碰撞伤害走接触(pre-solve → `rb.impact`)、挖掘场多体机械(静态机身 + 电机轮)也已上线;真机(iPhone)跑过没问题。下一步:⑤ 剩余(浮力按 buoyancy 0.7、go_through_sand、solid_on_collision_*)、PhysicsThrowable。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+**Box2D 尺度常数已反 exe 定稿(见 ④ 末):重力 12 m/s² = 72 px/s²、fixture 密度 = 材质 density 原值、关节力基准 = (mA+mB)×160**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时 / 物理蘑菇进真菌洞)、⑥ 尸体换 Box2D 关节、⑤ 碰撞伤害走接触(pre-solve → `rb.impact`)、挖掘场多体机械(静态机身 + 电机轮)也已上线;真机(iPhone)跑过没问题。09-06:偶发 `RangeError: Invalid array length` 定位(planck 凸包对共线中间点死循环)+ 修、浮力反 exe 定稿(−0.7×m×(v+g),所有刚体慢沉不浮)已上线。
+下一步:⑤ 剩余(go_through_sand、solid_on_collision_*)、PhysicsThrowable。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+**反汇编辅助脚本** `%TEMP%\_reva.py <exe> <cmd>`(capstone + pefile;不在仓库里,丢了照 docstring 重写):`strings <regex>` / `refs <va>`(谁引用这个地址,列函数头 + 常量 + call)/ `callers <va>`(call rel32 到它的点)/
+`asm <va> <n>` / `fn <va> [max] [full]`(从函数头顺序反汇编,默认只打常量 / call / 浮点行)/ `scan <lo> <hi> <regex>`(区间内线性扫指令,解不出的字节跳过;找"谁读 [reg+0x78]"用这个)/ `vtbl <RTTI 名字串 VA>`(MSVC RTTI → 虚表槽)/ `rd <va> [n]`。
+exe = `E:\soft\xiaoshuodongtai\silu\XD220\Noita.v20250125-P2P\noita_dev.exe`;组件字段偏移看 XML 读字段函数里 `push "字段名"` 后面的 `lea edx,[ebx+0x??]`(PhysicsBodyComponent 的在 0x699799)。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。

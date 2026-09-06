@@ -1,5 +1,5 @@
 // Box2D(planck)封装的 node 单元测试:合成地形上 marching squares / 简化 / 落地 / 睡眠 / 脚下挖空唤醒 / 跨块接缝滑行。node scripts/_noita-box2d-unit.mjs
-import { Physics, marchingSquares, simplify, pixelPolygons, contourPolygons, PPM } from '../src/noita-map/Physics.js'
+import { Physics, marchingSquares, simplify, pixelPolygons, contourPolygons, dropCollinear, PPM } from '../src/noita-map/Physics.js'
 
 // 合成 CellSim:一块 200×120 的世界,y ≥ 80 是地面,x 40..120 处 1:2 斜坡,x 150..170 y 60..64 一块悬空平台,地里 x 60..70 y 95..100 一个洞
 const W = 200, H = 120
@@ -60,6 +60,12 @@ const sim = {
     ph0.attach(rb)
     console.log(name.padEnd(6), 'polys', polys.length, 'maxVerts', maxV, 'area', area.toFixed(1), '/ px', px, 'mass', rb.pb.getMass().toFixed(2))
   }
+  // planck Polygon._set 死循环回归:线上抓到的 3 像素尸块凸块,(-0.5,-2.5)(1,-1)(2,0) 共线、(1,-1) 是中间点 → 原样给 planck 转 3s 抛 RangeError: Invalid array length;
+  // dropCollinear 要剔掉中间点。这里不直接喂 planck(会挂),只检查输出里没有共线三元组
+  const bad = [[1, -1], [2, 0], [2, 1], [-0.5, -2.5]]
+  const h = dropCollinear(bad)
+  const collinear = (p) => { for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length], c = p[(i + 2) % p.length]; if (Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) <= 1e-3) return true } return false }
+  console.log('dropCollinear(bad)', JSON.stringify(h), 'collinear', collinear(bad), '→', collinear(h), h.length === 3 && !collinear(h) ? 'OK' : 'FAIL')
 }
 const ph = new Physics(sim, { gravity: 350 })
 // 丢箱子:平地 / 斜坡 / 平台 / 洞上方

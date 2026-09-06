@@ -186,7 +186,7 @@ CPU×4/×6 模拟结果(15s 巡航):
   整面贴地当"面接触"不产生扭矩,只有角/边挨着才翻;慢速接触不弹),画在世界之上,对玩家/弹丸/怪按像素判定,玩家能推(推睡着的会把它推醒)。
   睡着(慢 + 有支撑 0.5s):像素按整数位置写进 `chunk.mat`(材质 = shape.material,`cell_type=solid` 类现在在 CellSim 里是静态),
   之后元胞自动机接管——木箱会烧、被挖掉的像素就是刚体缺损;每 0.4s `audit()` 清点缺损与支撑,支撑没了就醒。
-  浮力按材质密度(木 6 在水 4 里漂,金属 8 沉)。伤害:弹丸命中 / 爆炸 → DamageModel hp;`ExplodeOnDamageComponent`:
+  浮力照原版(反 exe physicsbody_system):原点下方 8px 那格是液体(非沙)→ 力 = −0.7 × 质量 × (速度 + 重力),即有效重力剩 30% + 0.7/s 速度衰减 —— 原版没有东西会浮,木箱 / 尸体都慢慢沉底(终端 31px/s)。伤害:弹丸命中 / 爆炸 → DamageModel hp;`ExplodeOnDamageComponent`:
   hp≤0 或缺损 ≥ `physics_body_destruction_required`(炸药箱 4%)按概率炸,`config_explosion` 交 `ProjectileSystem.explode`(同一套坑/火/摇镜/伤害,会连锁);
   `MaterialInventoryComponent`:桶被打到从伤口漏,毁了 300 油全洒(真液体);碎块按图色飞出(box2d 材质是尘)。矿灯带光。
   `cell_type=solid` 改为静态是顺手修的 bug:之前煤矿木支架、睡着的箱子都会当落沙塌掉。
