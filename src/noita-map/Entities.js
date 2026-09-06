@@ -15,6 +15,11 @@ import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from 
 
 const K_LIQUID = 3
 const MAX_SWAY = 4 // 同时在摆的物理蘑菇上限(见 _updateMultis;真菌洞 6 株 ≈ 45 个部件 2.5~5ms)
+// PhysicsThrowableComponent 参数(见 throwItem):组件默认 throw_force_coeff 1 / max_throw_speed 180 / min_torque 0.5 / max_torque 8;potion.xml 改了 coeff 1.5
+const THROWABLE = {
+  default: { coeff: 1, maxSpeed: 180, minTorque: 0.5, maxTorque: 8 },
+  potion: { coeff: 1.5, maxSpeed: 180, minTorque: 0.5, maxTorque: 8 },
+}
 const MAX_RAGDOLL_PARTS = 96 // 同时活着的尸块上限(≈8 具僵尸;见 _capRagdolls)
 const BODY_GRAVITY = 72 // Box2D 世界重力:反 exe b2World 构造的重力向量 (0, 12) m/s² = 72 px/s²,见 Physics.js;原版箱子 / 尸体确实比角色(pixel_gravity 350)落得慢得多
 
@@ -217,8 +222,27 @@ export class Entities {
     return { mat, left: 1000 }
   }
 
-  /** 扔药水(PhysicsThrowable:max_throw_speed 180):从手里飞出去,砸到东西就碎 */
-  throwItem(name, x, y, vx, vy, extra) { return this.spawnItem(name, x, y, { ...extra, vx, vy, w: (Math.random() - 0.5) * 10, pickCool: 0.6, thrown: true }) }
+  /**
+   * 扔物品,照 PhysicsThrowableComponent(反 exe physicsbody_system.cpp 0xd00bff,Message_ThrowItem 的处理):
+   *   v = (target − from) × throw_force_coeff;|v| > max_throw_speed 就截到 max_throw_speed          —— 速度随光标离手的距离,近处是轻扔
+   *   t = max(|v| × max_torque / 180, min_torque);角速度 = min_torque + rand01 × (t − min_torque),v.x < 0 取负(rad/s)
+   *   起点 = from + dir × 2,再沿 dir 最多 20px 找实心,撞墙就停在墙前(别把药水扔进墙里)
+   *   ItemComponent.mThrowSpeed = |v|(碎瓶伤害用,我们走 impact)
+   * 玩家能扔的只有药水:potion.xml throw_force_coeff 1.5 / max_throw_speed 180,min/max_torque 用组件默认 0.5 / 8
+   */
+  throwItem(name, from, target, extra) {
+    const T = THROWABLE[name] || THROWABLE.default
+    let vx = (target.x - from.x) * T.coeff, vy = (target.y - from.y) * T.coeff
+    const sp = Math.hypot(vx, vy)
+    if (sp > T.maxSpeed) { vx = vx / sp * T.maxSpeed; vy = vy / sp * T.maxSpeed }
+    const v = Math.min(sp, T.maxSpeed)
+    const tMax = Math.max(v * T.maxTorque / 180, T.minTorque)
+    const w = (T.minTorque + Math.random() * (tMax - T.minTorque)) * (vx < 0 ? -1 : 1)
+    const dx = sp > 0 ? vx / v : 1, dy = sp > 0 ? vy / v : 0
+    let k = 2
+    for (let i = 1; i <= 20; i++) if (this._solid(Math.floor(from.x + dx * i), Math.floor(from.y + dy * i))) { k = Math.max(0, i - 2); break }
+    return this.spawnItem(name, from.x + dx * k, from.y + dy * k, { ...extra, vx, vy, w, pickCool: 0.6, thrown: true })
+  }
 
   /**
    * 宝箱(chest_random.lua drop_random_reward 主干):7% 小炸弹 · 33% 金 · 10% 药水 · 4% 法术刷新 · 6% 杂项(先给药水)· 5% 法术卡(先给金)·

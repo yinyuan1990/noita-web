@@ -858,7 +858,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         另一条 csolidcell.cpp 0x74da00(PhysicsBridge 0x79f6c0 调)是刚体像素撞进**沙 / 液体格**的处理:沙给阻力 −0.05|v|·m·v_at_point(力截 5000·m、扭矩截 2000·I),
         v_at_point > 5 m/s 且动量 > 200 时也置爆炸标记;液体按 splash_power 溅;`solid_go_through_sand` 在这里让沙格被随机 0.3~0.75 的量"让开"。这条没做:
         `go_through_sand` 组件字段没有任何实体用(只有 tentacles 显式写 0),材质级的只在旗帜 / TNT 弹 / 陨石上;`solid_on_collision_material` 溅血 / 溅粘液的材质(blood_box2d 系)也只有稀有道具用。
-        还差:PhysicsThrowable、Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、PhysicsBridge+0x48 帧戳门、沙阻力 / splash 那条。
+        ✅(已上线)**PhysicsThrowable 反 exe 定稿**(physicsbody_system.cpp 0xd00bff = Message_ThrowItem 的处理;字段偏移 throw_force_coeff +0x50 / max_throw_speed +0x54 / min_torque +0x58 / max_torque +0x5c /
+        tip_check_offset_min/max +0x60/+0x64 / tip_check_random_rotation_deg +0x68 / attach_min_speed +0x6c / knife_style +0x70,由 lua getter 0xb21c30 与更新函数 0xd11330 确认):
+        `v = (target − from) × throw_force_coeff; if |v| > max_throw_speed: v = v/|v| × max_throw_speed`(**速度随光标离手的距离,不是固定 180**;没组件时 coeff 1);
+        `t = max(|v| × max_torque / 180, min_torque); ω = min_torque + rand01 × (t − min_torque); v.x < 0 → ω 取负`(没组件时 0.5 / 8);`ItemComponent.mThrowSpeed(+0x650) = |v|`;
+        出手点 0xd02a60:from + dir×2,再沿 dir 射 20px 撞到实心就停在墙前;`projectiles_rotate_toward_velocity` 时 SetTransform 角度 = atan2(v)。然后 SetLinearVelocity(v/6)、SetAngularVelocity(ω)。
+        potion.xml:coeff 1.5 / max 180 → 光标离手 120px 以上才满速,20px 只有 31px/s(轻扔)。代码 `Entities.throwItem(name, from, target, extra)` + `THROWABLE` 表,noitaPlay 传手 (x, y−4) 和光标。
+        没做:attach_to_surfaces(飞刀插墙,tip_check / attach_min_speed 70 那套在 0xd11330)—— 我们没有可扔的刀。
+        还差:Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、PhysicsBridge+0x48 帧戳门、沙阻力 / splash 那条、飞刀插墙。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
@@ -878,7 +885,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
 **正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① 地形(多边形)② 形状图刚体 / 物品 / 崩塌块上 planck + 睡醒桥接 ④ 关节第一批(矿车 / 滑板 / 轮架 / 物理蘑菇 / 家具 / 钉墙轮)已上线;
 **Box2D 尺度常数已反 exe 定稿(见 ④ 末):重力 12 m/s² = 72 px/s²、fixture 密度 = 材质 density 原值、关节力基准 = (mA+mB)×160**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时 / 物理蘑菇进真菌洞)、⑥ 尸体换 Box2D 关节、⑤ 碰撞伤害走接触(pre-solve → `rb.impact`)、挖掘场多体机械(静态机身 + 电机轮)也已上线;真机(iPhone)跑过没问题。09-06:偶发 `RangeError: Invalid array length` 定位(planck 凸包对共线中间点死循环)+ 修、浮力反 exe 定稿(−0.7×m×(v+g),所有刚体慢沉不浮)已上线。
-solid_on_collision_explode(崩塌块砸地炸)也按 exe 定稿了;go_through_sand / solid_on_collision_material 查过数据没什么实体在用,搁置。下一步:PhysicsThrowable。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+solid_on_collision_explode(崩塌块砸地炸)也按 exe 定稿了;go_through_sand / solid_on_collision_material 查过数据没什么实体在用,搁置;PhysicsThrowable(扔速随光标距离、随机转速、出手点)也定稿了。Box2D 六步到此收口,剩的都是小尾巴(第 29 条末"还差")。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **反汇编辅助脚本** `%TEMP%\_reva.py <exe> <cmd>`(capstone + pefile;不在仓库里,丢了照 docstring 重写):`strings <regex>` / `refs <va>`(谁引用这个地址,列函数头 + 常量 + call)/ `callers <va>`(call rel32 到它的点)/
 `asm <va> <n>` / `fn <va> [max] [full]`(从函数头顺序反汇编,默认只打常量 / call / 浮点行)/ `scan <lo> <hi> <regex>`(区间内线性扫指令,解不出的字节跳过;找"谁读 [reg+0x78]"用这个)/ `vtbl <RTTI 名字串 VA>`(MSVC RTTI → 虚表槽)/ `rd <va> [n]`。
 exe = `E:\soft\xiaoshuodongtai\silu\XD220\Noita.v20250125-P2P\noita_dev.exe`;组件字段偏移看 XML 读字段函数里 `push "字段名"` 后面的 `lea edx,[ebx+0x??]`(PhysicsBodyComponent 的在 0x699799)。

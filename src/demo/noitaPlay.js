@@ -1001,9 +1001,8 @@ function fire() {
   const ab = Math.atan2(player.aimY - (player.y - 2), player.aimX - player.x)
   const a = Math.hypot(player.aimX - wandTip.x, player.aimY - wandTip.y) > 4 ? Math.atan2(player.aimY - wandTip.y, player.aimX - wandTip.x) : ab
   if (w.potion) {
-    // PhysicsThrowable:max_throw_speed 180,朝瞄准方向扔出去
-    const sp = 180
-    entities.throwItem('potion', player.x + Math.cos(ab) * 6, player.y - 4 + Math.sin(ab) * 6, Math.cos(ab) * sp + player.vx * 0.3, Math.sin(ab) * sp - 20, { potion: w.potion })
+    // PhysicsThrowable(Message_ThrowItem:from = 手、target = 光标):速度 = (光标 − 手) × 1.5 截 180 —— 光标离手 120px 以上才是满速,近处是轻扔;转速 / 出手点见 Entities.throwItem
+    entities.throwItem('potion', { x: player.x, y: player.y - 4 }, { x: player.aimX, y: player.aimY }, { potion: w.potion })
     player.items.splice(player.items.indexOf(w), 1)
     payload = Math.min(payload, slots().length - 1)
     player.fireCd = 0.4
