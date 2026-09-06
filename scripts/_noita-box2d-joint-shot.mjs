@@ -27,7 +27,7 @@ const r = await page.evaluate(async () => {
   put('furniture_table', PX - 40, PY - 80)
   put('physics_skateboard', PX, PY - 30)
   put('physics_wheel_stand_01', PX + 45, PY - 60)
-  put('physics_fungus', PX + 88, PY - 41) // 脚 y+29..39,attach 锚 y+41 往下射 30px 找地:台面 PY 正好在射线范围
+  put('physics_fungus', PX + 88, PY - 1) // 标记点放在地面上(lua spawn 就这么放),init_offset_y=40 把整株抬上去,脚落在台面、锚点往下 30px 找地
   await wait(600)
   const near = (b, n) => b.name === n && spawned[n] && Math.abs(b.x - spawned[n][0]) < 80 && Math.abs(b.y - spawned[n][1]) < 200
   const groups = {}

@@ -14,7 +14,8 @@ export const FIXED_DT = 1 / 60
 const TILE = 32                 // 地形碰撞块 = CellSim 的睡眠块(chunk 内 32×32 对齐)
 const TERRAIN_NEAR = 24         // 醒着的刚体包围盒外扩多少 px 就要有地形(每帧最多走 12px = maxTranslation 2m)
 const TILE_TTL = 120            // 块 N 帧没被任何刚体用到就释放
-const MAX_BUILD_PER_FRAME = 6   // 每帧最多重建几块(单块 33×33 采样 + 描边 ≈ 0.05ms)
+const MAX_BUILD_PER_FRAME = 2   // 每帧最多重建几块(单块 34×34 采样 + 描边 + 三角化 ≈ 0.45ms;真菌洞落沙不停,不限的话地形重建就 2.7ms/帧)
+const MIN_REBUILD_GAP = 6       // 同一块两次重建至少隔几帧(落沙区每帧都在变;歇着的刚体不在乎 100ms 的滞后,掉下来的最多陷进新沙 1~2px)
 const SIMPLIFY_EPS = 0.3        // Douglas-Peucker 容差(px):1:1 的 45° 台阶已经是直线;0.6 会把"平台上落了一粒土"拉成 1° 的斜线,整摞箱子跟着歪
 
 // planck 的 maxPolygonVertices 默认 12,Box2D 2.3 是 8;地形用 chain 不受限。velocityThreshold 1 m/s = 6 px/s:比这慢的碰撞不弹
@@ -57,14 +58,16 @@ export class Physics {
   step(dt) {
     this.acc = Math.min(this.acc + dt, FIXED_DT * 3)
     const t0 = performance.now()
+    let tT = 0, tS = 0, tY = 0
     while (this.acc >= FIXED_DT - 1e-9) {
       this.acc -= FIXED_DT
       this.frame++
-      this._refreshTerrain()
-      this.world.step(FIXED_DT, 8, 3)
-      this._syncAll()
+      const a = performance.now(); this._refreshTerrain()
+      const b = performance.now(); this.world.step(FIXED_DT, 8, 3)
+      const c = performance.now(); this._syncAll()
+      const d = performance.now(); tT += b - a; tS += c - b; tY += d - c
     }
-    this.stats.ms = performance.now() - t0
+    this.stats.ms = performance.now() - t0; this.stats.msTerrain = tT; this.stats.msStep = tS; this.stats.msSync = tY
   }
 
   // ── 地形 ──
@@ -108,10 +111,11 @@ export class Physics {
       const ver = this._tileVersion(tx, ty)
       if (ver < 0) continue // chunk 没就位:先不建(刚体飞到没加载的地方是 Noita 也头疼的事,PhysicsKeepInWorld 那一套以后再说)
       if (t && t.ver === ver) { t.last = this.frame; continue }
+      if (t && this.frame - t.builtAt < MIN_REBUILD_GAP) { t.last = this.frame; continue } // 刚重建过:老的先顶着
       if (built >= MAX_BUILD_PER_FRAME) { if (t) t.last = this.frame; continue } // 这帧预算用完:老的先顶着,下帧再换
-      if (!t) { t = { fixtures: new Map(), ver: -1, last: 0, verts: 0 }; this.tiles.set(key, t) }
+      if (!t) { t = { fixtures: new Map(), ver: -1, last: 0, verts: 0, builtAt: -99 }; this.tiles.set(key, t) }
       this._buildTile(t, tx, ty, ver)
-      t.last = this.frame
+      t.last = this.frame; t.builtAt = this.frame
       built++
     }
     if (built) this.stats.built += built

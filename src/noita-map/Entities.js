@@ -13,6 +13,7 @@ import { NollaPrng } from './core/NollaPrng.js'
 import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from './core/coords.js'
 
 const K_LIQUID = 3
+const MAX_SWAY = 4 // 同时在摆的物理蘑菇上限(见 _updateMultis;真菌洞 6 株 ≈ 45 个部件 2.5~5ms)
 const BODY_GRAVITY = 60 // Box2D 世界重力:exe global_gravity = 6 × 10 = 60 px/s²(10 m/s²),见 Physics.js;原版箱子 / 尸体确实比角色(pixel_gravity 350)落得慢得多
 
 export class Entities {
@@ -389,11 +390,15 @@ export class Entities {
    */
   _makeMultiBody(p) {
     const d = p.d, PH = this.physics
-    const M = { parts: [], joints: [], name: p.name, age: 0, group: -(++this._multiSeq || (this._multiSeq = 1)) }
+    // 碰撞组:每个多体实体一个负组(部件互不碰);物理蘑菇全体共用 -1 —— 真菌洞里长得密、彼此挨着,在摆的会通过接触把整片邻居一直叫醒(Box2D 同一岛同醒),植物之间重叠也无妨
+    const isFungus = d.scripts?.some((s) => s.endsWith('physics_fungus'))
+    if (this._multiSeq === undefined) this._multiSeq = 1
+    const M = { parts: [], joints: [], name: p.name, age: 0, group: isFungus ? -1 : -(++this._multiSeq) }
     const byId = new Map()
     const bodyOf = (id) => d.bodies?.find((b) => b.uid === id)
-    // 调用方给的 (p.x, p.y) 是"图心"(和单图道具一致:spawnChunk 的灯按标记 + root_offset 放),实体原点 = 图心 − root_offset(lantern_small 5,7;矿车 0,0)
-    const ox = p.x - (d.body?.rootOffX || 0), oy = p.y - (d.body?.rootOffY || 0)
+    // 调用方给的 (p.x, p.y) 是"图心"(和单图道具一致:spawnChunk 的灯按标记 + root_offset 放),实体原点 = 图心 − root_offset(lantern_small 5,7;矿车 0,0);
+    // 形状 / 关节坐标系再减 PhysicsBody2 init_offset(蘑菇 40 / 小蘑菇 28:整株上移,脚落在地面标记上)
+    const ox = p.x - (d.body?.rootOffX || 0) - (d.body?.initOffX || 0), oy = p.y - (d.body?.rootOffY || 0) - (d.body?.initOffY || 0)
     for (const s of d.shapes) {
       const png = this.images.get(s.image)
       if (!png?.data || byId.has(s.bodyId)) continue
@@ -452,7 +457,7 @@ export class Entities {
     }
     // physics_fungus.lua:lift 浮力 + 电机正弦摆(speed_mult = ProceduralRandomf(entity_id, 4, 0.1, 0.75))
     if (d.lift) M.lift = d.lift
-    if (d.scripts?.some((s) => s.endsWith('physics_fungus'))) { M.seed = (Math.abs(Math.floor(p.x)) * 31 + Math.abs(Math.floor(p.y))) % 1000; M.sway = 0.1 + ((M.seed * 7919) % 1000) / 1000 * 0.65 }
+    if (isFungus) { M.seed = (Math.abs(Math.floor(p.x)) * 31 + Math.abs(Math.floor(p.y))) % 1000; M.sway = 0.1 + ((M.seed * 7919) % 1000) / 1000 * 0.65 }
     this.multis ||= []
     this.multis.push(M)
     return M
@@ -464,17 +469,31 @@ export class Entities {
   _updateMultis(dt) {
     if (!this.multis) return
     const PH = this.physics
+    // 摆动的名额:lua 是 is_in_camera_bounds(x,y,50) 里的全摆,真菌洞一屏十几株 80 多个部件永远醒着要 3~4ms(倒成一堆时 26ms);
+    // 这里只让离相机中心最近的 MAX_SWAY 株摆,其余静止 → 入睡写格子(玩家看不出远处那几株没在晃)
+    const C = this.camRect
+    let swayers = null
+    if (C) {
+      const cx = (C.cx0 + C.cx1) / 2, cy = (C.cy0 + C.cy1) / 2
+      const cands = []
+      for (const M of this.multis) { const r = M.root; if (M.sway && r && !r.dead && !r.asleep && r.pb && r.x > C.cx0 - 50 && r.x < C.cx1 + 50 && r.y > C.cy0 - 50 && r.y < C.cy1 + 50) cands.push([Math.hypot(r.x - cx, r.y - cy), M]) }
+      cands.sort((a, b) => a[0] - b[0])
+      swayers = new Set(cands.slice(0, MAX_SWAY).map((c) => c[1]))
+    }
     for (let i = this.multis.length - 1; i >= 0; i--) {
       const M = this.multis[i]
       M.age += dt
       const root = M.root
       if (root && !root.dead && !root.asleep && root.pb) {
-        if (M.lift) root.pb.applyForceToCenter({ x: 0, y: M.lift }, true) // lift -25 = 向上 25 N
-        if (M.sway) {
+        // lift -25 = 向上 25 N;wake=false:别每帧把睡着的叫醒(拉直后静止就该睡)。只在还钉着地时施力 —— 我们的质量尺度下浮力略大于重量,断了锚会像气球飘走(原版 lua 无条件施力,但它的密度常数没反出来)
+        if (M.lift && M.joints.some((J) => !J.B)) root.pb.applyForceToCenter({ x: 0, y: M.lift }, false)
+        const inCam = swayers ? swayers.has(M) : true
+        if (M.sway && inCam) {
           const t = M.age * 60 * 0.02 + M.seed * 2.721
           let n = 0
           for (const J of M.joints) { if (J.B && J.j.isMotorEnabled?.()) { n++; const spd = Math.sin(t + n * 0.632) * M.sway; J.j.setMotorSpeed(n === 1 ? -spd : spd) } }
-        }
+          M.swayOn = true
+        } else if (M.swayOn) { for (const J of M.joints) if (J.B && J.j.isMotorEnabled?.()) J.j.setMotorSpeed(0); M.swayOn = false }
       }
       for (let k = M.joints.length - 1; k >= 0; k--) {
         const J = M.joints[k]
@@ -586,7 +605,8 @@ export class Entities {
     b.buoyancy(dt, BODY_GRAVITY, this._liqDensity, b.density)
     this.physics.pushToPhysics(b)
     // 自己的静止计时:附近滴水 / 落沙让地形块重建,planck 拆 fixture 时会把压着的刚体叫醒,永远攒不够它的 0.5s —— 速度 ≈0 且贴着东西 0.5s 就算歇下了(写格子后就不受重建影响)
-    if (Math.abs(b.vx) < 1 && Math.abs(b.vy) < 1 && Math.abs(b.w) < 0.02) b.restT += dt; else b.restT = 0
+    // 阈值 1.5px/s / 0.06rad/s:一串铰链吊着浮力(蘑菇)会有 0.2~0.5px/s 的残留微抖,0.5s 内最多挪 0.75px,写格子就冻住了
+    if (Math.abs(b.vx) < 1.5 && Math.abs(b.vy) < 1.5 && Math.abs(b.w) < 0.06) b.restT += dt; else b.restT = 0
     // 全埋进实心里的刚体(塌方 / 落沙压住、出生点在墙里)看不到 chain 的边会一直往下掉 —— 原版 hax_fix_going_through_ground:在地里就往上抬
     if (b.age > 0.5 && b.alive > 0) {
       const P = [0, 0]
@@ -1229,6 +1249,7 @@ export class Entities {
     this.time += dt
     const rect = cam && cam.x0 !== undefined ? cam : null
     const x0 = rect ? rect.x0 : cam.x - VW / 2 - 96, x1 = rect ? rect.x1 : cam.x + VW / 2 + 96, y0 = rect ? rect.y0 : cam.y - VH / 2 - 96, y1 = rect ? rect.y1 : cam.y + VH / 2 + 96
+    this.camRect = rect && rect.cx0 !== undefined ? rect : null // 视口(is_in_camera_bounds 用)
     this._updateBodies(dt, x0, y0, x1, y1)
     this._rebuildBodyGrid()
     const pl = this.player

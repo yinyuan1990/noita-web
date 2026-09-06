@@ -788,7 +788,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         ② **自己的静止计时**:附近滴水 / 落沙让地形块重建,planck 拆 fixture 时把压着的刚体叫醒,永远攒不够它的 0.5s → 速度 <1px/s 且贴着东西 / 吊着 0.5s 就写格子;煤矿一屏 12s 后 0 个刚体在跑、物理 0ms(之前 78/84 醒着 1.4ms);
         ③ 弹丸子步 >1px 时补采中点(2px 步会从刚体上被前几发抠出的 3px 洞里穿过去)。
         `_noita-lantern-shot` 40 发不碎的根因是探针:大灯笼是空心框,弹道比瞄准线低 5° 一直擦底边,底边打没了就全穿过去(像素级重复弹道原版也放过)→ 瞄准抬 4px + ±1.5px 抖动:第 1 发起火漏油、第 12~14 发碎。
-        还差:excavationsite_machine_3b/3c、PhysicsThrowable、break_force 的准确语义(现在 ×160)、⑤ 的碰撞伤害 postSolve / buoyancy 0.7 / go_through_sand / solid_on_collision_*。
+        **物理蘑菇进真菌洞 / 丛林(顺带解锁)**:`spawn_physics_fungus` 表之前因没有定义而跳过,现在自然长出(真菌洞一屏 ~50 株,skipped {})。为此补的:
+        · `PhysicsBody2Component init_offset_y`(蘑菇 40 / 小 28):形状 / 关节坐标系整体上移 —— lua `spawn()` 把实体放在地面标记点,形状从 −6 到 +41、脚在下、锚点 +41 往下射 30px 找地,不减就埔进地里 40px 被挤出来翻滚(prepare 抽进 `d.body.initOffX/Y`,`_makeMultiBody` 减掉;探针的蘑菇也改成标记放地面);
+        · 摆动名额 `MAX_SWAY 4`:lua 是相机 ±50 内全摆,一屏十几株 80 多个部件永远醒着 3~5ms、倒成一堆时 26ms → 只让离相机中心最近的 4 株摆,其余电机归零静止 → 入睡写格子;
+        · 全部蘑菇共用碰撞组 −1 互不碰(长得密、彼此挨着,在摆的通过接触把整片邻居一直叫醒 —— Box2D 同一岛同醒;植物重叠无妨);
+        · 地锚断了不再施浮力(我们的质量尺度下浮力 25 N ≈ 1.3~2× 重量,断了会像气球飘走;各尺寸 lift/重量比 0.6~2 摆动,密度常数没法定死,先这样);
+        · 地形块重建两个闸:同一块至少隔 6 帧、每帧最多 2 块(真菌洞落沙 / 孢子不停改格子,之前每帧重建 6 块 2.7ms);静止阈值放到 1.5px/s / 0.06rad/s(一串吊着浮力的铰链有 0.2~0.5px/s 残抖)。
+        真菌洞一屏:物理 54ms/20fps → 2.7~3.3ms(其中 world.step 2.4、地形 0.8;那里材质模拟本身 12~16ms 才是大头);煤矿 / 出生地 0~0.5ms。
+        还差:excavationsite_machine_3b/3c、PhysicsThrowable、break_force 的准确语义(现在 ×160)、Box2D 密度常数(K=36 让蘑菇浮力偏大,K≈18 让 huge 蘑菇立不住 —— 得反 csolidcell.cpp 的 fixture density)、⑤ 的碰撞伤害 postSolve / buoyancy 0.7 / go_through_sand / solid_on_collision_*。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。

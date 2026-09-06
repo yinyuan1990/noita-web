@@ -254,7 +254,9 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
       ]
     }
     // PhysicsBody2Component root_offset:图的根(中心)相对实体位置的偏移(lantern_small 5,7 ≈ 9×13 图的中心)—— 按标记点放的时候用它对齐
-    const pb2 = first(e, 'PhysicsBody2Component'); if (pb2 && d.body) { d.body.rootOffX = num(pb2.root_offset_x, 0); d.body.rootOffY = num(pb2.root_offset_y, 0) }
+    // init_offset:形状 / 关节的坐标系相对实体原点的偏移 —— 蘑菇 init_offset_y=40:形状从 −6 到 +41、脚在下、锚点 +41 往下射 30px 找地,
+    // lua 把实体放在地面标记点上,整株要上移 40 脚才落在地面上(不减的话埔进地里 40px 被挤出来翻滚)
+    const pb2 = first(e, 'PhysicsBody2Component'); if (pb2 && d.body) { d.body.rootOffX = num(pb2.root_offset_x, 0); d.body.rootOffY = num(pb2.root_offset_y, 0); d.body.initOffX = num(pb2.init_offset_x, 0); d.body.initOffY = num(pb2.init_offset_y, 0) }
     // chain_to_ceiling.lua:VariableStorage chain_N_x/y 是挂点(相对实体),没有就 (0,0);每根链往上找 200px 内的顶
     if ((e.comps.get('LuaComponent') || []).some((l) => /chain_to_ceiling/.test(l.script_source_file || ''))) {
       const vs = e.comps.get('VariableStorageComponent') || []
