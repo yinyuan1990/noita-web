@@ -43,6 +43,22 @@ export class Physics {
     }
     this.world = new World({ gravity: new Vec2(0, this.gravity / PPM), allowSleep: true })
     this.ground = this.world.createBody({ type: 'static' })
+    // 碰撞速度(PhysicsBodyCollisionDamageComponent speed_threshold 用):pre-solve 里接触法向上的相对接近速度,记到 rb._impact(px/s,每步取最大;_syncAll 里清)
+    this.world.on('pre-solve', (c) => {
+      const fa = c.getFixtureA(), fb = c.getFixtureB(), ba = fa.getBody(), bb = fb.getBody()
+      const ra = ba.getUserData()?.rb, rbB = bb.getUserData()?.rb
+      if (!ra && !rbB) return
+      const wm = c.getWorldManifold(null)
+      if (!wm || !wm.points.length) return
+      const n = wm.normal, p = wm.points[0]
+      const va = ba.getLinearVelocityFromWorldPoint(p), vb = bb.getLinearVelocityFromWorldPoint(p)
+      const dvx = vb.x - va.x, dvy = vb.y - va.y
+      const rel = (dvx * n.x + dvy * n.y) * PPM // 沿法线的接近速度(负 = 正在靠近);贴着滑 / 滚不算撞
+      if (rel > -3) return
+      const sp = Math.hypot(dvx, dvy) * PPM // 撞击速度取相对速度大小(扔出去贴地滑着落地也算撞)
+      if (ra && sp > ra._impact) ra._impact = sp
+      if (rbB && sp > rbB._impact) rbB._impact = sp
+    })
     this.tiles = new Map() // "tx,ty" → { fixtures: Fixture[], ver, last, verts }
     this.frame = 0
     this.acc = 0
@@ -195,7 +211,7 @@ export class Physics {
     rb.pb = b
     this._makeFixtures(rb)
     rb._px = rb.x; rb._py = rb.y; rb._prot = rb.rot; rb._sx = rb.vx; rb._sy = rb.vy; rb._sw = rb.w
-    rb._spPrev = Math.hypot(rb.vx, rb.vy); rb._vyPrev = rb.vy
+    rb._spPrev = Math.hypot(rb.vx, rb.vy); rb._vyPrev = rb.vy; rb._impact = 0; rb.impact = 0
     rb.fixDirty = false
     return b
   }
@@ -254,6 +270,7 @@ export class Physics {
       const rb = b.getUserData()?.rb
       if (!rb || !b.isActive()) continue
       rb._spPrev = Math.hypot(rb.vx, rb.vy); rb._vyPrev = rb.vy
+      rb.impact = Math.max(rb.impact || 0, rb._impact || 0); rb._impact = 0 // 这一帧里最大的接触接近速度,Entities 用完清零
       const p = b.getPosition(), v = b.getLinearVelocity()
       rb.x = rb._px = p.x * PPM; rb.y = rb._py = p.y * PPM; rb.rot = rb._prot = b.getAngle()
       rb.vx = rb._sx = v.x * PPM; rb.vy = rb._sy = v.y * PPM; rb.w = rb._sw = b.getAngularVelocity()

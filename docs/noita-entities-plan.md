@@ -807,6 +807,10 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         BLOOD_EXPLOSION 不建关节、不设碰撞组靠互撞散开(手写版补的离心初速撤了);FROZEN 单块也上 planck;`Ragdoll` 类只剩血喷 / 烧尸记账(`_ragdollBlood`);根死不连坐(`!M.isRagdoll`)。
         探针:NORMAL 12 块 11 关节 0 断、1.9s 整具写格子、锚点误差 0;火烧死 3s 内 24~28 格火、67 格 meat;BLOOD_EXPLOSION 散 31~49px;`_noita-body-shot` 12 块 3s 全睡(之前 planck 第一版 133px/s 乱抖就是刹车扭矩按质量和算的)。
         手写求解器现在只剩:chain_to_ceiling 吊链(`ropes`)、货架上钉着的卡 / 特权(`nailed` 物品)、没 planck 的兜底。
+      ⑤ ✅ 一半(已上线)**碰撞伤害走 Box2D 接触**:`Physics` 挂 `world.on('pre-solve')`,接触点法向接近速度 < −3 px/s(确实在撞,贴着滑 / 滚不算)时把两体**相对速度大小**(px/s)记到 `rb._impact`,`_syncAll` 汇成 `rb.impact`(一帧取最大,Entities 用完清零)。
+        用它的地方:PhysicsBodyCollisionDamageComponent(`impact > speed_threshold` → 伤 impact × damage_multiplier,灯笼 120 / 药水 80)、混凝土块撞碎(>60)、药水碎(potion.xml:阈值 80、×1/60、hp 0.5 → 撞击 >80 px/s 必碎;从 44px 以上掉下来才到 80,手边掉地不碎;扔出去 180 必碎,点射墙也碎)。
+        踩过的坑:一开始用法向分量,扔出去贴地滑着落地法向分量只有几十不碎;又加了 0.1s 出生保护,把"扔出去当帧撞墙"的 205 吞了 —— 出生静止的刚体本来没有接触速度,保护撤掉。手写求解器分支仍看前后帧速度差。
+        浮力 `buoyancy 0.7` 没反出来(physics_bridge.cpp 6 个函数里没看到明显的按格数算力的常量;木箱 density 6 在水里能浮,说明不是简单阿基米德),先留现在按密度比的近似。
         还差:excavationsite_machine_3b/3c、PhysicsThrowable、Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、⑤ 的碰撞伤害 postSolve / buoyancy 0.7 / go_through_sand / solid_on_collision_*。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);

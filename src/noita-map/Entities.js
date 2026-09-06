@@ -686,7 +686,11 @@ export class Entities {
           b.asleep = !b.pb.isAwake()
           if (b.asleep) continue
           const touching = this._stepPhysBody(b, dt)
-          if (b.potion && touching && b._spPrev > 165 && b._spPrev - Math.hypot(b.vx, b.vy) > 100) { this._destroyBody(b, b.x, b.y); continue }
+          // 药水(potion.xml):PhysicsBodyCollisionDamageComponent speed_threshold 80、damage_multiplier 1/60,hp 0.5 → 撞击速度 >80 px/s 就碎
+          // (从 44px 以上掉下来才到 80,手边掉地不碎;扔出去 180 必碎);手写求解器没有接触速度,仍看前后帧速度差
+          const imp = b.pb ? b.impact : (touching && b._spPrev - Math.hypot(b.vx, b.vy) > 100 ? b._spPrev : 0); b.impact = 0
+          const CDp = b.d.collisionDamage
+          if (b.potion && CDp && imp > CDp.speed_threshold && imp * CDp.damage_multiplier >= (b.d.damage?.hp ?? 0.5)) { this._destroyBody(b, b.x, b.y); continue }
           continue
         }
         if (b.asleep) { b.age += dt; b.checkT -= dt; if (b.checkT <= 0) { b.checkT = 0.4; if (!b.supported(this._solidB)) b.asleep = false } continue }
@@ -734,7 +738,10 @@ export class Entities {
       const touching = b.pb ? this._stepPhysBody(b, dt) : b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
       // PhysicsBodyCollisionDamageComponent:撞上东西时速度超过 speed_threshold(灯笼 120)→ 掉血 = 速度 × damage_multiplier(默认 1/60);灯笼掉下来砸地就碎、洒油、起火
       // 材质 solid_on_collision_explode(concrete_collapsed 崩塌块):砸到东西按材质的 ExplosionConfig 炸一下 —— r4~20、震镜、concrete_sand 火花,块本身留着
-      if (b.collideExplode && touching && spBefore > 60 && !b.exploded) {
+      // 撞击速度:planck 上用 pre-solve 记的接触法向接近速度(rb.impact),手写求解器仍看前后帧速度差
+      const impact = b.pb ? b.impact : (touching ? spBefore : 0)
+      if (b.pb) b.impact = 0
+      if (b.collideExplode && impact > 60 && !b.exploded) {
         b.exploded = true
         const sand = this.mats.byName.get('concrete_sand')
         if (sand) for (let k = 0; k < 14; k++) this.hooks.debris?.(b.x + (Math.random() - 0.5) * b.w0, b.y + b.h0 / 2 - 1, (Math.random() - 0.5) * 120, -20 - Math.random() * 90, sand, this.mats.color[sand], true)
@@ -742,9 +749,9 @@ export class Entities {
       }
       const CD = b.d.collisionDamage
       const hanging = b.ropes?.some((r) => !r.broken)
-      if (CD && touching && !hanging && b.age > 0.3 && spBefore > CD.speed_threshold) { // 还挂着的不算(链子一拽速度会跳)
-        const spAfter = Math.hypot(b.vx, b.vy)
-        if (spBefore - spAfter > CD.speed_threshold * 0.5) { this._bodyDamaged(b, spBefore * CD.damage_multiplier, 0, b.x, b.y); if (b.dead) continue }
+      if (CD && !hanging && b.age > 0.3 && impact > CD.speed_threshold) { // 还挂着的不算(链子一拽速度会跳)
+        // planck:接触接近速度就是撞击速度;手写:还要看速度确实掉了一半以上
+        if (b.pb || spBefore - Math.hypot(b.vx, b.vy) > CD.speed_threshold * 0.5) { this._bodyDamaged(b, impact * CD.damage_multiplier, 0, b.x, b.y); if (b.dead) continue }
       }
       // 摔落伤害(DamageModel falling_damages:高度 70~250px 线性给 0.1~1.2 伤,矿灯 0.15 血摔一下就碎):记下开始下落的高度,落地时算落差
       const D = b.d.damage

@@ -21,7 +21,8 @@ const nW = await page.evaluate(() => window.__np.player.wands.length)
 await page.keyboard.press(String(nW + 1)); await page.waitForTimeout(100)
 await page.mouse.move(750, 200); await page.mouse.down(); await page.waitForTimeout(100); await page.mouse.up()
 await page.waitForTimeout(1500)
-console.log('thrown', await page.evaluate(() => { const s = window.__np.sim; let liq = 0; for (let y = -140; y < -40; y++) for (let x = 250; x < 450; x++) { const m = s.get(x, y); if (m > 0 && window.__np.mats.kind[m] === 'liquid') liq++ } return { items: window.__np.player.items.map((i) => i.name), liquidCells: liq, bodies: window.__np.entities.bodies.filter((b) => b.isItem).map((b) => b.name) } }))
+// Box2D 重力 72 px/s²:180 px/s 扔出去能飞 400 多像素,统计区放到整个前方
+console.log('thrown', await page.evaluate(() => { const s = window.__np.sim; let liq = 0; for (let y = -160; y < 60; y++) for (let x = 250; x < 900; x++) { const m = s.get(x, y); if (m > 0 && window.__np.mats.kind[m] === 'liquid') liq++ } return { items: window.__np.player.items.map((i) => i.name), liquidCells: liq, broken: window.__np.entities.stats.broken, potionsLeft: window.__np.entities.bodies.filter((b) => b.isItem && b.potion && !b.dead).map((b) => `${b.potion.mat}@${b.x | 0},${b.y | 0}`) } }))
 await page.screenshot({ path: `${out}/items-1.png` })
 // 继续走去开箱 + 捡心
 await page.keyboard.down('d'); await page.waitForTimeout(2200); await page.keyboard.up('d'); await page.waitForTimeout(1500)
