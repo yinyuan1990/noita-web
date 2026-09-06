@@ -8,13 +8,14 @@
 // 物理道具(prop)在这一步只登记,不实例化——像素刚体是第 2 步。
 
 import { RigidBody } from './RigidBody.js'
+import { Physics } from './Physics.js'
 import { Ragdoll } from './Ragdoll.js'
 import { NollaPrng } from './core/NollaPrng.js'
 import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from './core/coords.js'
 
 const K_LIQUID = 3
 const MAX_SWAY = 4 // 同时在摆的物理蘑菇上限(见 _updateMultis;真菌洞 6 株 ≈ 45 个部件 2.5~5ms)
-const BODY_GRAVITY = 60 // Box2D 世界重力:exe global_gravity = 6 × 10 = 60 px/s²(10 m/s²),见 Physics.js;原版箱子 / 尸体确实比角色(pixel_gravity 350)落得慢得多
+const BODY_GRAVITY = 72 // Box2D 世界重力:反 exe b2World 构造的重力向量 (0, 12) m/s² = 72 px/s²,见 Physics.js;原版箱子 / 尸体确实比角色(pixel_gravity 350)落得慢得多
 
 export class Entities {
   /**
@@ -453,7 +454,9 @@ export class Entities {
       const pj = /WELD/.test(j.type) ? PH.weld(A, other, ax, ay) : PH.revolute(A, other, ax, ay, { motor: j.motor, motorTorque: j.motorTorque })
       if (!pj) continue
       // break_distance 是 Box2D 米(1.4142 m = 8.5px;蘑菇 5 → 30px、脚 8 → 48px):按像素算的话矿车落地那一下就断了
-      M.joints.push({ j: pj, A, B: other, anchorCell, breakDist: (j.kind === 'new' ? j.breakDistance : (j.breakable ? 1.4142 : 0)) * 6, breakForce: j.kind === 'new' ? j.breakForce : 0, breakOnModified: !!j.breakOnModified, aliveA: A.alive, aliveB: other ? other.alive : 0 })
+      // break_force × (mA + mB) × 160 = 断裂阈值(N)(反 exe 0x76c0af:灯笼 0.5 × 11 kg × 160 = 900 N,自重 136 N;蘑菇茎 10 × 5.4 × 160 = 8600 N)
+      const breakN = j.kind === 'new' && j.breakForce > 0 ? j.breakForce * Physics.jointForceScale(A.pb, other ? other.pb : PH.ground) : 0
+      M.joints.push({ j: pj, A, B: other, anchorCell, breakDist: (j.kind === 'new' ? j.breakDistance : (j.breakable ? 1.4142 : 0)) * 6, breakN, breakOnModified: !!j.breakOnModified, aliveA: A.alive, aliveB: other ? other.alive : 0 })
     }
     // physics_fungus.lua:lift 浮力 + 电机正弦摆(speed_mult = ProceduralRandomf(entity_id, 4, 0.1, 0.75))
     if (d.lift) M.lift = d.lift
@@ -485,8 +488,8 @@ export class Entities {
       M.age += dt
       const root = M.root
       if (root && !root.dead && !root.asleep && root.pb) {
-        // lift -25 = 向上 25 N;wake=false:别每帧把睡着的叫醒(拉直后静止就该睡)。只在还钉着地时施力 —— 我们的质量尺度下浮力略大于重量,断了锚会像气球飘走(原版 lua 无条件施力,但它的密度常数没反出来)
-        if (M.lift && M.joints.some((J) => !J.B)) root.pb.applyForceToCenter({ x: 0, y: M.lift }, false)
+        // lift -25 = 向上 25 N(PhysicsApplyForce 不换算,反 exe 0x836f20 / 0xd00260):蘑菇 44 kg 重 524 N,这点浮力只是让它轻一点,立着靠茎关节的刹车;wake=false 别每帧把睡着的叫醒
+        if (M.lift) root.pb.applyForceToCenter({ x: 0, y: M.lift }, false)
         const inCam = swayers ? swayers.has(M) : true
         if (M.sway && inCam) {
           const t = M.age * 60 * 0.02 + M.seed * 2.721
@@ -503,7 +506,7 @@ export class Entities {
         if (!broken && J.anchorCell && !this._solidB(J.anchorCell[0], J.anchorCell[1])) { broken = true; if (J.A.asleep) J.A.wake(this.sim) }
         if (!broken && !J.A.asleep) {
           if (J.breakDist > 0 && PH.jointGap(J.j) > J.breakDist) broken = true
-          if (J.breakForce > 0 && PH.jointForce(J.j) > J.breakForce * 160) broken = true
+          if (J.breakN > 0 && PH.jointForce(J.j) > J.breakN) broken = true
           if (J.breakOnModified && (J.A.alive !== J.aliveA || (J.B && J.B.alive !== J.aliveB))) broken = true
         }
         if (broken) { if (!dead) PH.destroyJoint(J.j); M.joints.splice(k, 1) }

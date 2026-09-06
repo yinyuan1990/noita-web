@@ -31,9 +31,9 @@ export class Physics {
    */
   constructor(sim, opt = {}) {
     this.sim = sim
-    // Box2D 世界重力:exe 里 global_gravity = scale(6) × 10 = 60 px/s² = 10 m/s²(0x756d09;比角色的 pixel_gravity 350 慢得多 —— 原版尸体 / 箱子确实"飘着"落,药水能扔出平飞的远弧)。
-    // 和 density/36 一起才对得上 ragdoll 关节 MIN_BREAK_FORCE 200(躯干 ~60px → 10kg → 自重 100N 不会自己扯断)、蘑菇茎 motor_max_torque 10 撑得住帽子
-    this.gravity = opt.gravity ?? 60
+    // Box2D 世界重力:反 exe GridWorld 建 b2World(0x760b1c new 0x192b8 字节,ctor 0xabb6c0)的重力向量 = .rdata 0x11e0b70 两个 double (0, 12) → **12 m/s² = 72 px/s²**
+    // (比角色的 pixel_gravity 350 慢得多 —— 原版尸体 / 箱子确实"飘着"落,药水能扔出平飞的远弧;粒子系统另有 global_gravity = 6×10 = 60 px/s²)
+    this.gravity = opt.gravity ?? 72
     this.terrainFriction = opt.friction ?? 0.75 // PhysicsShapeComponent 默认 friction
     // 材质 id → solid_friction / solid_restitution(materials.json;0 = 没写)
     const L = opt.mats?.list
@@ -215,9 +215,9 @@ export class Physics {
     const b = rb.pb
     const fr = (this.matFriction && this.matFriction[rb.mat]) || rb.friction || 0.75
     const re = (this.matRestitution && this.matRestitution[rb.mat]) || 0
-    // 密度 = 材质 density / 36(每像素质量 = density/1296 kg):physics_fungus.lua 每帧给帽子 lift 25 N 的浮力、各尺寸蘑菇 lift/像素 ≈ 0.06~0.095 N 恒定,
-    // 只有这个尺度下 262 像素的蘑菇(12 N)才会被浮力拉直、靠脚下地锚立着;ragdoll 躯干 0.28 kg 自重远小于关节 MIN_BREAK_FORCE 200;轮架 5 kg 的轮 200 N·m 电机 0.2s 转起来
-    const opt = { density: (rb.density || 6) / (PPM * PPM), friction: fr, restitution: re }
+    // 密度 = 材质 density 原值(反 exe 0x9ec1e6 像素刚体 CreateFixture:density ← CellData+0x15c = "density",friction ← +0x198 solid_friction,restitution ← +0x19c solid_restitution;
+    // 没材质时默认 1.0 / 0.3 / 0.2)。质量 = density × 面积(m²,1 m² = 36 px):24px 木箱 96 kg —— 和爆炸 physics_explosion_power ≈2 × 3600 N·s 打出 ~450 px/s 正好对上
+    const opt = { density: rb.density || 1, friction: fr, restitution: re }
     if (rb.filterGroup) opt.filterGroupIndex = rb.filterGroup // 同一多体实体的部件互不碰撞(原版 Box2D_CreateFilterData 按实体分组;蘑菇帽和第二节茎、桌腿和桌面本来就重叠)
     if (rb.isCircle) {
       // PhysicsImageShapeComponent is_circle:"看像素的包围盒,圆心在盒中心,半径 = 到直边的距离"(轮子)
@@ -237,7 +237,7 @@ export class Physics {
       return
     }
     for (const poly of polys) b.createFixture(new Polygon(poly.map((p) => new Vec2(p[0] / PPM, p[1] / PPM))), opt)
-    if (b.getMass() <= 0) b.setMassData({ mass: Math.max(1, rb.alive) * (rb.density || 6) / (PPM * PPM) / (PPM * PPM), center: new Vec2(0, 0), I: 0.001 })
+    if (b.getMass() <= 0) b.setMassData({ mass: Math.max(1, rb.alive) * (rb.density || 1) / (PPM * PPM), center: new Vec2(0, 0), I: 0.01 })
   }
   /** 外部改了 rb 的位置 / 速度(爆炸冲量 / 玩家推 / 顶出实心 / 浮力)→ 写进 planck */
   pushToPhysics(rb) {
@@ -291,11 +291,15 @@ export class Physics {
   revolute(rbA, rbB, wx, wy, opt = {}) {
     const a = rbA.pb, b = rbB ? rbB.pb : this.ground
     if (!a || !b) return null
-    // motor_speed 0 + motor_max_torque > 0(蘑菇茎的 Joint2Mutator)= 刹车:关节抵抗转动直到扭矩超过上限,一串铰链才立得住
-    const j = new RevoluteJoint({ enableMotor: !!opt.motor || opt.motorTorque > 0, motorSpeed: opt.motor || 0, maxMotorTorque: opt.motorTorque || 0, collideConnected: false }, a, b, new Vec2(wx / PPM, wy / PPM))
+    // motor_speed 0 + motor_max_torque > 0(蘑菇茎的 Joint2Mutator)= 刹车:关节抵抗转动直到扭矩超过上限,一串铰链才立得住。
+    // 扭矩按 xml 值 × 关节力基准(见 jointForceScale:两端质量和 × PHYSICS_JOINT_MAX_FORCE_MULTIPLIER 160)—— 反 exe 关节创建(0x76ac36 / 0x76c0af)里 break_force 就是这么乘的,10 N·m 裸值撑不住 44 kg 的蘑菇
+    const k = Physics.jointForceScale(a, b)
+    const j = new RevoluteJoint({ enableMotor: !!opt.motor || opt.motorTorque > 0, motorSpeed: opt.motor || 0, maxMotorTorque: (opt.motorTorque || 0) * k, collideConnected: false }, a, b, new Vec2(wx / PPM, wy / PPM))
     this.world.createJoint(j)
     return j
   }
+  /** 关节力基准 = (mA + mB) × PHYSICS_JOINT_MAX_FORCE_MULTIPLIER(160;magic_numbers.xml,exe 0x12eb7c4):break_force / 电机扭矩都乘它(ragdoll 关节另算:max(200, (mA+mB)×400)) */
+  static jointForceScale(a, b) { return (a.getMass() + b.getMass()) * 160 }
   /** 焊接:PhysicsJoint2Component WELD(家具的横梁和腿) */
   weld(rbA, rbB, wx, wy) {
     const a = rbA.pb, b = rbB ? rbB.pb : this.ground

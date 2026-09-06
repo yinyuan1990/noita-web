@@ -795,7 +795,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         · 地锚断了不再施浮力(我们的质量尺度下浮力 25 N ≈ 1.3~2× 重量,断了会像气球飘走;各尺寸 lift/重量比 0.6~2 摆动,密度常数没法定死,先这样);
         · 地形块重建两个闸:同一块至少隔 6 帧、每帧最多 2 块(真菌洞落沙 / 孢子不停改格子,之前每帧重建 6 块 2.7ms);静止阈值放到 1.5px/s / 0.06rad/s(一串吊着浮力的铰链有 0.2~0.5px/s 残抖)。
         真菌洞一屏:物理 54ms/20fps → 2.7~3.3ms(其中 world.step 2.4、地形 0.8;那里材质模拟本身 12~16ms 才是大头);煤矿 / 出生地 0~0.5ms。
-        还差:excavationsite_machine_3b/3c、PhysicsThrowable、break_force 的准确语义(现在 ×160)、Box2D 密度常数(K=36 让蘑菇浮力偏大,K≈18 让 huge 蘑菇立不住 —— 得反 csolidcell.cpp 的 fixture density)、⑤ 的碰撞伤害 postSolve / buoyancy 0.7 / go_through_sand / solid_on_collision_*。
+        **尺度常数反 exe 定稿(用户:"反吧";推翻了上面 ④ 里 "重力 60 / 密度 ÷36" 的推断)**:
+        · **b2World 重力 (0, 12) m/s² = 72 px/s²**:GridWorld 建 b2World(`new` 0x192b8 字节 @0x760b1c,ctor 0xabb6c0)传的重力向量 = .rdata 0x11e0b70 两个 double。`global_gravity = 6×10 = 60` 是 grid_particles.cpp 的粒子重力,不是 Box2D 的。
+        · **fixture density = 材质 `density` 原值**(像素刚体 CreateFixture 0x9ec1e6:density ← CellData+0x15c,xml 解析处 `lea eax,[esi+0x15c]` 配 "density" 字符串;friction ← +0x198 solid_friction、restitution ← +0x19c solid_restitution;无材质默认 1.0 / 0.3 / 0.2)。
+          这个 Box2D 是**双精度**编译的(b2FixtureDef 字段是 double,PhysicsPosToGamePos 也是 double)。质量 = density × px/36:24px 木箱 96 kg、262px 蘑菇 44 kg、灯笼 11 kg —— 和爆炸 `physics_explosion_power ≈2 × 3600 N·s → ~450 px/s` 正好对上(我们经验拟合的 ×120)。
+        · **关节力基准 = (mA + mB) × PHYSICS_JOINT_MAX_FORCE_MULTIPLIER(160)**(0x76ac36 / 0x76c0af:body+0xd0 是 m_mass;ragdoll 关节 0x2b67/0x2b68 用 max(200, (mA+mB)×400)),`break_force` 乘它 = 断裂阈值 N(灯笼 0.5×11×160 = 900 N > 自重 136;蘑菇茎 10×5.4×160 = 8600);
+          电机 `motor_max_torque` 按同一基准乘(裸值 10 N·m 撑不住 44 kg 的蘑菇,原版蘑菇是立着的;摆幅 = ∫电机速度 dt,原版真菌洞的蘑菇本来就晃得明显)。`PhysicsApplyForce` 不换算(0x836f20 → 0xd00260 排队给 Box2D 线程),lift 25 N 对 524 N 的蘑菇只是减重。
+        · 代码:`Physics` 重力默认 72、`BODY_GRAVITY` 72、density 原值、`Physics.jointForceScale(a,b)`、`_makeMultiBody` 的 `breakN`、lift 不再限制在有锚时。探针:蘑菇 6-6 立着摆、灯笼 36 发碎、矿车推 24px 轮转、堆叠 / 崩塌块 / 尸体不回归,真菌洞物理 1.1ms。
+        还差:excavationsite_machine_3b/3c、PhysicsThrowable、Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、⑤ 的碰撞伤害 postSolve / buoyancy 0.7 / go_through_sand / solid_on_collision_*。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
@@ -814,7 +821,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 **当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
 **正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① 地形(多边形)② 形状图刚体 / 物品 / 崩塌块上 planck + 睡醒桥接 ④ 关节第一批(矿车 / 滑板 / 轮架 / 物理蘑菇 / 家具 / 钉墙轮)已上线;
-**Box2D 重力 60 px/s²、密度 = 材质 density/36 是反出来的两个全局尺度(见 ④)**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时)也已上线。下一步:⑤(碰撞伤害走 postSolve、浮力按 buoyancy 0.7、go_through_sand、solid_on_collision_*)、PhysicsThrowable、挖掘场多体机械。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+**Box2D 尺度常数已反 exe 定稿(见 ④ 末):重力 12 m/s² = 72 px/s²、fixture 密度 = 材质 density 原值、关节力基准 = (mA+mB)×160**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时 / 物理蘑菇进真菌洞)也已上线。下一步:⑤(碰撞伤害走 postSolve、浮力按 buoyancy 0.7、go_through_sand、solid_on_collision_*)、PhysicsThrowable、挖掘场多体机械。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。
