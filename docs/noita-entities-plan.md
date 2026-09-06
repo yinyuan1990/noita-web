@@ -865,6 +865,11 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         出手点 0xd02a60:from + dir×2,再沿 dir 射 20px 撞到实心就停在墙前;`projectiles_rotate_toward_velocity` 时 SetTransform 角度 = atan2(v)。然后 SetLinearVelocity(v/6)、SetAngularVelocity(ω)。
         potion.xml:coeff 1.5 / max 180 → 光标离手 120px 以上才满速,20px 只有 31px/s(轻扔)。代码 `Entities.throwItem(name, from, target, extra)` + `THROWABLE` 表,noitaPlay 传手 (x, y−4) 和光标。
         没做:attach_to_surfaces(飞刀插墙,tip_check / attach_min_speed 70 那套在 0xd11330)—— 我们没有可扔的刀。
+        ✅(已上线)**十具尸体砸进坑的首秒尖峰**(待办 ⑤):探针给 planck 各阶段计时(`updateContacts` 窄相 / `solveWorld` / `solveWorldTOI` / `findNewContacts`)+ 接触分类 ——
+        500~800 对接触里 **340~420 对是尸块对地形**(每块的包围盒压着 3~4 个地形凸块),尸块互撞只 30~60 对,真接触 ~80;每秒 60 步:窄相 25ms、求解 13ms、**TOI 22~170ms**(波动最大)。
+        Box2D 对每一对"动态 vs 静态"接触每步都算 TimeOfImpact 防穿地,和 bullet 无关 —— 这才是尖峰。试过:尸块关 bullet(没差别)、3px 碎渣不和尸块互撞(接触没少多少,留着)、
+        碎渣做圆 fixture(窄相 / TOI 便宜但像弹珠滚个不停,3 秒还 80 块醒着,撤)。定稿:**醒着的刚体 > 40 且接触 > 200 时关连续碰撞**(`setContinuousPhysics`,面板显示 "TOI关"),散了再开 ——
+        堆成一坑的都很慢,穿地风险本来就低,还有埋地上抬兜底;正常一屏醒着的个位数不会触发。首秒物理 1.7~3.1ms / 峰值 5~7 → 0.9~1.3 / ≤3.9(本机,手机 ×5~8)。
         还差:Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、PhysicsBridge+0x48 帧戳门、沙阻力 / splash 那条、飞刀插墙。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);

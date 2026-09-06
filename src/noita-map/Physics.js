@@ -17,6 +17,8 @@ const TERRAIN_NEAR = 24         // 醒着的刚体包围盒外扩多少 px 就�
 const TILE_TTL = 120            // 块 N 帧没被任何刚体用到就释放
 const MAX_BUILD_PER_FRAME = 2   // 每帧最多重建几块(单块 34×34 采样 + 描边 + 三角化 ≈ 0.45ms;真菌洞落沙不停,不限的话地形重建就 2.7ms/帧)
 const MIN_REBUILD_GAP = 6       // 同一块两次重建至少隔几帧(落沙区每帧都在变;歇着的刚体不在乎 100ms 的滞后,掉下来的最多陷进新沙 1~2px)
+const TOI_OFF_CONTACTS = 200, TOI_OFF_AWAKE = 40 // 醒着的刚体 > 40 且接触 > 200 就关连续碰撞(见 step);正常一屏醒着的个位数、接触一两百,十具尸体挤一坑 60~90 醒 / 500~800 对
+const CAT_RAGDOLL_TINY = 2, CAT_RAGDOLL_BIG = 4 // 碰撞类别位(默认 1):尸块碎渣 / 尸块大块,见 _makeFixtures
 const SIMPLIFY_EPS = 0.3        // Douglas-Peucker 容差(px):1:1 的 45° 台阶已经是直线;0.6 会把"平台上落了一粒土"拉成 1° 的斜线,整摞箱子跟着歪
 
 // planck 的 maxPolygonVertices 默认 12,Box2D 2.3 是 8;地形用 chain 不受限。velocityThreshold 1 m/s = 6 px/s:比这慢的碰撞不弹
@@ -81,6 +83,12 @@ export class Physics {
       this.acc -= FIXED_DT
       this.frame++
       const a = performance.now(); this._refreshTerrain()
+      // 连续碰撞(TOI)按接触对数开关:Box2D 对每一对"动态 vs 静态"接触每步都算一次 TimeOfImpact 防穿地,十具尸体挤一坑 300 多对尸块–地形接触时这一项占物理的 40~60%
+      // 且波动最大(每秒 22~170ms);堆成一坑的东西都很慢,穿地风险本来就低(还有 _stepPhysBody 的埋地上抬兜底)。
+      // 醒着的刚体 > TOI_OFF_AWAKE 且接触 > TOI_OFF_CONTACTS 才关(睡着的金块堆也带着一两百对接触,平时不能只看接触数),散了再开
+      const off = this.stats.awake > TOI_OFF_AWAKE && this.world.getContactCount() > TOI_OFF_CONTACTS
+      if (off === this.world.m_continuousPhysics) this.world.setContinuousPhysics(!off)
+      this.stats.toiOff = off
       const b = performance.now(); this.world.step(FIXED_DT, 8, 3)
       const c = performance.now(); this._syncAll()
       const d = performance.now(); tT += b - a; tS += c - b; tY += d - c
@@ -209,7 +217,7 @@ export class Physics {
       linearDamping: rb.linDamp || 0, angularDamping: rb.angDamp || 0,
       fixedRotation: !!rb.fixedRot, allowSleep: true, gravityScale: rb.gravScale || 1,
       // 小件(矿车 2.5px 的轮子 / 金粒)开连续碰撞:6px=1m 下落地速度 ≈ 24 m/s、一步走 2.4px,比轮子半径还大,离散碰撞会穿过 8px 的台面
-      bullet: !!rb.isBullet || rb.alive <= 40,
+      bullet: !!rb.isBullet || (rb.alive <= 40 && !rb.isRagdoll),
     })
     b.setUserData({ rb, phys: this, noTerrain: false })
     rb.pb = b
@@ -239,6 +247,10 @@ export class Physics {
     // 没材质时默认 1.0 / 0.3 / 0.2)。质量 = density × 面积(m²,1 m² = 36 px):24px 木箱 96 kg —— 和爆炸 physics_explosion_power ≈2 × 3600 N·s 打出 ~450 px/s 正好对上
     const opt = { density: rb.density || 1, friction: fr, restitution: re }
     if (rb.filterGroup) opt.filterGroupIndex = rb.filterGroup // 同一多体实体的部件互不碰撞(原版 Box2D_CreateFilterData 按实体分组;蘑菇帽和第二节茎、桌腿和桌面本来就重叠)
+    // 尸块分两类:≤6 像素的碎渣(一具 12 块里 8 块是 3px)只撞地形 / 道具,不和任何尸块互撞;躯干 / 头照旧互撞堆叠。
+    // 十具尸体挤一坑时 600~800 对接触里大半是碎渣之间的,手机上第 1 秒就是 20~40ms 的顿;碎渣互相穿过去看不出来(原版 C++ 扛得住所以不分)
+    // (试过把碎渣做成圆 fixture 省窄相 / TOI:像弹珠一样滚个不停,3 秒后还有 80 块醒着,撤了)
+    if (rb.isRagdoll) { const tiny = rb.alive <= 6; opt.filterCategoryBits = tiny ? CAT_RAGDOLL_TINY : CAT_RAGDOLL_BIG; opt.filterMaskBits = tiny ? 0xffff & ~(CAT_RAGDOLL_TINY | CAT_RAGDOLL_BIG) : 0xffff }
     if (rb.isCircle) {
       // PhysicsImageShapeComponent is_circle:"看像素的包围盒,圆心在盒中心,半径 = 到直边的距离"(轮子)
       const bb = maskBounds(rb.mask, rb.w0, rb.h0)

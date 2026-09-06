@@ -33,8 +33,15 @@ await page.evaluate(() => {
     return
   }
 })
+// planck 各阶段计时(updateContacts = 窄相 / solveWorld = 求解 / solveWorldTOI = 连续碰撞 / findNewContacts = 宽相),每秒汇总进 rows.ph
+await page.evaluate(() => {
+  const w = window.__np.physics.world, T = (window.__phT = { upd: 0, solve: 0, toi: 0, broad: 0 })
+  const wrap = (obj, k, key) => { const o = obj[k].bind(obj); obj[k] = (...a) => { const t = performance.now(); const r = o(...a); T[key] += performance.now() - t; return r } }
+  wrap(w, 'updateContacts', 'upd'); wrap(w, 'findNewContacts', 'broad'); wrap(w.m_solver, 'solveWorld', 'solve'); wrap(w.m_solver, 'solveWorldTOI', 'toi')
+})
 const r = await page.evaluate(async ([N, PROP]) => {
   const np = window.__np, pl = np.player, sim = np.sim, ent = np.entities, ph = np.physics, wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const phT = window.__phT, phSnap = () => { const o = { upd: +phT.upd.toFixed(1), solve: +phT.solve.toFixed(1), toi: +phT.toi.toFixed(1), broad: +phT.broad.toFixed(1) }; phT.upd = phT.solve = phT.toi = phT.broad = 0; return o }
   const rock = np.mats.byName.get('rock_static'), water = np.mats.byName.get('water')
   // 槽:出生点左边 120 宽 40 深,壁厚 6
   const X0 = Math.floor(pl.x) - 200, X1 = X0 + 120, PY = Math.floor(pl.y) - 20
@@ -73,7 +80,14 @@ const r = await page.evaluate(async ([N, PROP]) => {
     const awake = parts.filter((b) => !b.asleep && b.pb?.isAwake())
     const wet = parts.filter((b) => np.entities._liqDensity(Math.floor(b.x), Math.floor(b.y)) > 0).length
     const maxV = awake.reduce((m, b) => Math.max(m, Math.hypot(b.vx, b.vy)), 0)
-    rows.push({ t: s + 1, fps: +((frames - f0) / ((performance.now() - t0) / 1000)).toFixed(0), phys: med(ms), step: med(mst), entUpd: +(acc.upd / Math.max(1, acc.n)).toFixed(2), entRen: +(acc.ren / Math.max(1, acc.n)).toFixed(2), parts: parts.length, awake: awake.length, floatS: parts.filter((b) => b.floatSleep === true).length, wet, b0: parts[0] ? [+parts[0].vx.toFixed(1), +parts[0].vy.toFixed(1), +parts[0].w.toFixed(2), +(parts[0].wetF ?? -1).toFixed(2), +parts[0].restT.toFixed(2)].join('/') : '', maxV: +maxV.toFixed(1), tiles: ph.stats.tiles, contacts: ph.world.getContactCount?.() ?? null })
+    // 接触分类:rr = 两头都是尸块,rt = 尸块对地形(ground body),touch = 真有接触流形(不只是包围盒重叠)
+    let rr = 0, rt = 0, touch = 0
+    for (let c = ph.world.getContactList(); c; c = c.getNext()) {
+      const a = c.getFixtureA().getBody().getUserData()?.rb, b = c.getFixtureB().getBody().getUserData()?.rb
+      if (a?.isRagdoll && b?.isRagdoll) rr++; else if ((a?.isRagdoll && !b) || (b?.isRagdoll && !a)) rt++
+      if (c.isTouching()) touch++
+    }
+    rows.push({ t: s + 1, fps: +((frames - f0) / ((performance.now() - t0) / 1000)).toFixed(0), phys: med(ms), physMax: +Math.max(...ms).toFixed(1), step: med(mst), entUpd: +(acc.upd / Math.max(1, acc.n)).toFixed(2), entRen: +(acc.ren / Math.max(1, acc.n)).toFixed(2), parts: parts.length, awake: awake.length, floatS: parts.filter((b) => b.floatSleep === true).length, wet, b0: parts[0] ? [+parts[0].vx.toFixed(1), +parts[0].vy.toFixed(1), +parts[0].w.toFixed(2), +(parts[0].wetF ?? -1).toFixed(2), +parts[0].restT.toFixed(2)].join('/') : '', maxV: +maxV.toFixed(1), tiles: ph.stats.tiles, contacts: ph.world.getContactCount?.() ?? null, rr, rt, touch, ph: phSnap() })
     acc.upd = acc.ren = acc.n = 0
   }
   cancelAnimationFrame(raf)
@@ -96,6 +110,7 @@ const r = await page.evaluate(async ([N, PROP]) => {
 }, [N, PROP])
 if (sawError) console.log('lastPolySet(px)=', JSON.stringify(await page.evaluate(() => window.__lastPolySet)))
 console.table(r.rows)
+console.log('ROWS t/fps/phys/physMax/step/parts/awake/contacts/rr/rt/touch/ph(ms per s)', JSON.stringify(r.rows.map((q) => [q.t, q.fps, q.phys, q.physMax, q.step, q.parts, q.awake, q.contacts, q.rr, q.rt, q.touch, q.ph])))
 console.log('resettle(awake per 0.5s)', JSON.stringify(r.resettle))
 console.log('drain', JSON.stringify(r.drain), 'bodies', r.totalBodies, 'ragdollParts', r.ragdollParts)
 await page.screenshot({ path: `${out}/corpse-water.png` })

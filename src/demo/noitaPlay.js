@@ -2089,7 +2089,7 @@ function loop(now) {
   $('air').firstElementChild.style.background = player.air <= 0 ? '#e0484f' : '#d8f0ff'
   // 手机端整块面板藏着(挡视野),只在顶上留一行 fps / 模拟 / 物理毫秒,用户反馈掉帧时能直接说出数字
   if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)} · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
-  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 醒 ${sim.activeBlocks} 块 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
+  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 醒 ${sim.activeBlocks} 块 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
