@@ -261,6 +261,15 @@ export class Physics {
     for (let ce = rb.pb.getContactList(); ce; ce = ce.next) if (ce.contact.isTouching()) return true
     return false
   }
+  /** 模拟窗口外冻住(停用,位置速度原样留着)/ 进窗口解冻 */
+  setFrozen(rb, frozen) {
+    const b = rb.pb
+    if (!b) return
+    if (frozen) { b.setActive(false); return }
+    b.setTransform(new Vec2(rb.x / PPM, rb.y / PPM), rb.rot); b.setLinearVelocity(new Vec2(rb.vx / PPM, rb.vy / PPM)); b.setAngularVelocity(rb.w)
+    b.setActive(true); b.setAwake(true)
+    rb._px = rb.x; rb._py = rb.y; rb._prot = rb.rot; rb._sx = rb.vx; rb._sy = rb.vy; rb._sw = rb.w
+  }
   /** 睡着写进格子:body 停用(不再碰撞 / 不再要地形块);醒:重新启用 */
   setGridSleep(rb, asleep) {
     const b = rb.pb

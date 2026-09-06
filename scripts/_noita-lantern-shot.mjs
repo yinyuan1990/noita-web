@@ -23,22 +23,26 @@ const r = await page.evaluate(async () => {
   { const rock = np.mats.byName.get('rock_static'); for (let j = ly - 14; j <= ly - 8; j++) for (let i = lx - 12; i <= lx + 12; i++) sim.set(i, j, rock, 0) }
   ent.spawnProp(LN, lx, ly)
   await wait(400)
-  const b = ent.bodies.find((x) => x.name === LN)
+  const b = ent.bodies.find((x) => x.name === LN && Math.abs(x.x - lx) < 20 && Math.abs(x.y - ly) < 20)
   if (!b) return { err: 'no lantern body' }
-  res.lantern = { hp: b.hp, ropes: b.ropes?.length, nailed: b.nailed, w0: b.w0, h0: b.h0, alive: b.alive, collision: b.d.collisionDamage }
+  // Box2D 版:钉子是 planck 的 ground revolute(b.multi.joints),ropes 是旧求解器的
+  const hung = () => (b.multi ? b.multi.joints.length > 0 : !!b.ropes?.some((r) => !r.broken))
+  res.lantern = { hp: b.hp, planck: !!b.pb, joints: b.multi?.joints.length, ropes: b.ropes?.length, nailed: b.nailed, w0: b.w0, h0: b.h0, alive: b.alive, collision: b.d.collisionDamage, hung: hung() }
   res.fire0 = count(F, lx | 0, ly | 0, 12); res.oil0 = count(OIL, lx | 0, ly | 0, 30)
   // 朝它打火花弹,直到起火 / 掉下来 / 碎(最多 40 发)
   let firstFireAt = -1, broken = -1, dead = -1, shots = 0
   const hps = []
   for (let i = 0; i < 40 && !b.dead; i++) {
-    const ang = Math.atan2(b.y - (pl.y - 4), b.x - pl.x)
+    // 瞄准加 ±1.5px 抖动:像素级完全相同的弹道会从前两发抠出的 3px 通道里穿过去(真实玩家 / 原版都不会)
+    // 实际弹道比瞄准线低 ~5°(出生点 / 散射),一直擦灯笼底边 → 瞄准点抬 4px 打到框身
+    const ang = Math.atan2(b.y - 4 - (pl.y - 4) + (Math.random() - 0.5) * 3, b.x - pl.x + (Math.random() - 0.5) * 3)
     ps.spawn('light_bullet', pl.x + 6, pl.y - 4, ang, { owner: 'player' }); shots++
     await wait(120)
     hps.push(+b.hp.toFixed(2))
     if (firstFireAt < 0 && count(F, b.x | 0, b.y | 0, 14) > 0) firstFireAt = shots
     if (res.firstLostAt === undefined && b.alive < b.n) res.firstLostAt = shots
     if (res.firstOilAt === undefined && count(OIL, b.x | 0, (b.y + 10) | 0, 24) > 0) res.firstOilAt = shots
-    if (broken < 0 && b.ropes?.every((r) => r.broken)) broken = shots
+    if (broken < 0 && !hung()) broken = shots
     if (b.dead) { dead = shots; break }
   }
   await wait(1200)

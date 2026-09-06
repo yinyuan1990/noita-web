@@ -162,7 +162,8 @@ export class ProjectileSystem {
         const nx = p.x + (p.vx * dt) / sub, ny = p.y + (p.vy * dt) / sub
         // 命中实体(HitboxComponent):ProjectileComponent.damage 交给实体层;on_collision_die 的弹在这里死
         if (this.hooks.hitTest && p.age > 0.02 && d.type !== 'MATERIAL_PARTICLE' && d.type !== 'STATIC') {
-          const t = this.hooks.hitTest(nx, ny, p)
+          // 2px 子步只采终点会从刚体上被前几发抠出的 3px 洞里穿过去(灯笼打两发后面全 miss):步子 >1px 时补采一次中点
+          const t = this.hooks.hitTest(nx, ny, p) || (sub < sp * dt ? this.hooks.hitTest((p.x + nx) / 2, (p.y + ny) / 2, p) : null)
           if (t && t !== p.lastHit) {
             p.lastHit = t
             // damage_scaled_by_speed:伤害 × min(1, 当前速度 / (damage_scale_max_speed || 初速))(箭 / 飞盘慢下来就软)

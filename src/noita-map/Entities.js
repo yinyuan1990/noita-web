@@ -285,8 +285,7 @@ export class Entities {
    */
   _isMulti(d) {
     if (!this.physics || !d.shapes?.length) return false
-    if (d.chains) return false
-    if (d.shapes.length === 1 && d.joints?.some((j) => j.kind === 'new' && /ATTACH/.test(j.type))) return false
+    if (d.chains) return false // chain_to_ceiling 的吊链是 verlet 绳(原版也不是 Box2D 体),仍走 ropes
     return d.shapes.length > 1 || (d.joints?.length > 0)
   }
   _shapesReady(d) { return !this._isMulti(d) || d.shapes.every((s) => this.images.has(s.image)) }
@@ -393,11 +392,13 @@ export class Entities {
     const M = { parts: [], joints: [], name: p.name, age: 0, group: -(++this._multiSeq || (this._multiSeq = 1)) }
     const byId = new Map()
     const bodyOf = (id) => d.bodies?.find((b) => b.uid === id)
+    // 调用方给的 (p.x, p.y) 是"图心"(和单图道具一致:spawnChunk 的灯按标记 + root_offset 放),实体原点 = 图心 − root_offset(lantern_small 5,7;矿车 0,0)
+    const ox = p.x - (d.body?.rootOffX || 0), oy = p.y - (d.body?.rootOffY || 0)
     for (const s of d.shapes) {
       const png = this.images.get(s.image)
       if (!png?.data || byId.has(s.bodyId)) continue
-      const cx = s.centered ? p.x + s.offX : p.x + s.offX + png.width / 2
-      const cy = s.centered ? p.y + s.offY : p.y + s.offY + png.height / 2
+      const cx = s.centered ? ox + s.offX : ox + s.offX + png.width / 2
+      const cy = s.centered ? oy + s.offY : oy + s.offY + png.height / 2
       const matId = this.mats.byName.get(s.material || '') ?? this.mats.byName.get('wood_prop')
       const b = new RigidBody(d, png, cx, cy, matId)
       b.name = p.name; b.isBody = true; b.multi = M; b.partId = s.bodyId; b.isCircle = s.isCircle; b.z = s.z; b.filterGroup = M.group
@@ -413,6 +414,12 @@ export class Entities {
     // 根部件(is_root,没标的取第一张图 = 老式的 uid 1):血 / 爆炸 / 库存记在它身上
     M.root = M.parts.find((b) => d.shapes.find((s) => s.bodyId === b.partId)?.isRoot) || M.parts[0]
     for (const b of M.parts) if (b !== M.root) { b.inventory = null; b.light = null } // 油桶那种"装东西 / 带光"的只算根一次
+    // 根部件的精灵叠层 / 皮肤(和 _makeBody 一样:灯笼的火苗 lantern_small_flame.xml 19 帧按帧播,单张图当皮)
+    if (d.sprite?.image && d.sprite.image !== d.shape?.image) {
+      const fr = d.sprite.anims && Object.keys(d.sprite.anims).length ? this._spriteFrames(d) : null
+      if (fr && fr.frames.length > 1) { M.root.over = fr.frames; M.root.animWait = fr.wait }
+      else { const sp = this.images.get(d.sprite.image); if (sp?.image) M.root.skin = fr ? fr.frames[0] : sp.image }
+    }
     // 画的顺序:z 大的先画(Noita z 越小越靠前,轮子 z=-1 画在车身前面)
     M.parts.sort((a, b) => b.z - a.z)
     for (const b of M.parts) { PH.attach(b); this.bodies.push(b); this.stats.bodies++ }
@@ -420,21 +427,28 @@ export class Entities {
       const A = byId.get(j.body1), B = byId.get(j.body2)
       if (!A) continue
       let ax, ay
-      if (j.kind === 'old') { ax = p.x + j.px - A.canvasW / 2; ay = p.y + j.py - A.canvasH / 2 } else { ax = p.x + j.ox; ay = p.y + j.oy }
+      if (j.kind === 'old') { ax = ox + j.px - A.canvasW / 2; ay = oy + j.py - A.canvasH / 2 } else { ax = ox + j.ox; ay = oy + j.oy }
       let toGround = j.kind === 'old' ? (j.nail || !B) : !B
+      let anchorCell = null // 钉地关节钉在哪一格实心上:那格被挖 / 炸掉关节就断(老 ropes 的规则;PhysicsJoint grid_joint 也是这个意思)
       if (j.kind === 'new' && /ATTACH/.test(j.type)) {
-        // 沿 ray 找地面:锚点挪到第一格实心(往回退 surface_attachment_offset_y),没有就不钉
+        // 沿 ray 找地面:锚点挪到第一格实心(往回退 surface_attachment_offset_y);射线上没有就在锚点 12px 内找最近的实心(灯的标记点不一定正贴天花板);都没有就不钉(原版一样掉)
         const len = Math.hypot(j.rayX, j.rayY) || 10, dx = j.rayX / len, dy = j.rayY / len
         let hit = null
-        for (let t = 0; t <= len; t++) { const x = Math.floor(ax + dx * t), y = Math.floor(ay + dy * t); if (this._solidB(x, y)) { hit = [ax + dx * Math.max(0, t - j.surfOffY), ay + dy * Math.max(0, t - j.surfOffY)]; break } }
+        for (let t = 0; t <= len; t++) { const x = Math.floor(ax + dx * t), y = Math.floor(ay + dy * t); if (this._solidB(x, y)) { anchorCell = [x, y]; hit = [ax + dx * Math.max(0, t - j.surfOffY), ay + dy * Math.max(0, t - j.surfOffY)]; break } }
+        if (!hit) {
+          let bd = Infinity
+          for (let ry = -12; ry <= 12; ry++) for (let rx = -12; rx <= 12; rx++) { const dd = rx * rx + ry * ry; if (dd >= bd || dd > 144) continue; const x = Math.floor(ax) + rx, y = Math.floor(ay) + ry; if (this._solidB(x, y)) { bd = dd; anchorCell = [x, y]; hit = [x + 0.5, y + 0.5] } }
+        }
         if (!hit) continue
         ax = hit[0]; ay = hit[1]; toGround = true
-      }
+      } else if (toGround && this._solidB(Math.floor(ax), Math.floor(ay))) anchorCell = [Math.floor(ax), Math.floor(ay)]
+      // 单件吊在地上(灯笼):平移到锚点正下方挂直再建关节,不然钩子偏一点就当钟摆晃几分钟(角阻尼 0.01),几十盏灯永远醒着
+      if (toGround && M.parts.length === 1 && !j.motor && !/WELD/.test(j.type)) { const lx = ax - A.x; if (Math.abs(lx) > 0.01 && Math.abs(lx) < 8) { A.x += lx; PH.pushToPhysics(A) } }
       const other = toGround ? null : B
       const pj = /WELD/.test(j.type) ? PH.weld(A, other, ax, ay) : PH.revolute(A, other, ax, ay, { motor: j.motor, motorTorque: j.motorTorque })
       if (!pj) continue
       // break_distance 是 Box2D 米(1.4142 m = 8.5px;蘑菇 5 → 30px、脚 8 → 48px):按像素算的话矿车落地那一下就断了
-      M.joints.push({ j: pj, A, B: other, breakDist: (j.kind === 'new' ? j.breakDistance : (j.breakable ? 1.4142 : 0)) * 6, breakForce: j.kind === 'new' ? j.breakForce : 0, breakOnModified: !!j.breakOnModified, aliveA: A.alive, aliveB: other ? other.alive : 0 })
+      M.joints.push({ j: pj, A, B: other, anchorCell, breakDist: (j.kind === 'new' ? j.breakDistance : (j.breakable ? 1.4142 : 0)) * 6, breakForce: j.kind === 'new' ? j.breakForce : 0, breakOnModified: !!j.breakOnModified, aliveA: A.alive, aliveB: other ? other.alive : 0 })
     }
     // physics_fungus.lua:lift 浮力 + 电机正弦摆(speed_mult = ProceduralRandomf(entity_id, 4, 0.1, 0.75))
     if (d.lift) M.lift = d.lift
@@ -466,6 +480,8 @@ export class Entities {
         const J = M.joints[k]
         const dead = J.A.dead || !J.A.pb || (J.B && (J.B.dead || !J.B.pb))
         let broken = dead
+        // 钉着的那格墙没了(被挖 / 炸 / 烧)→ 断,醒着睡着都查(灯笼睡着挂在天花板上时把天花板挖掉也得掉下来)
+        if (!broken && J.anchorCell && !this._solidB(J.anchorCell[0], J.anchorCell[1])) { broken = true; if (J.A.asleep) J.A.wake(this.sim) }
         if (!broken && !J.A.asleep) {
           if (J.breakDist > 0 && PH.jointGap(J.j) > J.breakDist) broken = true
           if (J.breakForce > 0 && PH.jointForce(J.j) > J.breakForce * 160) broken = true
@@ -569,6 +585,8 @@ export class Entities {
     b.age += dt
     b.buoyancy(dt, BODY_GRAVITY, this._liqDensity, b.density)
     this.physics.pushToPhysics(b)
+    // 自己的静止计时:附近滴水 / 落沙让地形块重建,planck 拆 fixture 时会把压着的刚体叫醒,永远攒不够它的 0.5s —— 速度 ≈0 且贴着东西 0.5s 就算歇下了(写格子后就不受重建影响)
+    if (Math.abs(b.vx) < 1 && Math.abs(b.vy) < 1 && Math.abs(b.w) < 0.02) b.restT += dt; else b.restT = 0
     // 全埋进实心里的刚体(塌方 / 落沙压住、出生点在墙里)看不到 chain 的边会一直往下掉 —— 原版 hax_fix_going_through_ground:在地里就往上抬
     if (b.age > 0.5 && b.alive > 0) {
       const P = [0, 0]
@@ -619,7 +637,12 @@ export class Entities {
     for (let i = this.bodies.length - 1; i >= 0; i--) {
       const b = this.bodies[i]
       if (b.dead) { if (b.pb) PH.detach(b); this.bodies.splice(i, 1); continue }
-      if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) continue
+      if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) {
+        // 模拟窗口外:planck 会照样步进(world.step 不分窗口),那边没建地形块,醒着的道具会在虚空里一直掉 → 停用冻住,进窗口再启用
+        if (b.pb && !b.asleep && !b.frozen) { b.frozen = true; PH.setFrozen(b, true) }
+        continue
+      }
+      if (b.frozen) { b.frozen = false; PH.setFrozen(b, false) }
       // Box2D(planck):形状图刚体 / 物品 / 崩塌块挂到 planck 上;钉的 / 挂链的 / 布娃娃部件还走手写求解器(关节在第 ④ 步)
       if (PH && !b.pb && !b.nailed && !b.ropes && !b.isRagdoll && !b.group) { PH.attach(b); if (b.asleep) PH.setGridSleep(b, true) }
       // 像素被挖光(睡着时格子被爆炸 / 挖掘拿掉,醒来 wake() 发现全没了)的刚体:什么都不剩还挂着光和碰撞 —— 用户看到的"灯笼打掉后浮空",是一盏没有壳只剩光的空刚体在飘
@@ -715,7 +738,7 @@ export class Entities {
       }
       if (b.group?.connected(b)) continue // 布娃娃部件(还连着的):整组一起睡(下面);散开的块各自睡
       // 入睡:planck 的睡眠判定(0.5s 线速 <0.03m/s 角速 <2°/s)/ 手写求解器 restT;脚下要真有格子 —— planck 上的先攒着,下面一起从低到高连锁写格子
-      const rest = b.pb ? !b.pb.isAwake() : b.restT > 0.5
+      const rest = b.pb ? (!b.pb.isAwake() || (b.restT > 0.5 && (touching || b.multi?.joints.some((J) => !J.B)))) : b.restT > 0.5 // 吊在地上的(灯笼)没接触也算歇下
       if (!rest) continue
       if (b.pb) { (restList ||= []).push(b); continue }
       if (b.supported(this._solidB)) this._gridSleep(b)
@@ -731,7 +754,7 @@ export class Entities {
           if (b.multi) {
             // 多体:全部部件都在 planck 里睡了 + 整组有支撑 → 整组一起写格子(部件之间的关节随 body 停用)
             const M = b.multi
-            if (!M.parts.every((q) => q.dead || q.asleep || !q.pb?.isAwake()) || !this._multiSupported(M)) { restList.splice(i, 1); continue }
+            if (!M.parts.every((q) => q.dead || q.asleep || !q.pb?.isAwake() || q.restT > 0.5) || !this._multiSupported(M)) { restList.splice(i, 1); continue }
             for (const q of M.parts.slice().sort((a, b) => a.z - b.z)) if (!q.dead && !q.asleep) this._gridSleep(q) // z 小(靠前)的先写格子:重叠处留前面那块的像素(轮子在车身前)
             restList = restList.filter((q) => !M.parts.includes(q)); n++
             i = restList.length // 数组换了,从尾重来
