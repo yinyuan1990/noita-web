@@ -54,7 +54,7 @@ const sim = new CellSim(mats, reactions, {
 })
 let simBound = false
 // ── Box2D 世界(planck,第 ① 步:地形碰撞;`?phys=0` 关;`?physTest=1` 出生点上方丢几个测试箱子看落地)──
-const physics = Q.get('phys') !== '0' ? new Physics(sim, { gravity: 350 }) : null
+const physics = Q.get('phys') !== '0' ? new Physics(sim, { gravity: 350, mats }) : null
 const PHYS_TEST = Q.get('physTest') === '1'
 const PHYS_DRAW = Q.get('physDraw') === '1'
 let physTestDone = false
@@ -400,6 +400,7 @@ const projectiles = new ProjectileSystem({
 })
 // ── 实体层(敌人 / 动物):定义 entities.json,生成点由 Worker 按 lua 掷骰挂在 chunk.spawns ──
 entities = await new Entities({
+  physics,
   res: RES, decodePng: decodePngBrowser, mats, sim, matAt, player, projectiles, seed: SEED,
   hooks: {
     wobble: (x, y) => liquidWobble(x, y), // 泡在液体里的怪跟液体一起晃(折射)

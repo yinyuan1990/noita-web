@@ -751,6 +751,20 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         探针 `_noita-box2d-shot.mjs`(线上要 http 直连:`$env:ORIGIN_IP` + http://,https 到源站被关了):9 个测试刚体 3.5s 后底面离地 0.04~0.1px、平地的全睡、斜坡上的还在滑;石台上睡着的箱子脚下挖空 → 150ms 内醒 → 掉到下面地面;
         27~38 块地形 / 108 顶点 / p50 0.1ms p95 0.2ms。node 单测 `_noita-box2d-unit.mjs`(合成地形:3×3 块描成 13 点闭环 → 简化 5 点;斜坡滑到坡底;跨块接缝滑行不弹)。
         **发现**:全埋在实心里的刚体看不到 chain 的边会一直掉(原版 `hax_fix_going_through_ground` 就是治这个)—— ③ 盖章时出生 / 塌方压进实心要先顶出来。b2World 重力仍用 350(没反出来)。
+        **② 做完后地形改成了多边形(见下),chain 那套废了。**
+      ② ✅(已上线)PhysicsImageShape → planck body:`Physics.attach(rb)` 像素 mask → marching squares → DP 0.3px → 耳切三角化 → Hertel-Mehlhorn 合并成 ≤8 顶点凸块(`pixelPolygons`,洞填实;≤3 像素 / 1px 细杆退回包围盒 Box),
+        fixture density / friction / restitution = 材质表 density / solid_friction / solid_restitution(木 6/0.9、金属 8/0.7、蘑菇弹性 0.4),`gravScale` = solid_gravity_scale。`Entities._updateBodies` 里形状图道具 / 物品 / 崩塌块都挂上;
+        钉的 / 挂链的(`ropes`,桌子 / 灯笼)/ 布娃娃部件仍走手写求解器(关节在 ④)。桥接:`_stepPhysBody` 只做浮力(`RigidBody.buoyancy` 抽出来)+ `pushToPhysics`(外部改了 vx/vy/w/x/y/fixDirty 才写进 planck:爆炸 / 推 / 踢 / 顶出实心 / 挖损重建 fixtures),
+        `Physics._syncAll` 每步末把位置 / 速度回读到 rb 并记 `_spPrev/_vyPrev` 给药水碎裂 / 碰撞伤害 / 摔落判定;`touching` 看接触表。睡:planck 自己判(`isAwake`,阈值放到 0.03 m/s —— 6px=1m 下重力 58 m/s²,默认 0.01 太严),
+        `supported` 脚下有格子才 `sleep(sim)` 写像素 + `setGridSleep` 停用 body;**一摞是一个岛同时入睡,`restList` 从低到高连锁写格子**(不然只睡最下面一个,它停用后上面的接触断了被叫醒再等 0.5s)。物品(金块 / 药水)睡着不写格子、body 留着堆在一起。
+        **地形从 chain 换成多边形**:node 复现 —— Box2D 2.3 的 edge-polygon 碰撞在"箱子平放、底边正对 chain 顶点(块接缝 / 中间共线点 / 切段点)"时一摞箱子顶上永远 7px/s 抖、睡不着,幽灵顶点 / 1px 重叠都不可靠;
+        多边形对多边形任何接缝位置都稳(原版也是 TriangulatePixels 出多边形)。现在每块 34×34 采样(外圈强制空气 → 轮廓全闭合,版本只看自己块)→ `contourPolygons`:内外靠包含深度判(轮廓走向任意,不能看面积符号),
+        洞(子弹打的气泡 / 块内封闭洞)用 max-x 顶点桥接进外环再耳切(重合点不算"在三角形里"、没有严格凸耳时先剔共线点)→ 合并凸块;全实心块一个方块。多边形按顶点键逐块比对,只拆 / 建变了的。
+        `queryAABB` 全体叫醒那段删了(planck 拆掉接触中的 fixture 会自己唤醒)。
+        探针 `_noita-box2d-shot.mjs`(场景挪到高空石台:探针自己把坡挖了土会一直往台面淌,油桶滚下去摔碎的油会把箱子泡着 —— 泡液体的刚体每帧吃浮力永远睡不着):5 个 `physics_box_harmless`(11px)叠着 1s 内整摞睡 + 写格子、间距 11.0~11.1、rot 0;
+        油桶 pb 落台 gap 0.09;打掉 24 像素 fixtures 1 → 3、质量 20 → 16;r18 爆炸把 29px 处的石头抛 9px、15px 处的抠掉六成炸碎(`physics_crate` 带 ExplodeOnDamage 被爆炸挖像素会连锁炸掉,测抛飞要用 harmless / 石头);
+        旧探针 `_noita-body-shot`(崩塌块砸地炸 + 睡着变 concrete_static 120 格 / 金块打光)/ `_noita-ragdoll-shot`(12 块 11 关节 0 断)不回归。物理 p50 0.7 / p95 1.1ms(多边形三角化比 chain 贵、落沙区每帧重建几块;iPhone 预算 0.5ms,后面看要不要给三角化加缓存)。
+        node 单测 `_noita-box2d-unit.mjs`:20×20 带 6×6 洞 + 2×2 气泡 → 16 块凸多边形,洞心 / 气泡不在任何多边形里;方块 1 块 / 桌子 5 块 / 环 11 块(填洞)。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
@@ -768,7 +782,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 本机 `git config http.proxy socks5h://127.0.0.1:2801`(用户的本地代理是 SOCKS5,走 http:// 会超时)。`noita-ref/`(原版解包数据 + 存档真值)不在仓库里,只在本机 `e:\soft\xiaoshuodongtai\web\noita-ref`。
 **当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
-**正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① `Physics.js` + 地形碰撞已上线(只有 `?physTest=1` 的测试刚体在用),下一步 ② PhysicsImageShape → planck body(形状图 → marching squares → 凸分解 → fixtures)。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+**正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① 地形(多边形)② 形状图刚体 / 物品 / 崩塌块上 planck + 睡醒桥接 已上线;下一步 ③ 盖章协议细节(埋进实心顶出 / hax_fix)与 ④ 关节(矿车轮子 → wheel_stand → 蘑菇链 → 家具 / 灯笼 ropes 换真关节)。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。

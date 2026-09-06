@@ -1,5 +1,5 @@
 // Box2D(planck)封装的 node 单元测试:合成地形上 marching squares / 简化 / 落地 / 睡眠 / 脚下挖空唤醒 / 跨块接缝滑行。node scripts/_noita-box2d-unit.mjs
-import { Physics, marchingSquares, simplify, PPM } from '../src/noita-map/Physics.js'
+import { Physics, marchingSquares, simplify, pixelPolygons, contourPolygons, PPM } from '../src/noita-map/Physics.js'
 
 // 合成 CellSim:一块 200×120 的世界,y ≥ 80 是地面,x 40..120 处 1:2 斜坡,x 150..170 y 60..64 一块悬空平台,地里 x 60..70 y 95..100 一个洞
 const W = 200, H = 120
@@ -25,6 +25,41 @@ const sim = {
   const lines = marchingSquares(g, S, S, 0, 0)
   console.log('3x3 block → lines', lines.length, 'pts', lines[0].length, 'closed', JSON.stringify(lines[0][0]) === JSON.stringify(lines[0][lines[0].length - 1]))
   console.log('  simplified', JSON.stringify(simplify(lines[0], 0.6)))
+}
+// 地形多边形(带洞):20×20 实心块中间挖一个 6×6 的洞 + 一颗 2×2 的气泡 → 洞要留着(洞心的点不在任何多边形里),实心处的点要在某个多边形里
+{
+  const S = 22, g = new Uint8Array(S * S)
+  for (let j = 1; j <= 20; j++) for (let i = 1; i <= 20; i++) g[j * S + i] = 1
+  for (let j = 8; j < 14; j++) for (let i = 8; i < 14; i++) g[j * S + i] = 0
+  g[4 * S + 16] = 0; g[4 * S + 17] = 0; g[5 * S + 16] = 0; g[5 * S + 17] = 0
+  const polys = contourPolygons(marchingSquares(g, S, S, -1, -1), 0.3, false)
+  const inAny = (x, y) => polys.some((p) => { let inside = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const a = p[i], b = p[j]; if ((a[1] > y) !== (b[1] > y) && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside } return inside })
+  console.log('terrain w/ holes: polys', polys.length, 'maxVerts', Math.max(...polys.map((p) => p.length)), 'holeCenterSolid', inAny(10, 10), 'bubbleSolid', inAny(16, 4), 'solidAt(3,3)', inAny(3, 3), 'solidAt(17,17)', inAny(17, 17))
+  const filled = contourPolygons(marchingSquares(g, S, S, -1, -1), 0.3, true)
+  console.log('  fillHoles:', filled.length, 'polys, holeCenterSolid', filled.some((p) => { let inside = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const a = p[i], b = p[j]; if ((a[1] > 10) !== (b[1] > 10) && 10 < ((b[0] - a[0]) * (10 - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside } return inside }))
+}
+// 像素 → 凸多边形:方块 / 桌子(凹)/ 2 像素 / 带洞的环
+{
+  const mk = (w, h, f) => { const m = new Uint8Array(w * h); for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) m[j * w + i] = f(i, j) ? 1 : 0; return m }
+  const cases = {
+    box10: [10, 10, () => true],
+    table: [16, 10, (i, j) => j < 3 || (j >= 3 && (i < 3 || i >= 13))],
+    dot2: [2, 1, () => true],
+    ring: [12, 12, (i, j) => { const d = Math.hypot(i - 5.5, j - 5.5); return d < 6 && d > 3 }],
+    L: [8, 8, (i, j) => i < 3 || j >= 5],
+  }
+  for (const [name, [w, h, f]] of Object.entries(cases)) {
+    const mask = mk(w, h, f)
+    const polys = pixelPolygons(mask, w, h)
+    const area = polys.reduce((s, p) => s + Math.abs(p.reduce((a, q, k) => { const r = p[(k + 1) % p.length]; return a + q[0] * r[1] - r[0] * q[1] }, 0) / 2), 0)
+    const px = mask.reduce((s, v) => s + v, 0)
+    const maxV = Math.max(0, ...polys.map((p) => p.length))
+    // 也真的建一个 body 看 planck 接受不接受
+    const rb = { mask, w0: w, h0: h, x: 50, y: 20, rot: 0, vx: 0, vy: 0, w: 0, mat: 1, density: 6, alive: px, edge: [] }
+    const ph0 = new Physics(sim, { gravity: 350 })
+    ph0.attach(rb)
+    console.log(name.padEnd(6), 'polys', polys.length, 'maxVerts', maxV, 'area', area.toFixed(1), '/ px', px, 'mass', rb.pb.getMass().toFixed(2))
+  }
 }
 const ph = new Physics(sim, { gravity: 350 })
 // 丢箱子:平地 / 斜坡 / 平台 / 洞上方

@@ -26,8 +26,9 @@ export class Entities {
    * @param {object} o.player  {x,y,vx,vy,hp}
    * @param {object} o.hooks  {debris(x,y,vx,vy,m,col), sfx(name,opt), damagePlayer(dmg, ix, iy, src), shake(t)}
    */
-  constructor({ res, decodePng, mats, sim, matAt, player, projectiles = null, seed = 0, hooks = {} }) {
+  constructor({ res, decodePng, mats, sim, matAt, player, projectiles = null, seed = 0, hooks = {}, physics = null }) {
     this.res = res; this.decodePng = decodePng; this.mats = mats; this.sim = sim; this.matAt = matAt; this.player = player; this.hooks = hooks
+    this.physics = physics // Box2D(planck)世界;null = 全走手写求解器
     this.seed = seed >>> 0
     this.projectiles = projectiles
     this.defs = null
@@ -449,6 +450,24 @@ export class Entities {
     b.restT = 0
   }
 
+  /**
+   * planck 上的刚体一帧(重力 / 碰撞 / 摩擦 / 互撞都在 Box2D 里):这里只做 Box2D 没有的 —— 浮力(按淹没像素比例)和把外部改过的速度 / 位置 / 缺损写进 body;
+   * 返回"有没有接触"(接触表里任一 touching)。位置 / 速度回读在 Physics.step 末尾统一做
+   */
+  _stepPhysBody(b, dt) {
+    b.age += dt
+    b.buoyancy(dt, BODY_GRAVITY, this._liqDensity, b.density)
+    this.physics.pushToPhysics(b)
+    // 全埋进实心里的刚体(塌方 / 落沙压住、出生点在墙里)看不到 chain 的边会一直往下掉 —— 原版 hax_fix_going_through_ground:在地里就往上抬
+    if (b.age > 0.5 && b.alive > 0) {
+      const P = [0, 0]
+      let inside = 0
+      for (let e = 0; e < b.edge.length; e += 2) { b.worldOf(b.edge[e], P); if (this._solidB(Math.floor(P[0]), Math.floor(P[1]))) inside++ }
+      if (inside >= Math.ceil(b.edge.length / 2) * 0.9) { b.y -= 1; b.vy = Math.min(b.vy, 0); this.physics.pushToPhysics(b); b.restT = 0 }
+    }
+    return this.physics.touching(b)
+  }
+
   _updateBodies(dt, x0, y0, x1, y1) {
     // 形状图到了 → 建刚体
     if (this.pendingProps.length) {
@@ -471,9 +490,10 @@ export class Entities {
     }
     const sim = this.sim
     const pl = this.player
-    // 物品之间互相挤开(原版金块 / 药水是 Box2D 刚体会互相碰撞、堆成一小堆;我们的刚体不互撞,不挤的话一箱金块全叠在一个点上,心和金块糊成一团)
+    const PH = this.physics
+    // 物品之间互相挤开(原版金块 / 药水是 Box2D 刚体会互相碰撞、堆成一小堆;没接 Box2D 时的手工替代,不挤的话一箱金块全叠在一个点上,心和金块糊成一团)
     const items = []
-    for (const b of this.bodies) if (b.isItem && !b.dead && !b.nailed && b.x >= x0 && b.x <= x1 && b.y >= y0 && b.y <= y1) items.push(b)
+    if (!PH) for (const b of this.bodies) if (b.isItem && !b.dead && !b.nailed && b.x >= x0 && b.x <= x1 && b.y >= y0 && b.y <= y1) items.push(b)
     for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
       const a = items[i], c = items[j]
       const dx = c.x - a.x, dy = c.y - a.y, minD = (a.w0 + c.w0) * 0.35
@@ -482,10 +502,13 @@ export class Entities {
       if (a.asleep) a.asleep = false; if (c.asleep) c.asleep = false
       a.x -= s * push; c.x += s * push; a.vx -= s * 12; c.vx += s * 12; a.restT = 0; c.restT = 0
     }
+    let restList = null
     for (let i = this.bodies.length - 1; i >= 0; i--) {
       const b = this.bodies[i]
-      if (b.dead) { this.bodies.splice(i, 1); continue }
+      if (b.dead) { if (b.pb) PH.detach(b); this.bodies.splice(i, 1); continue }
       if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) continue
+      // Box2D(planck):形状图刚体 / 物品 / 崩塌块挂到 planck 上;钉的 / 挂链的 / 布娃娃部件还走手写求解器(关节在第 ④ 步)
+      if (PH && !b.pb && !b.nailed && !b.ropes && !b.isRagdoll && !b.group) { PH.attach(b); if (b.asleep) PH.setGridSleep(b, true) }
       // 像素被挖光(睡着时格子被爆炸 / 挖掘拿掉,醒来 wake() 发现全没了)的刚体:什么都不剩还挂着光和碰撞 —— 用户看到的"灯笼打掉后浮空",是一盏没有壳只剩光的空刚体在飘
       if (b.alive <= 0 || (b.destroyed > 0.6 && !b.isItem)) { this._destroyBody(b, b.x, b.y); continue }
       // 物品(金块):LifetimeComponent 到点消失;auto_pickup 碰到玩家就捡
@@ -496,6 +519,15 @@ export class Entities {
         if (b.gold) { b.glintT = (b.glintT ?? (50 + Math.random() * 200) / 60) - dt; if (b.glintT <= 0) { b.glintT = (50 + Math.random() * 200) / 60; this.hooks.glint?.(b.x + (Math.random() - 0.5) * 6, b.y + (Math.random() - 0.5) * 6, 0.1 + Math.random() * 0.7) } }
         if (b.pickCool > 0) b.pickCool -= dt
         else if (Math.abs(b.x - pl.x) < 7 && Math.abs(b.y - (pl.y - 1)) < (b.nailed ? 12 : 9)) { b.dead = true; this.hooks.pickup?.(b); if (b.dead) continue }
+        if (b.pb) {
+          // 物品在 planck 上:睡着 = Box2D 自己睡(body 留着,不写格子,金块堆互相压着);砸到东西看上一帧到这一帧的速度骤降
+          b.age += dt
+          b.asleep = !b.pb.isAwake()
+          if (b.asleep) continue
+          const touching = this._stepPhysBody(b, dt)
+          if (b.potion && touching && b._spPrev > 165 && b._spPrev - Math.hypot(b.vx, b.vy) > 100) { this._destroyBody(b, b.x, b.y); continue }
+          continue
+        }
         if (b.asleep) { b.age += dt; b.checkT -= dt; if (b.checkT <= 0) { b.checkT = 0.4; if (!b.supported(this._solidB)) b.asleep = false } continue }
         const before = Math.hypot(b.vx, b.vy)
         const touching = b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
@@ -536,8 +568,8 @@ export class Entities {
       // 埋进实心太深(沙落上来 / 布景刚盖上)→ 顶出来;要在入睡前查,睡着后中心格是自己的像素。
       // 只在包围盒中心真有自己的像素时才查那一格:桌子 / 板凳的中心是两腿之间的空当,搁在斜坡上那格是地面 → 之前每帧被抬 1px 又落回去,看着就是"无外力左右晃"
       if (b.age > 1 && b.mask[(b.h0 >> 1) * b.w0 + (b.w0 >> 1)] && this._solidB(Math.floor(b.x), Math.floor(b.y))) { for (let k = 0; k < 12 && this._solidB(Math.floor(b.x), Math.floor(b.y)); k++) b.y -= 1 }
-      const vyBefore = b.vy, spBefore = Math.hypot(b.vx, b.vy)
-      const touching = b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
+      const vyBefore = b.pb ? b._vyPrev : b.vy, spBefore = b.pb ? b._spPrev : Math.hypot(b.vx, b.vy)
+      const touching = b.pb ? this._stepPhysBody(b, dt) : b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
       // PhysicsBodyCollisionDamageComponent:撞上东西时速度超过 speed_threshold(灯笼 120)→ 掉血 = 速度 × damage_multiplier(默认 1/60);灯笼掉下来砸地就碎、洒油、起火
       // 材质 solid_on_collision_explode(concrete_collapsed 崩塌块):砸到东西按材质的 ExplosionConfig 炸一下 —— r4~20、震镜、concrete_sand 火花,块本身留着
       if (b.collideExplode && touching && spBefore > 60 && !b.exploded) {
@@ -568,13 +600,29 @@ export class Entities {
         }
       }
       if (b.group?.connected(b)) continue // 布娃娃部件(还连着的):整组一起睡(下面);散开的块各自睡
-      if (b.restT > 0.5 && b.supported(this._solidB)) {
-        b.sleep(sim)
-        // 材质 solid_on_sleep_convert(concrete_collapsed → solid_break_to_type concrete_static):睡着就化成静态混凝土,刚体撤掉
-        if (b.sleepConvert && b.cells) { for (let k = 0; k < b.cells.length; k += 2) sim.set(b.cells[k], b.cells[k + 1], b.sleepConvert, 0); b.cells = null; b.dead = true }
+      // 入睡:planck 的睡眠判定(0.5s 线速 <0.03m/s 角速 <2°/s)/ 手写求解器 restT;脚下要真有格子 —— planck 上的先攒着,下面一起从低到高连锁写格子
+      const rest = b.pb ? !b.pb.isAwake() : b.restT > 0.5
+      if (!rest) continue
+      if (b.pb) { (restList ||= []).push(b); continue }
+      if (b.supported(this._solidB)) this._gridSleep(b)
+    }
+    // planck 上一摞睡着的箱子是一个"岛"同时入睡:从最低的开始,脚下有格子的写进格子(写完上面那个的脚下就有格子了),一帧内整摞落定;
+    // 不然只睡最下面一个 → 它停用后上面的接触断了被叫醒 → 再等 0.5s → 一个一个来
+    if (restList) {
+      restList.sort((a, b) => a.y - b.y) // 从数组尾(y 最大 = 最低)往前
+      for (let pass = 0; pass < 3 && restList.length; pass++) {
+        let n = 0
+        for (let i = restList.length - 1; i >= 0; i--) { const b = restList[i]; if (b.supported(this._solidB)) { this._gridSleep(b); restList.splice(i, 1); n++ } }
+        if (!n) break
       }
     }
     this._updateRagdolls(dt, x0, y0, x1, y1)
+  }
+  /** 写进格子睡觉(+ 材质 solid_on_sleep_convert:concrete_collapsed → concrete_static,睡着就化成静态混凝土,刚体撤掉) */
+  _gridSleep(b) {
+    const sim = this.sim
+    b.sleep(sim)
+    if (b.sleepConvert && b.cells) { for (let k = 0; k < b.cells.length; k += 2) sim.set(b.cells[k], b.cells[k + 1], b.sleepConvert, 0); b.cells = null; b.dead = true }
   }
 
   /**
@@ -701,6 +749,7 @@ export class Entities {
     this.stats.broken++
     const sim = this.sim
     if (b.asleep) b.wake(sim) // 先把世界里的像素收回
+    if (b.pb) this.physics.detach(b)
     const d = b.d
     // 装的液体全洒出来(油桶 300 油 / 药水)
     if (b.inventory) for (const slot of b.inventory) {

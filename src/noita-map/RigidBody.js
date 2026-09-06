@@ -72,14 +72,11 @@ export class RigidBody {
    * @param {(x:number,y:number)=>boolean} solid  世界实心查询(含别的睡着刚体)
    * @param {(x:number,y:number)=>number} liquidDensity  0 = 不是液体,否则液体密度
    */
-  step(dt, gravity, solid, liquidDensity, myDensity) {
-    this.age += dt
-    if (this.nailed) {
-      // 钉住:不受重力 / 碰撞 / 推动,只按马达匀速转,永不入睡
-      this.vx = this.vy = 0; this.w = this.motor; this.rot += this.motor * dt; this.restT = 0
-      return false
-    }
-    // 浮力:泡在液体里的像素比例 × 密度差
+  /**
+   * 浮力:泡在液体里的像素比例 × 密度差(醒着时每帧;Box2D 接管后这一项仍由这里算 —— PhysicsBodyComponent.buoyancy 是引擎自己按淹没格数做的,Box2D 本身没有)。
+   * 返回 wetF(0~1),调用方按需要再加阻尼
+   */
+  buoyancy(dt, gravity, liquidDensity, myDensity) {
     let wet = 0
     const P = [0, 0]
     for (let k = 0; k < this.edge.length; k += 3) { this.worldOf(this.edge[k], P); if (liquidDensity(Math.floor(P[0]), Math.floor(P[1])) > 0) wet++ }
@@ -90,6 +87,17 @@ export class RigidBody {
       this.vy -= gravity * buoy * wetF * dt
       this.vx *= Math.pow(0.35, dt * wetF); this.vy *= Math.pow(0.35, dt * wetF); this.w *= Math.pow(0.3, dt * wetF)
     }
+    return wetF
+  }
+
+  step(dt, gravity, solid, liquidDensity, myDensity) {
+    this.age += dt
+    if (this.nailed) {
+      // 钉住:不受重力 / 碰撞 / 推动,只按马达匀速转,永不入睡
+      this.vx = this.vy = 0; this.w = this.motor; this.rot += this.motor * dt; this.restT = 0
+      return false
+    }
+    this.buoyancy(dt, gravity, liquidDensity, myDensity)
     this.vy += gravity * (this.gravScale || 1) * dt
     if (this.linDamp) { const f = Math.exp(-this.linDamp * dt); this.vx *= f; this.vy *= f }
     if (this.angDamp) this.w *= Math.exp(-this.angDamp * dt)
@@ -267,6 +275,7 @@ export class RigidBody {
   /** 入睡:像素写进世界(只覆盖空气 / 液体 / 气体),记下格子 */
   sleep(sim) {
     this.asleep = true; this.vx = this.vy = this.w = 0
+    if (this.pb) this.pb.getUserData().phys.setGridSleep(this, true) // planck body 停用:像素接下来住在格子里
     const cells = []
     const P = [0, 0]
     for (let k = 0; k < this.n; k++) {
@@ -301,6 +310,7 @@ export class RigidBody {
       this.cells = null
     }
     if (lost) { this.alive -= lost; this._rebuildEdge() }
+    if (this.pb) this.pb.getUserData().phys.setGridSleep(this, false) // 像素收回来了,planck body 重新启用
     return lost
   }
 
@@ -365,6 +375,7 @@ export class RigidBody {
     }
     this.edge = Int32Array.from(edge); this.m = Math.max(1, m); this.I = Math.max(1, I)
     this.canvasDirty = true
+    this.fixDirty = true // planck fixtures 按新 mask 重建(pushToPhysics 时做)
   }
 
   /** 缺损比例(ExplodeOnDamage.physics_body_destruction_required 用) */
