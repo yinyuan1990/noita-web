@@ -13,6 +13,7 @@
   "dependencies": {
     "pixi-spine": "^2.1.12",
     "pixi.js": "^5.3.12",
+    "planck": "^1.5.0",
     "three": "^0.185.1",
     "three.quarks": "^0.17.1"
   },

@@ -743,7 +743,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       ② 纯 JS 可读可改 —— 我们一定要动内部(自定义 contact filter 做 go_through_sand / 与人不碰、fixture userData 挂像素、睡眠阈值),wasm 库改不了;③ 我们同屏醒着的刚体几十个、地形边几百条,JS 足够(<1ms),不需要 wasm 的量级;
       ④ 主线程跑(必须和 CellSim 同线程盖章),iOS 无 wasm 内存问题;Canvas2D debug draw 几行。**不选**:box2d-wasm(2.4,行为略变、emscripten 手动释放对象,改不了内部)、Rapier(不是 Box2D,求解器不同,原版常数对不上,优点确定性我们不需要)、box2d3-wasm(v3 软步进求解器,行为和 2.3 差更多)、matter.js(堆叠差)。
     - **计划(每步单独上线 + 探针 `_noita-box2d-shot.mjs`)**:
-      ① `Physics.js`:planck World 封装,6px = 1m,dt 1/60,子步与 CellSim 同帧;地形 → 静态碰撞:按 32×32 格子块做 marching squares(带洞)+ Douglas-Peucker → **chain/edge 形状**(地形不需要三角化),只在有醒着刚体的 ±350px 内生成、格子变了标脏重建、750px 外释放;`_solidB`(platform_type 不管刚体)当实心。
+      ① ✅(已上线)`Physics.js`:planck 1.5.0 World 封装,6px = 1m,固定 dt 1/60(掉帧最多补 3 步),8/3 迭代,`maxPolygonVertices` 压回 Box2D 2.3 的 8;地形 → 静态碰撞:按 CellSim 的 32×32 块做 marching squares
+        (采样 = 格中心,边中点正好落在格边上,所以平面 / 竖面的碰撞线就是像素边界,只有斜角切半格)→ Douglas-Peucker 0.6px → **planck Chain**(两面都碰,不三角化);
+        块只给动态刚体包围盒 ±24px 覆盖到的建(睡着的也算,`userData.noTerrain` 的除外)、每帧最多重建 6 块、120 帧没人用就释放;判脏靠新加的 `CellSim.tver`(每块一个实心版本号,只在格子"实心(static/solid/sand)↔ 非实心"变化时 +1,
+        液体流 / 火烧不碰它),块版本 = 自己 + 右 / 下 / 右下邻块(采样 33×33 要读邻块一行);块内容变了 → `queryAABB` 把压在上面的睡着刚体叫醒(Box2D 换 fixture 不会自己唤醒别人)。`CellSim.solidB(x,y)` = 刚体撞的实心(窗口外当实心)。
+        noitaPlay:`?phys=0` 关、`?physTest=1` 出生点上方丢 6 箱 / 2 圆 / 1 板、`?physDraw=1` 画碰撞线(绿地形 / 黄刚体),面板多一行"物理 ms 刚体 醒/总 地形块"。
+        探针 `_noita-box2d-shot.mjs`(线上要 http 直连:`$env:ORIGIN_IP` + http://,https 到源站被关了):9 个测试刚体 3.5s 后底面离地 0.04~0.1px、平地的全睡、斜坡上的还在滑;石台上睡着的箱子脚下挖空 → 150ms 内醒 → 掉到下面地面;
+        27~38 块地形 / 108 顶点 / p50 0.1ms p95 0.2ms。node 单测 `_noita-box2d-unit.mjs`(合成地形:3×3 块描成 13 点闭环 → 简化 5 点;斜坡滑到坡底;跨块接缝滑行不弹)。
+        **发现**:全埋在实心里的刚体看不到 chain 的边会一直掉(原版 `hax_fix_going_through_ground` 就是治这个)—— ③ 盖章时出生 / 塌方压进实心要先顶出来。b2World 重力仍用 350(没反出来)。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
@@ -761,7 +768,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 本机 `git config http.proxy socks5h://127.0.0.1:2801`(用户的本地代理是 SOCKS5,走 http:// 会超时)。`noita-ref/`(原版解包数据 + 存档真值)不在仓库里,只在本机 `e:\soft\xiaoshuodongtai\web\noita-ref`。
 **当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
-**下一件:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条,还没动代码;先从 ① `Physics.js` + 地形碰撞 开始。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+**正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① `Physics.js` + 地形碰撞已上线(只有 `?physTest=1` 的测试刚体在用),下一步 ② PhysicsImageShape → planck body(形状图 → marching squares → 凸分解 → fixtures)。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。

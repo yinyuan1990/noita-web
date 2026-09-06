@@ -18,6 +18,7 @@ import { Vegetation } from '../noita-map/Vegetation.js'
 import { WandSystem, FREE_CAPACITY } from '../noita-map/Wands.js'
 import { PerkSystem } from '../noita-map/Perks.js'
 import { decodePngBrowser } from '../noita-map/assets.js'
+import { Physics } from '../noita-map/Physics.js'
 
 const { CHUNK, WORLD_CENTER_CHUNK_X: WCX, WORLD_CENTER_CHUNK_Y: WCY } = coords
 const $ = (id) => document.getElementById(id)
@@ -52,6 +53,11 @@ const sim = new CellSim(mats, reactions, {
   onStaticChanged: (cx, cy) => { const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + 150) },
 })
 let simBound = false
+// ── Box2D 世界(planck,第 ① 步:地形碰撞;`?phys=0` 关;`?physTest=1` 出生点上方丢几个测试箱子看落地)──
+const physics = Q.get('phys') !== '0' ? new Physics(sim, { gravity: 350 }) : null
+const PHYS_TEST = Q.get('physTest') === '1'
+const PHYS_DRAW = Q.get('physDraw') === '1'
+let physTestDone = false
 
 // ── 操作日志 + 音效 ──
 const LOG_URL = Q.get('log') === '0' ? '' : (location.hostname === 'localhost' || location.hostname.startsWith('192.168.') || location.hostname.startsWith('10.')) ? 'https://update.cocoaihj.com/updatesoft/noita-log/' : BASE.replace(/noita\/$/, 'noita-log/')
@@ -1745,6 +1751,16 @@ function step(dt) {
   for (const w of player.wands) if (!w.debug) wands.update(w, dt)
   if (simBound) projectiles.update(dt)
   if (simBound) entities.update(dt, simWindow())
+  if (simBound && physics) {
+    if (PHYS_TEST && !physTestDone) {
+      // 出生大厅上方一排:6 个箱子 / 2 个圆 / 一块斜放的板,看它们落到真实地形(石头 / 沙 / 草)上停稳
+      physTestDone = true
+      for (let i = 0; i < 6; i++) physics.addTestBox(player.x - 40 + i * 16, player.y - 70 - i * 6, 8, 8, { angle: i * 0.3 })
+      physics.addTestCircle(player.x + 60, player.y - 80, 4); physics.addTestCircle(player.x + 70, player.y - 100, 3)
+      physics.addTestBox(player.x + 90, player.y - 90, 20, 5, { angle: 0.5 })
+    }
+    physics.step(dt)
+  }
   if (simBound) { if ((veg.frame & 15) === 0) veg.sync(); veg.update(dt, simWindow()) }
   if (simBound) { updateGuard(dt); updateCollapse(dt); updatePortals(dt) }
   for (let i = sparks.length - 1; i >= 0; i--) {
@@ -1943,6 +1959,7 @@ function render() {
   }
   veg.render(vctx, ox, oy)
   entities.render(vctx, ox, oy)
+  if (physics && (PHYS_TEST || PHYS_DRAW)) physics.debugDraw(vctx, ox, oy)
   renderPortals(vctx, ox, oy)
   // 人在液体里:整个人跟着液体折射偏(post_final.frag 是对整张前景按液体格采样,人 / 弹在水里都跟着晃)
   const pw = liquidWobble(player.x, player.y - 4)
@@ -2069,8 +2086,8 @@ function loop(now) {
   $('air').style.display = player.air < 7 ? 'block' : 'none'
   $('air').firstElementChild.style.width = (player.air / 7 * 100) + '%'
   $('air').firstElementChild.style.background = player.air <= 0 ? '#e0484f' : '#d8f0ff'
-  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 醒 ${sim.activeBlocks} 块 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
+  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 醒 ${sim.activeBlocks} 块 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, physics, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }

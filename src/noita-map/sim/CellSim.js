@@ -192,6 +192,7 @@ export class CellSim {
     if (this.kind[old] === K_STATIC || this.kind[m] === K_STATIC) e.staticChanged = true
     e.mat[li] = m; e.aux[li] = a; e.dirty = true
     this.mark(wx, wy)
+    if ((this.kind[old] > 0 && this.kind[old] <= K_SAND) !== (this.kind[m] > 0 && this.kind[m] <= K_SAND)) this._bumpTver(e, wx, wy)
     return true
   }
   _swap(x1, y1, e1, i1, x2, y2) {
@@ -203,7 +204,28 @@ export class CellSim {
     e2.mat[i2] = m1; e2.aux[i2] = a1
     e1.dirty = true; e2.dirty = true
     this.mark(x1, y1); this.mark(x2, y2)
+    const s1 = this.kind[m1] > 0 && this.kind[m1] <= K_SAND, s2 = this.kind[e1.mat[i1]] > 0 && this.kind[e1.mat[i1]] <= K_SAND
+    if (s1 !== s2) { this._bumpTver(e1, x1, y1); this._bumpTver(e2, x2, y2) }
     return true
+  }
+  // ── 实心版本号(给 Box2D 地形碰撞块判脏):每个 32×32 块一个计数,只在某格在"实心(static / solid / sand)↔ 非实心"之间变化时 +1;
+  // 液体流动 / 气体飘 / 火烧(材质变但仍是实心 → 不算)都不碰它,所以碰撞块不会跟着水面每帧重建
+  _bumpTver(e, wx, wy) {
+    if (!e.tver) e.tver = new Uint16Array(NB)
+    e.tver[((wy & 511) >> BSH) * BN + ((wx & 511) >> BSH)]++
+  }
+  /** (wx,wy) 所在 32×32 块的实心版本号;chunk 未就位返回 -1 */
+  tver(wx, wy) {
+    const e = this._entry(wx, wy)
+    if (!e) return -1
+    return e.tver ? e.tver[((wy & 511) >> BSH) * BN + ((wx & 511) >> BSH)] : 0
+  }
+  /** 刚体撞的实心(static / solid / sand;窗口外当实心) */
+  solidB(wx, wy) {
+    const m = this.get(wx, wy)
+    if (m < 0) return true
+    const k = this.kind[m]
+    return k > 0 && k <= K_SAND
   }
 
   // ── 一步:只步进脏块(块内自下而上、交替左右;块之间也自下而上,和整窗口扫的顺序一致)──
