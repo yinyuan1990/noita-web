@@ -56,8 +56,8 @@ const ANIMALS = [
 const ITEMS = ['goldnugget_10', 'goldnugget_50', 'goldnugget_200', 'goldnugget_1000', 'heart', 'potion', 'chest_random', 'spell_refresh', 'heart_fullhp_temple', 'perk_reroll', 'utility_box']
 const PROPS = [
   'physics_box_explosive', 'physics_barrel_oil', 'physics_barrel_radioactive', 'physics_crate', 'physics/minecart', 'physics_cart', 'physics_stone_01', 'physics_stone_02', 'physics_stone_03', 'physics_stone_04', 'physics/lantern_small', 'physics_skateboard', 'physics_brewing_stand', 'physics_bottle_green', 'physics_bottle_red', 'physics_bottle_blue', 'physics_bottle_yellow', 'physics_candle_1', 'physics_candle_2', 'physics_candle_3', 'physics_mining_lamp',
-  // 挖掘场(吊桶 physics_bucket 挂钉子上摆、吊罐 suspended_* 拴链子到顶:RigidBody.ropes;多体机械 excavationsite_machine_3b/3c 仍跳过)
-  'physics_seamine', 'physics_wheel', 'physics_wheel_small', 'physics_wheel_tiny', 'physics_bucket', 'suspended_container', 'suspended_tank_radioactive', 'suspended_seamine', 'suspended_tank_acid',
+  // 挖掘场(吊桶 physics_bucket 挂钉子上摆、吊罐 suspended_* 拴链子到顶:RigidBody.ropes;多体机械 excavationsite_machine_3b/3c 走 Box2D 多体:机身 + 带电机的轮)
+  'physics_seamine', 'physics_wheel', 'physics_wheel_small', 'physics_wheel_tiny', 'physics_bucket', 'suspended_container', 'suspended_tank_radioactive', 'suspended_seamine', 'suspended_tank_acid', 'excavationsite_machine_3b', 'excavationsite_machine_3c',
   // Box2D 多体(第 29 条 ④):轮架(架 + 带电机的轮)、物理蘑菇(帽 + 茎链 + 脚钉地)、齿轮门
   'physics_wheel_stand_01', 'physics_wheel_stand_02', 'physics_wheel_stand_03',
   'physics_fungus', 'physics_fungus_small', 'physics_fungus_big', 'physics_fungus_hugeish', 'physics_fungus_huge', 'physics_fungus_acid', 'physics_fungus_acid_small', 'physics_fungus_acid_big', 'physics_fungus_acid_hugeish', 'physics_fungus_acid_huge', 'physics_fungus_trap', 'physics_templedoor2',
@@ -244,7 +244,7 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     if (allShapes.length > 1 || allJoints.length || allJoints2.length) {
       d.shapes = allShapes.map((s) => ({ image: copyGfx(s.image_file), material: s.material || '', bodyId: num(s.body_id, 0), isRoot: s.is_root === '1', isCircle: s.is_circle === '1', centered: s.centered === '1', offX: num(s.offset_x, 0), offY: num(s.offset_y, 0), z: num(s.z, 0) }))
       const bodies = (e.comps.get('PhysicsBodyComponent') || []).filter((b) => b._enabled !== '0')
-      if (bodies.length) d.bodies = bodies.map((b) => ({ uid: num(b.uid, 0), linear_damping: num(b.linear_damping, 0), angular_damping: num(b.angular_damping, 0), auto_clean: b.auto_clean !== '0', fixed_rotation: b.fixed_rotation === '1', update_entity_transform: b.update_entity_transform !== '0' }))
+      if (bodies.length) d.bodies = bodies.map((b) => ({ uid: num(b.uid, 0), linear_damping: num(b.linear_damping, 0), angular_damping: num(b.angular_damping, 0), auto_clean: b.auto_clean !== '0', fixed_rotation: b.fixed_rotation === '1', is_static: b.is_static === '1', update_entity_transform: b.update_entity_transform !== '0' }))
       const mut = new Map(); for (const m of e.comps.get('PhysicsJoint2MutatorComponent') || []) mut.set(num(m.joint_id, 0), { motorSpeed: num(m.motor_speed, 0), motorTorque: num(m.motor_max_torque, 1) })
       // physics_fungus.lua:VariableStorage lift = 每帧 PhysicsApplyForce(0, lift) 给根体的浮力(-25 = 向上 25 N),蘑菇靠它拉直、靠脚下地锚立着;各节电机按正弦摆
       const lift = (e.comps.get('VariableStorageComponent') || []).find((v) => v.name === 'lift'); if (lift) d.lift = num(lift.value_int, 0)

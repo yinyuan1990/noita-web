@@ -200,7 +200,7 @@ export class Physics {
   attach(rb) {
     if (rb.pb) return rb.pb
     const b = this.world.createBody({
-      type: 'dynamic', position: new Vec2(rb.x / PPM, rb.y / PPM), angle: rb.rot,
+      type: rb.isStatic ? 'static' : 'dynamic', position: new Vec2(rb.x / PPM, rb.y / PPM), angle: rb.rot,
       linearVelocity: new Vec2(rb.vx / PPM, rb.vy / PPM), angularVelocity: rb.w,
       linearDamping: rb.linDamp || 0, angularDamping: rb.angDamp || 0,
       fixedRotation: !!rb.fixedRot, allowSleep: true, gravityScale: rb.gravScale || 1,

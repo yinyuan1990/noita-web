@@ -400,11 +400,19 @@ export class Entities {
     // 调用方给的 (p.x, p.y) 是"图心"(和单图道具一致:spawnChunk 的灯按标记 + root_offset 放),实体原点 = 图心 − root_offset(lantern_small 5,7;矿车 0,0);
     // 形状 / 关节坐标系再减 PhysicsBody2 init_offset(蘑菇 40 / 小蘑菇 28:整株上移,脚落在地面标记上)
     const ox = p.x - (d.body?.rootOffX || 0) - (d.body?.initOffX || 0), oy = p.y - (d.body?.rootOffY || 0) - (d.body?.initOffY || 0)
+    // 老式多体几张图共用一张画布:画布左上角由根图定 —— centered=1(矿车 / 轮架)画布中心在实体,centered=0(挖掘场机械机身,场景标记 −5 处放左上角)左上角在实体;
+    // 轮子图哪怕写着 centered=1 也画在同一张画布里(机械 3b 三个轮子的包围盒中心正好落在关节 pos 上),关节 pos_x/pos_y 就是画布像素
+    const oldStyle = (d.joints || []).some((j) => j.kind === 'old')
+    let cvX = ox, cvY = oy
+    if (oldStyle) {
+      const rs = d.shapes.find((s) => s.isRoot) || d.shapes[0], rp = this.images.get(rs.image)
+      if (rs.centered && rp) { cvX = ox - rp.width / 2; cvY = oy - rp.height / 2 }
+    }
     for (const s of d.shapes) {
       const png = this.images.get(s.image)
       if (!png?.data || byId.has(s.bodyId)) continue
-      const cx = s.centered ? ox + s.offX : ox + s.offX + png.width / 2
-      const cy = s.centered ? oy + s.offY : oy + s.offY + png.height / 2
+      const cx = oldStyle ? cvX + png.width / 2 : s.centered ? ox + s.offX : ox + s.offX + png.width / 2
+      const cy = oldStyle ? cvY + png.height / 2 : s.centered ? oy + s.offY : oy + s.offY + png.height / 2
       const matId = this.mats.byName.get(s.material || '') ?? this.mats.byName.get('wood_prop')
       const b = new RigidBody(d, png, cx, cy, matId)
       b.name = p.name; b.isBody = true; b.multi = M; b.partId = s.bodyId; b.isCircle = s.isCircle; b.z = s.z; b.filterGroup = M.group
@@ -413,6 +421,8 @@ export class Entities {
       if (this.mats.list[matId]?.normalMapped) b.baseColor = this.mats.color[matId]
       const bd = bodyOf(s.bodyId) || d.body || {}
       b.linDamp = bd.linear_damping ?? 0; b.angDamp = bd.angular_damping ?? 0; b.fixedRot = !!bd.fixed_rotation
+      // is_static(挖掘场机械 excavationsite_machine_3b/3c 的机身):Box2D 静态体,钉死在原地,轮子靠电机关节在上面转;整组不写格子(机身写进格子轮子就跟地形卡上了)
+      b.isStatic = !!bd.is_static; if (b.isStatic) M.hasStatic = true
       b.canvasW = png.width; b.canvasH = png.height
       byId.set(s.bodyId, b); M.parts.push(b)
     }
@@ -433,7 +443,7 @@ export class Entities {
       const A = byId.get(j.body1), B = byId.get(j.body2)
       if (!A) continue
       let ax, ay
-      if (j.kind === 'old') { ax = ox + j.px - A.canvasW / 2; ay = oy + j.py - A.canvasH / 2 } else { ax = ox + j.ox; ay = oy + j.oy }
+      if (j.kind === 'old') { ax = cvX + j.px; ay = cvY + j.py } else { ax = ox + j.ox; ay = oy + j.oy }
       let toGround = j.kind === 'old' ? (j.nail || !B) : !B
       let anchorCell = null // 钉地关节钉在哪一格实心上:那格被挖 / 炸掉关节就断(老 ropes 的规则;PhysicsJoint grid_joint 也是这个意思)
       if (j.kind === 'new' && /ATTACH/.test(j.type)) {
@@ -613,7 +623,7 @@ export class Entities {
     // 阈值 1.5px/s / 0.06rad/s:一串铰链吊着浮力(蘑菇)会有 0.2~0.5px/s 的残留微抖,0.5s 内最多挪 0.75px,写格子就冻住了
     if (Math.abs(b.vx) < 1.5 && Math.abs(b.vy) < 1.5 && Math.abs(b.w) < 0.06) b.restT += dt; else b.restT = 0
     // 全埋进实心里的刚体(塌方 / 落沙压住、出生点在墙里)看不到 chain 的边会一直往下掉 —— 原版 hax_fix_going_through_ground:在地里就往上抬
-    if (b.age > 0.5 && b.alive > 0) {
+    if (b.age > 0.5 && b.alive > 0 && !b.isStatic) {
       const P = [0, 0]
       let inside = 0
       for (let e = 0; e < b.edge.length; e += 2) { b.worldOf(b.edge[e], P); if (this._solidB(Math.floor(P[0]), Math.floor(P[1]))) inside++ }
@@ -769,6 +779,7 @@ export class Entities {
         }
       }
       if (b.group?.connected(b)) continue // 布娃娃部件(还连着的):整组一起睡(下面);散开的块各自睡
+      if (b.isStatic || b.multi?.hasStatic) continue // 静态机身的机械(挖掘场机械):一直留在 planck 里,电机轮子永远转
       // 入睡:planck 的睡眠判定(0.5s 线速 <0.03m/s 角速 <2°/s)/ 手写求解器 restT;脚下要真有格子 —— planck 上的先攒着,下面一起从低到高连锁写格子
       const rest = b.pb ? (!b.pb.isAwake() || (b.restT > 0.5 && (touching || b.multi?.joints.some((J) => !J.B)))) : b.restT > 0.5 // 吊在地上的(灯笼)没接触也算歇下
       if (!rest) continue
@@ -802,7 +813,7 @@ export class Entities {
   }
   /** 多体的支撑:钉在地上的关节算;某部件脚下有实心且那格**不是兄弟部件睡进格子的像素**才算(车身压在自己睡着的轮子上不算有支撑,不然挖空脚下整组不醒) */
   _multiSupported(M) {
-    if (M.joints.some((J) => !J.B)) return true
+    if (M.hasStatic || M.joints.some((J) => !J.B)) return true
     const sets = []
     for (const p of M.parts) if (!p.dead && p.asleep && p.cellSet) sets.push(p.cellSet)
     const P = [0, 0]

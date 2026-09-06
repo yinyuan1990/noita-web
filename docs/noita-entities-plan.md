@@ -170,7 +170,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
   够 16px 就拴链;`PhysicsJointComponent nail_to_wall` 钉在图心 = 只转(轮子),钉在边上 = 绕钉摆(吊桶)),位置式约束 + 沿绳冲量含转动惯量、多绳迭代两遍;
   拉回距离超过 break_distance 断链;锚点被挖 / 炸掉也断;挂着的可以入睡(当有支撑)。挖掘场 suspended_container / tank_radioactive / tank_acid / seamine / physics_bucket 加回 PROPS。
   实测:双链罐子 4s 内入睡、v=0 rot=0;挖掉两个锚点 → 两链 X → 罐子掉下 130px。原作是一节 16px 的 box2d 链体串起来,这里链只画不碰撞。
-  仍跳过:家具 / 物理蘑菇的多体关节(家具已取第一块形状图)、多体机械 excavationsite_machine_3b/3c、门。
+  (后来接了 Box2D,家具 / 物理蘑菇的多体关节、多体机械 excavationsite_machine_3b/3c 都做了,见 2.4 第 29 条;门仍跳过。)
 - ~~PhysicsAI 飞行体与 buildings~~ ✅ 大半做了(已上线):PhysicsAI 无人机 / 医疗无人机 / 水晶 / 拟态箱 走已有的飞行模型(`can_fly`),本体是 PhysicsImageShape 的图
   (`d.bodyImage` 先画本体再叠发光眼精灵;没精灵的用本体图拼单帧精灵);shooterflower 这类只有 AnimalAI 没 CharacterPlatforming 的做成 `stationary`(不动只开火);
   buildings:flynest / firebugnest / spidernest / lukki_eggs 当带动画的站桩生物(有血、打碎),physics_cocoon 是钉着的刚体(打了炸)。
@@ -811,7 +811,11 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         用它的地方:PhysicsBodyCollisionDamageComponent(`impact > speed_threshold` → 伤 impact × damage_multiplier,灯笼 120 / 药水 80)、混凝土块撞碎(>60)、药水碎(potion.xml:阈值 80、×1/60、hp 0.5 → 撞击 >80 px/s 必碎;从 44px 以上掉下来才到 80,手边掉地不碎;扔出去 180 必碎,点射墙也碎)。
         踩过的坑:一开始用法向分量,扔出去贴地滑着落地法向分量只有几十不碎;又加了 0.1s 出生保护,把"扔出去当帧撞墙"的 205 吞了 —— 出生静止的刚体本来没有接触速度,保护撤掉。手写求解器分支仍看前后帧速度差。
         浮力 `buoyancy 0.7` 没反出来(physics_bridge.cpp 6 个函数里没看到明显的按格数算力的常量;木箱 density 6 在水里能浮,说明不是简单阿基米德),先留现在按密度比的近似。
-        还差:excavationsite_machine_3b/3c、PhysicsThrowable、Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、⑤ 的碰撞伤害 postSolve / buoyancy 0.7 / go_through_sand / solid_on_collision_*。
+        ✅(已上线)**挖掘场多体机械 excavationsite_machine_3b/3c**(`spawn_physicsstructure` 标记 0a50ff,−5,−5 处):机身 PhysicsBodyComponent `is_static=1` → planck 静态体(`rb.isStatic`),
+        `centered=0` → 画布左上角在实体;三个轮子写着 centered=1 但和机身共用一张 150×125 画布(轮子包围盒中心 (35.5,64.5)(93.5,37.5)(82.5,89.5) 正好是关节 pos_x/pos_y),
+        所以老式多体统一按"根图定画布左上角(根 centered 则 实体 − 画布/2),所有图都画在这张画布里,关节 pos = 画布像素"—— 矿车 / 轮架全 centered 的情况结果不变。
+        含静态部件的多体永远不写格子(`M.hasStatic`:机身进格子轮子就跟地形卡上;电机 12 / −5 / 10 rad/s、3c 22 rad/s 反正一直转)、算有支撑、不做埋地上抬。探针 `_noita-machine-shot`:轮心落在关节 ±2px,角速度 = 电机速度,物理 0.6ms。
+        还差:PhysicsThrowable、Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、⑤ 的 buoyancy 0.7 / go_through_sand / solid_on_collision_*。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
@@ -830,7 +834,7 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 **当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
 **正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① 地形(多边形)② 形状图刚体 / 物品 / 崩塌块上 planck + 睡醒桥接 ④ 关节第一批(矿车 / 滑板 / 轮架 / 物理蘑菇 / 家具 / 钉墙轮)已上线;
-**Box2D 尺度常数已反 exe 定稿(见 ④ 末):重力 12 m/s² = 72 px/s²、fixture 密度 = 材质 density 原值、关节力基准 = (mA+mB)×160**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时 / 物理蘑菇进真菌洞)、⑥ 尸体换 Box2D 关节 也已上线;真机(iPhone)跑过没问题。下一步 ⑤:浮力照 buoyancy 0.7、碰撞伤害走 Box2D 接触。下一步:⑤(碰撞伤害走 postSolve、浮力按 buoyancy 0.7、go_through_sand、solid_on_collision_*)、PhysicsThrowable、挖掘场多体机械。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+**Box2D 尺度常数已反 exe 定稿(见 ④ 末):重力 12 m/s² = 72 px/s²、fixture 密度 = 材质 density 原值、关节力基准 = (mA+mB)×160**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时 / 物理蘑菇进真菌洞)、⑥ 尸体换 Box2D 关节、⑤ 碰撞伤害走接触(pre-solve → `rb.impact`)、挖掘场多体机械(静态机身 + 电机轮)也已上线;真机(iPhone)跑过没问题。下一步:⑤ 剩余(浮力按 buoyancy 0.7、go_through_sand、solid_on_collision_*)、PhysicsThrowable。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。

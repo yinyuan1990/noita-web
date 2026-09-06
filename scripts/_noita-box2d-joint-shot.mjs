@@ -41,6 +41,20 @@ const r = await page.evaluate(async () => {
   const jl = []
   for (let i = 0; i < 6; i++) { await wait(500); jl.push(cartM ? cartM.joints.length : -1) }
   res.cartJointTimeline = jl
+  // 挖掘场机械 3b(机身 is_static,centered=0 → 左上角在实体;三个电机轮画在同一张 150×125 画布里):放在台面上方空中,机身该钉住不掉、轮子在关节位转
+  const MX = PX - 40, MY = PY - 160
+  ent.spawnProp('excavationsite_machine_3b', MX, MY)
+  await wait(700)
+  const mparts = ent.bodies.filter((b) => b.name === 'excavationsite_machine_3b')
+  const frame = mparts.find((b) => b.isStatic), mwheels = mparts.filter((b) => !b.isStatic)
+  const w0 = mwheels.map((w) => w.rot)
+  await wait(1000)
+  res.machine = frame ? {
+    parts: mparts.length, joints: frame.multi.joints.length, frameStatic: frame.pb.isStatic(), frameMoved: +Math.hypot(frame.x - (MX + 75), frame.y - (MY + 62.5)).toFixed(1),
+    // 轮心应在画布像素 (35,64)(94,37)(82,89) → 世界 = 实体 + 那个像素
+    wheelOff: mwheels.map((w) => [+(w.x - MX).toFixed(1), +(w.y - MY).toFixed(1)]),
+    wheelSpin: mwheels.map((w, i) => +(w.rot - w0[i]).toFixed(2)), wheelW: mwheels.map((w) => +w.w.toFixed(2)), awake: mparts.map((b) => !b.asleep && !!b.pb?.isAwake()),
+  } : { parts: mparts.length, noFrame: true }
   // 落定后各组:位置 / 睡眠
   const state = (n) => { const parts = ent.bodies.filter((b) => near(b, n)); return parts.map((b) => ({ id: b.partId, x: +b.x.toFixed(1), y: +b.y.toFixed(1), rot: +b.rot.toFixed(2), asleep: b.asleep, grid: !!b.cells })) }
   res.settled = { minecart: state('minecart'), stand: state('physics_wheel_stand_01'), fungus: state('physics_fungus'), table: state('furniture_table') }
