@@ -584,7 +584,7 @@ function startCollapse(ex, ey) {
 /**
  * LooseGroundComponent 的 box2d 块(chunk_probability):形状取 procedural_gfx/collapse_big/0~14.png 之一(2×8 到 47×33 的不规则块),
  * 盖在射线打到的顶上,图里有像素且那格是静态地面的 → 抠掉,变 chunk_material = concrete_collapsed 的刚体(灰色 brick 纹理,不是砖色 —— 原版塌下来的是灰混凝土块)。
- * concrete_collapsed 材质:solid_on_collision_explode=1(砸到东西按它的 ExplosionConfig 炸一下:r4~20、震镜 15、concrete_sand 火花)、solid_on_sleep_convert=1 → 睡着变 concrete_static。
+ * concrete_collapsed 材质:solid_on_collision_explode=1(Entities 按材质表的 collisionExplode 判:r = sqrt(0.5·|v|·m·0.08) 截 4~20,|v| ≥ 30px/s,炸在接触点)、solid_on_sleep_convert=1 → 睡着变 concrete_static。
  */
 const COLLAPSE_IMGS = []
 for (let i = 0; i < 15; i++) decodePngBrowser(`${RES}/ent/collapse_big/${i}.png`).then((im) => { COLLAPSE_IMGS.push(im) }).catch(() => {})
@@ -603,7 +603,7 @@ function looseChunk(x, y) {
   if (n < 12) return null
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (mask[j * w + i]) setCell(x0 + i, y0 + j, 0)
   const b = entities.spawnLooseChunk(x0 + w / 2, y0 + h / 2, w, h, mask, null, 'concrete_collapsed')
-  if (b) { b.vy = 10 + Math.random() * 20; b.w = (Math.random() - 0.5) * 2; b.collideExplode = true; b.sleepConvert = mats.byName.get('concrete_static') }
+  if (b) { b.vy = 10 + Math.random() * 20; b.w = (Math.random() - 0.5) * 2; b.sleepConvert = mats.byName.get('concrete_static') }
   return b
 }
 /** LooseGround 的射线:从 (cx,cy) 绕上方向 ±maxAngle 射 ≤180px,返回打到的第一块静态地面 */

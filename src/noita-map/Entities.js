@@ -794,15 +794,26 @@ export class Entities {
       const vyBefore = b.pb ? b._vyPrev : b.vy, spBefore = b.pb ? b._spPrev : Math.hypot(b.vx, b.vy)
       const touching = b.pb ? this._stepPhysBody(b, dt) : b.step(dt, BODY_GRAVITY, this._solidB, this._liqDensity, b.density)
       // PhysicsBodyCollisionDamageComponent:撞上东西时速度超过 speed_threshold(灯笼 120)→ 掉血 = 速度 × damage_multiplier(默认 1/60);灯笼掉下来砸地就碎、洒油、起火
-      // 材质 solid_on_collision_explode(concrete_collapsed 崩塌块):砸到东西按材质的 ExplosionConfig 炸一下 —— r4~20、震镜、concrete_sand 火花,块本身留着
-      // 撞击速度:planck 上用 pre-solve 记的接触法向接近速度(rb.impact),手写求解器仍看前后帧速度差
+      // 撞击速度:planck 上用 pre-solve 记的接触相对速度(rb.impact,接触点 impactX/Y),手写求解器仍看前后帧速度差
       const impact = b.pb ? b.impact : (touching ? spBefore : 0)
       if (b.pb) b.impact = 0
-      if (b.collideExplode && impact > 60 && !b.exploded) {
-        b.exploded = true
-        const sand = this.mats.byName.get('concrete_sand')
-        if (sand) for (let k = 0; k < 14; k++) this.hooks.debris?.(b.x + (Math.random() - 0.5) * b.w0, b.y + b.h0 / 2 - 1, (Math.random() - 0.5) * 120, -20 - Math.random() * 90, sand, this.mats.color[sand], true)
-        this.hooks.shake?.(0.25); this.hooks.sfx?.('impact', { vol: 0.6, rate: 0.5 + Math.random() * 0.2, minGap: 60 })
+      // 材质 solid_on_collision_explode(concrete_collapsed 崩塌块;反 exe box2d_collisions.cpp 0x731e20,每次够快的接触都判):
+      //   r = sqrt(0.5 × |v|(m/s) × 质量(kg) × cell_explosion_power) 截到 radius_max;不到 radius_min 按 probability 抬到 radius_min,仍不到就不炸;|v| < velocity_min 不炸;
+      //   炸在接触点,按材质 ExplosionConfig(concrete_collapsed:power 0.08、r 4~20、v_min 30px/s、震镜 15、坑里 2% 生 concrete_sand、ray_energy 6 万),块本身留着
+      const CE = this.mats.list[b.mat]?.collisionExplode
+      if (CE && impact >= CE.vMin && impact > 0) {
+        const mass = b.pb ? b.pb.getMass() : b.alive * (b.density || 1) / 36
+        let r = Math.sqrt(0.5 * (impact / 6) * mass * CE.power)
+        if (r > CE.rMax) r = CE.rMax
+        if (r < CE.rMin && Math.random() < CE.prob) r = CE.rMin
+        if (r >= CE.rMin && this.projectiles?.explode) {
+          const ex = Object.assign({}, CE.ex, { radius: r })
+          this.projectiles.explode(b.impactX ?? b.x, b.impactY ?? (b.y + b.h0 / 2), ex)
+          // spark_material:原版 ExplosionFactory 的 spark_material 是坑口喷出的材质碎屑,这里照 r 撒几粒
+          const sand = CE.ex.sparkMaterial ? this.mats.byName.get(CE.ex.sparkMaterial) : undefined
+          if (sand) for (let k = 0; k < Math.round(r * 0.7); k++) this.hooks.debris?.((b.impactX ?? b.x) + (Math.random() - 0.5) * r, (b.impactY ?? b.y) - 1, (Math.random() - 0.5) * 120, -20 - Math.random() * 90, sand, this.mats.color[sand], true)
+          this.hooks.sfx?.('impact', { vol: 0.6, rate: 0.5 + Math.random() * 0.2, minGap: 60 })
+        }
       }
       const CD = b.d.collisionDamage
       const hanging = b.ropes?.some((r) => !r.broken)

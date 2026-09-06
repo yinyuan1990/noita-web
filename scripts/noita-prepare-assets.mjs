@@ -37,7 +37,10 @@ while ((m = re.exec(xml))) {
   // 边缘印章图列表(<Edge><Images><Image filename>),黑 = 透明,沿材质/空气交界随机旋转盖章 —— 煤矿石头上的苔藓斑就是它
   const edgeBlock = /<Edge>([\s\S]*?)<\/Edge>/.exec(body)
   const eimgs = edgeBlock ? [...edgeBlock[1].matchAll(/<Image\b([^>]*)\/?>/g)].map((im) => attrsOf(im[1])).filter((x) => x.filename).map((x) => ({ f: path.basename(x.filename), rot: x.allow_random_rotation === '1', hor: x.do_only_horizontal_stripe === '1', ver: x.do_only_vertical_stripe === '1' })) : []
-  cells.push({ name: a.name, parent: a._parent || null, a, g, e, eimgs })
+  // <ExplosionConfig>:solid_on_collision_explode / solid_on_break_explode 时按它炸(concrete_collapsed 崩塌块、玻璃)
+  const xc = /<ExplosionConfig\b([^>]*)>/.exec(body)
+  const x = xc ? attrsOf(xc[1]) : {}
+  cells.push({ name: a.name, parent: a._parent || null, a, g, e, eimgs, x })
 }
 const byName = new Map(cells.map((c) => [c.name, c]))
 const inherit = (c, pick, depth = 0) => {
@@ -100,6 +103,27 @@ const materials = cells.map((c, id) => {
   for (const k of STR_FIELDS) {
     const v = inherit(c, (x) => x.a[k])
     if (v) m[k.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase())] = v
+  }
+  // 材质 solid_on_collision_explode(反 exe box2d_collisions.cpp 0x731e20,刚体每次接触都判):
+  //   r = sqrt(0.5 × |v|(m/s) × 质量(kg) × cell_explosion_power),r = min(r, radius_max);r < radius_min 时按 cell_explosion_probability 抬到 radius_min,仍 < radius_min 不炸;
+  //   |v| < cell_explosion_velocity_min(px/s → ÷6)不炸;炸在接触点。ConfigExplosion 默认(ctor 0x4c0f2b):power 1、radius_min 5、radius_max 150、velocity_min 0、probability 0
+  if (inherit(c, (x) => x.a.solid_on_collision_explode) === '1') {
+    const X = (k, d) => { const v = inherit(c, (q) => q.x[k]); return v === undefined ? d : +v }
+    const XS = (k) => inherit(c, (q) => q.x[k])
+    m.collisionExplode = {
+      power: X('cell_explosion_power', 1), rMin: X('cell_explosion_radius_min', 5), rMax: X('cell_explosion_radius_max', 150), vMin: X('cell_explosion_velocity_min', 0), prob: X('cell_explosion_probability', 0),
+      // 下面这块和 noita-prepare-projectiles 的 config_explosion 同形(ProjectileSystem.explode 直接吃)
+      ex: {
+        damage: X('damage', 0), shake: X('camera_shake', 0), hole: XS('hole_enabled') !== '0',
+        power: [X('physics_explosion_power.min', 0), X('physics_explosion_power.max', 0.2)], knockback: X('knockback_force', 1),
+        destroyLiquid: XS('hole_destroy_liquid') === '1', holeLiquid: XS('hole_destroy_liquid') === '1', rayEnergy: X('ray_energy', 0), maxDurability: X('max_durability_to_destroy', 0),
+        sparks: XS('sparks_enabled') === '1' ? [X('sparks_count_min', 0), X('sparks_count_max', 0)] : null,
+        matSparks: XS('material_sparks_enabled') === '1' ? [X('material_sparks_count_min', 0), X('material_sparks_count_max', 0)] : null,
+        light: XS('light_enabled') === '1' ? { fade: X('light_fade_time', 0.1), r: X('light_r', 255), g: X('light_g', 255), b: X('light_b', 255), radius: X('light_radius_coeff', 1) } : null,
+        createCell: X('create_cell_probability', 0) ? { p: X('create_cell_probability', 0), mat: XS('create_cell_material') || 'fire' } : null,
+        sparkMaterial: XS('spark_material') || null, stains: X('stains_radius', 0),
+      },
+    }
   }
   return m
 })

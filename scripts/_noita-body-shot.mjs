@@ -32,12 +32,17 @@ const r = await page.evaluate(async () => {
   const w = 12, h = 10, mask = new Uint8Array(w * h).fill(1)
   const cx = PX0 + 20, cy = PY - 60
   const b = ent.spawnLooseChunk(cx, cy, w, h, mask, null, 'concrete_collapsed')
-  b.collideExplode = true; b.sleepConvert = np.mats.byName.get('concrete_static')
+  b.sleepConvert = np.mats.byName.get('concrete_static')
+  // 砸地爆炸走材质 solid_on_collision_explode(Entities 按 collisionExplode 判):包一层 explode 记次数和半径。12×10 = 120px → 33kg,落 60px ≈ 93px/s = 15.5m/s → r = sqrt(0.5×15.5×33×0.08) ≈ 4.5 ≥ 4
+  const explosions = []
+  const ex0 = np.projectiles.explode.bind(np.projectiles)
+  np.projectiles.explode = (x, y, ex, back) => { explosions.push({ x: x | 0, y: y | 0, r: +ex.radius.toFixed(1) }); return ex0(x, y, ex, back) }
   const sandM = np.mats.byName.get('concrete_sand'), cs = np.mats.byName.get('concrete_static')
   let sandSeen = 0
   for (let i = 0; i < 35; i++) { await wait(100); sandSeen = Math.max(sandSeen, np.debris.filter((d) => d.m === sandM).length) }
+  np.projectiles.explode = ex0
   let staticN = 0; for (let y = b.y - 20; y < b.y + 20; y++) for (let x = b.x - 20; x <= b.x + 20; x++) if (sim.get(x, y) === cs) staticN++
-  res.chunk = { exploded: !!b.exploded, sandDebrisSeen: sandSeen, dead: b.dead, asleep: b.asleep, concreteStaticCells: staticN, state: { x: b.x | 0, y: b.y | 0, gy: groundY(pl.x - 30), vx: +b.vx.toFixed(1), vy: +b.vy.toFixed(1), w: +b.w.toFixed(3), rot: +b.rot.toFixed(3), restT: +b.restT.toFixed(2), n: b.n, edge: b.edge.length } }
+  res.chunk = { explosions, sandDebrisSeen: sandSeen, dead: b.dead, asleep: b.asleep, concreteStaticCells: staticN, state: { x: b.x | 0, y: b.y | 0, gy: groundY(pl.x - 30), vx: +b.vx.toFixed(1), vy: +b.vy.toFixed(1), w: +b.w.toFixed(3), rot: +b.rot.toFixed(3), restT: +b.restT.toFixed(2), n: b.n, edge: b.edge.length } }
   res.tableDef = { t: t ? { n: t.n, edge: t.edge.length, x: t.x | 0, y: t.y | 0, gy: groundY(gx0) } : null }
   // ⑤b 材质 platform_type:人 / 怪对 wood_loose(树)不挡、对 rock_static 挡;刚体(Box2D)两者都挡
   { const wl = np.mats.byName.get('wood_loose'), rs = np.mats.byName.get('rock_static'), tx = PX0 + 5, ty = PY - 3; sim.set(tx, ty, wl, 0); res.platform = { creatureOnTree: ent._solid(tx, ty), creatureOnRock: ent._solid(tx, PY + 1), bodyOnTree: ent._solidB(tx, ty), playerOnTree: !!np.solidAt?.(tx, ty), wlPT: np.mats.list[wl].platformType, rsPT: np.mats.list[rs].platformType }; sim.set(tx, ty, 0, 0) }

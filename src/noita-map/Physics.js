@@ -57,8 +57,9 @@ export class Physics {
       const rel = (dvx * n.x + dvy * n.y) * PPM // 沿法线的接近速度(负 = 正在靠近);贴着滑 / 滚不算撞
       if (rel > -3) return
       const sp = Math.hypot(dvx, dvy) * PPM // 撞击速度取相对速度大小(扔出去贴地滑着落地也算撞)
-      if (ra && sp > ra._impact) ra._impact = sp
-      if (rbB && sp > rbB._impact) rbB._impact = sp
+      // 接触点也记下(px):solid_on_collision_explode 的爆炸中心在接触点(原版 box2d_collisions.cpp 把 worldPosition 换成游戏坐标传给 explode)
+      if (ra && sp > ra._impact) { ra._impact = sp; ra._impactX = p.x * PPM; ra._impactY = p.y * PPM }
+      if (rbB && sp > rbB._impact) { rbB._impact = sp; rbB._impactX = p.x * PPM; rbB._impactY = p.y * PPM }
     })
     this.tiles = new Map() // "tx,ty" → { fixtures: Fixture[], ver, last, verts }
     this.frame = 0
@@ -291,7 +292,8 @@ export class Physics {
       const rb = b.getUserData()?.rb
       if (!rb || !b.isActive()) continue
       rb._spPrev = Math.hypot(rb.vx, rb.vy); rb._vyPrev = rb.vy
-      rb.impact = Math.max(rb.impact || 0, rb._impact || 0); rb._impact = 0 // 这一帧里最大的接触接近速度,Entities 用完清零
+      if ((rb._impact || 0) > (rb.impact || 0)) { rb.impact = rb._impact; rb.impactX = rb._impactX; rb.impactY = rb._impactY } // 这一帧里最大的接触接近速度 + 接触点,Entities 用完清零
+      rb._impact = 0
       const p = b.getPosition(), v = b.getLinearVelocity()
       rb.x = rb._px = p.x * PPM; rb.y = rb._py = p.y * PPM; rb.rot = rb._prot = b.getAngle()
       rb.vx = rb._sx = v.x * PPM; rb.vy = rb._sy = v.y * PPM; rb.w = rb._sw = b.getAngularVelocity()
