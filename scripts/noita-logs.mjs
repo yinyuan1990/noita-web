@@ -20,7 +20,8 @@ console.log('事件统计', JSON.stringify(count))
 const pos = events.filter((e) => e.e === 'pos')
 if (pos.length) {
   const fps = pos.map((p) => p.fps).filter(Boolean)
-  console.log(`帧率 min ${Math.min(...fps)} avg ${(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(0)}  模拟 avg ${(pos.reduce((a, p) => a + (p.sim || 0), 0) / pos.length).toFixed(1)}ms  轨迹 (${pos[0].x},${pos[0].y}) → (${pos[pos.length - 1].x},${pos[pos.length - 1].y})`)
+  const phys = pos.map((p) => p.phys).filter((v) => v !== undefined)
+  console.log(`帧率 min ${Math.min(...fps)} avg ${(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(0)}  模拟 avg ${(pos.reduce((a, p) => a + (p.sim || 0), 0) / pos.length).toFixed(1)}ms${phys.length ? `  物理 avg ${(phys.reduce((a, b) => a + b, 0) / phys.length).toFixed(1)} max ${Math.max(...phys)}ms` : ''}  轨迹 (${pos[0].x},${pos[0].y}) → (${pos[pos.length - 1].x},${pos[pos.length - 1].y})`)
 }
 const show = process.argv[3] === 'all' ? events : events.filter((e) => ['stuck', 'report', 'error', 'open'].includes(e.e))
 for (const e of show) {

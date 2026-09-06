@@ -1543,7 +1543,14 @@ window.addEventListener('wheel', (e) => {
 $('btnMute').addEventListener('click', (e) => { e.stopPropagation(); sfx.ensure(); sfx.setMuted(!sfx.muted); $('btnMute').textContent = sfx.muted ? '🔇' : '🔊' })
 $('btnReport').addEventListener('click', async (e) => {
   e.stopPropagation()
-  oplog.ev('report', { x: player.x | 0, y: player.y | 0, box: sampleAround(player.x, player.y, 8, 12), note: 'manual' })
+  // 手动上报带上性能快照 + 当前法杖:掉帧 / 卡顿类反馈光看地形框看不出来
+  const cw = curWand()
+  oplog.ev('report', {
+    x: player.x | 0, y: player.y | 0, box: sampleAround(player.x, player.y, 8, 12), note: 'manual',
+    fps: fps | 0, sim: +simMs.toFixed(1), simBlocks: sim.activeBlocks, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
+    ents: entities.list.length, bodies: entities.bodies.length, proj: projectiles.list.length, debris: debris.length, chunks: streamer.entries.size,
+    wand: cw ? { name: cw.name, cards: cw.cards, potion: cw.potion ? cw.potion.mat : undefined } : null, touch: IS_TOUCH ? 1 : 0,
+  })
   const ok = await oplog.flush('manual')
   $('btnReport').textContent = ok ? '已上报 ✓' : '上报失败'
   setTimeout(() => { $('btnReport').textContent = '上报日志' }, 1500)
@@ -1580,7 +1587,7 @@ function step(dt) {
   const inState = dir + (wantUp ? 'U' : '') + (wantFire ? 'F' : '')
   if (inState !== lastInState) { lastInState = inState; oplog.ev('input', { dir, up: wantUp ? 1 : 0, fire: wantFire ? 1 : 0, x: player.x | 0, y: player.y | 0, joy: touch.joy ? [+touch.mx.toFixed(2), +touch.my.toFixed(2)] : undefined }) }
   posLogT += dt
-  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1) }) }
+  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake }) }
 
   // ── 身体:Noita CharacterPlatforming 模型 ──
   const f60 = dt * 60 // 以帧为单位的参数换算
