@@ -20,7 +20,8 @@ const THROWABLE = {
   default: { coeff: 1, maxSpeed: 180, minTorque: 0.5, maxTorque: 8 },
   potion: { coeff: 1.5, maxSpeed: 180, minTorque: 0.5, maxTorque: 8 },
 }
-const MAX_RAGDOLL_PARTS = 96 // 同时活着的尸块上限(≈8 具僵尸;见 _capRagdolls)
+// 手机减半:iPhone 日志(陨石连炸一片怪)醒着的刚体 100+ 时 fps 20,其中大半是尸块;96 块(≈8 具)是 PC 口径
+const MAX_RAGDOLL_PARTS = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 48 : 96 // 同时活着的尸块上限(≈8 具僵尸;见 _capRagdolls)
 const BODY_GRAVITY = 72 // Box2D 世界重力:反 exe b2World 构造的重力向量 (0, 12) m/s² = 72 px/s²,见 Physics.js;原版箱子 / 尸体确实比角色(pixel_gravity 350)落得慢得多
 
 export class Entities {

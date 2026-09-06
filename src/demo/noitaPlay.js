@@ -1547,7 +1547,7 @@ $('btnReport').addEventListener('click', async (e) => {
   const cw = curWand()
   oplog.ev('report', {
     x: player.x | 0, y: player.y | 0, box: sampleAround(player.x, player.y, 8, 12), note: 'manual',
-    fps: fps | 0, sim: +simMs.toFixed(1), simBlocks: sim.activeBlocks, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
+    fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
     ents: entities.list.length, bodies: entities.bodies.length, proj: projectiles.list.length, debris: debris.length, chunks: streamer.entries.size,
     wand: cw ? { name: cw.name, cards: cw.cards, potion: cw.potion ? cw.potion.mat : undefined } : null, touch: IS_TOUCH ? 1 : 0,
   })
@@ -1558,7 +1558,7 @@ $('btnReport').addEventListener('click', async (e) => {
 for (const id of ['tools', 'btnMute', 'btnReport']) $(id).addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true })
 
 // ── 主循环 ──
-let last = performance.now(), fps = 60, fpsAcc = 0, fpsN = 0, simMs = 0
+let last = performance.now(), fps = 60, fpsAcc = 0, fpsN = 0, simMs = 0, stepMs = 0, renderMs = 0 // 模拟 / 逻辑(实体 + 弹丸 + 物理) / 渲染 的平滑毫秒,进面板和日志
 function step(dt) {
   // 输入
   // 混乱药:左右反;醉了:方向偶尔自己打漂
@@ -1587,7 +1587,7 @@ function step(dt) {
   const inState = dir + (wantUp ? 'U' : '') + (wantFire ? 'F' : '')
   if (inState !== lastInState) { lastInState = inState; oplog.ev('input', { dir, up: wantUp ? 1 : 0, fire: wantFire ? 1 : 0, x: player.x | 0, y: player.y | 0, joy: touch.joy ? [+touch.mx.toFixed(2), +touch.my.toFixed(2)] : undefined }) }
   posLogT += dt
-  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake }) }
+  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, ents: entities.list.length }) }
 
   // ── 身体:Noita CharacterPlatforming 模型 ──
   const f60 = dt * 60 // 以帧为单位的参数换算
@@ -2047,10 +2047,14 @@ function loop(now) {
   // 静态材质变了的 chunk,节流后让 Worker 重画位图
   for (const [k, due] of repaintDue) if (now >= due) { repaintDue.delete(k); const [cx, cy] = k.split(',').map(Number); streamer.repaint(cx, cy) }
   // 脚下区块没就位就先别动(开局那一下);暂停 / 背包打开时世界也停
+  const t1 = performance.now()
   if (!player.dead && !paused && !editor.open && streamer.get(Math.floor(player.x / CHUNK) + WCX, Math.floor(player.y / CHUNK) + WCY)) { step(dt); updateQuest(dt) }
+  stepMs = stepMs * 0.9 + (performance.now() - t1) * 0.1
   if (!paused) sky.tick(dt)
   saveT += dt; if (saveT >= 5) { saveT = 0; if (!player.dead && simBound) saveGame() }
+  const t2 = performance.now()
   const missing = render()
+  renderMs = renderMs * 0.9 + (performance.now() - t2) * 0.1
   drawQuest()
   renderSlots()
   // 声音:喷气噪声 / 火焰噼啪 / 洞穴环境音随深度
@@ -2095,8 +2099,8 @@ function loop(now) {
   $('air').firstElementChild.style.width = (player.air / 7 * 100) + '%'
   $('air').firstElementChild.style.background = player.air <= 0 ? '#e0484f' : '#d8f0ff'
   // 手机端整块面板藏着(挡视野),只在顶上留一行 fps / 模拟 / 物理毫秒,用户反馈掉帧时能直接说出数字
-  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)} · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
-  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 醒 ${sim.activeBlocks} 块 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
+  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)} · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
+  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)} 渲染 ${renderMs.toFixed(1)} · 醒 ${sim.activeBlocks} 块 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)

@@ -16,6 +16,7 @@ const TILE = 32                 // 地形碰撞块 = CellSim 的睡眠块(chunk 
 const TERRAIN_NEAR = 24         // 醒着的刚体包围盒外扩多少 px 就要有地形(每帧最多走 12px = maxTranslation 2m)
 const TILE_TTL = 120            // 块 N 帧没被任何刚体用到就释放
 const MAX_BUILD_PER_FRAME = 2   // 每帧最多重建几块(单块 34×34 采样 + 描边 + 三角化 ≈ 0.45ms;真菌洞落沙不停,不限的话地形重建就 2.7ms/帧)
+const BUILD_BUDGET_MS = 1.5     // 每帧地形重建的毫秒预算(建完一块超了就不建下一块;见 _refreshTerrain)
 const MIN_REBUILD_GAP = 6       // 同一块两次重建至少隔几帧(落沙区每帧都在变;歇着的刚体不在乎 100ms 的滞后,掉下来的最多陷进新沙 1~2px)
 const CATCHUP_SKIP_MS = 6         // 上一帧物理超过这个毫秒数就不补步(见 step)
 const TOI_OFF_CONTACTS = 200, TOI_OFF_AWAKE = 40 // 醒着的刚体 > 40 且接触 > 200 就关连续碰撞(见 step);正常一屏醒着的个位数、接触一两百,十具尸体挤一坑 60~90 醒 / 500~800 对
@@ -136,6 +137,7 @@ export class Physics {
     if (this.frame % 20 === 0) for (const k of needSleep) need.add(k)
     else for (const k of needSleep) { const t = this.tiles.get(k); if (t) t.last = this.frame }
     let built = 0
+    const tb0 = performance.now()
     for (const key of need) {
       const tx = Math.floor(key / 65536), ty = (key & 65535) << 16 >> 16 // 还原有符号的 ty
       let t = this.tiles.get(key)
@@ -143,7 +145,8 @@ export class Physics {
       if (ver < 0) continue // chunk 没就位:先不建(刚体飞到没加载的地方是 Noita 也头疼的事,PhysicsKeepInWorld 那一套以后再说)
       if (t && t.ver === ver) { t.last = this.frame; continue }
       if (t && this.frame - t.builtAt < MIN_REBUILD_GAP) { t.last = this.frame; continue } // 刚重建过:老的先顶着
-      if (built >= MAX_BUILD_PER_FRAME) { if (t) t.last = this.frame; continue } // 这帧预算用完:老的先顶着,下帧再换
+      // 这帧预算用完(块数 / 毫秒都算:陨石坑边缘一块能有上百个轮廓点,三角化比普通块贵好几倍,只数块数拦不住单帧尖峰):老的先顶着,下帧再换
+      if (built >= MAX_BUILD_PER_FRAME || (built && performance.now() - tb0 > BUILD_BUDGET_MS)) { if (t) t.last = this.frame; continue }
       if (!t) { t = { fixtures: new Map(), ver: -1, last: 0, verts: 0, builtAt: -99 }; this.tiles.set(key, t) }
       this._buildTile(t, tx, ty, ver)
       t.last = this.frame; t.builtAt = this.frame
