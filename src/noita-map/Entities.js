@@ -13,7 +13,7 @@ import { NollaPrng } from './core/NollaPrng.js'
 import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from './core/coords.js'
 
 const K_LIQUID = 3
-const BODY_GRAVITY = 350 // 与角色 pixel_gravity 同量级(box2d 世界重力换算后 ≈ 这个数,炸弹刚体也用它)
+const BODY_GRAVITY = 60 // Box2D 世界重力:exe global_gravity = 6 × 10 = 60 px/s²(10 m/s²),见 Physics.js;原版箱子 / 尸体确实比角色(pixel_gravity 350)落得慢得多
 
 export class Entities {
   /**
@@ -82,6 +82,7 @@ export class Entities {
         const d = this.defs[l.ent]
         if (!d?.shape?.image) continue
         this._img(d.shape.image); if (d.sprite?.image) this._img(d.sprite.image)
+        if (this._isMulti(d)) for (const s of d.shapes) this._img(s.image)
         this.pendingProps.push({ name: l.ent, d, x: l.x + (d.body?.rootOffX || 0), y: l.y + (d.body?.rootOffY || 0) })
       }
     }
@@ -97,6 +98,7 @@ export class Entities {
         // 像素刚体:形状图到了再建(见 update 里的 pendingProps)
         this._img(d.shape.image)
         if (d.sprite?.image) this._img(d.sprite.image) // 皮肤图(灯笼火苗)不请求的话 pendingProps 永远等不到 → 矿里的灯笼一直没出来过
+        if (this._isMulti(d)) for (const sh of d.shapes) this._img(sh.image)
         this.pendingProps.push({ name: s.entity, d, x: s.x, y: s.y })
         continue
       }
@@ -270,12 +272,24 @@ export class Entities {
     if (!d?.shape?.image) return null
     this._img(d.shape.image)
     if (d.sprite?.image) this._img(d.sprite.image) // 有皮肤图(灯笼的火苗)也得先到,不然 pendingProps 一直等
+    if (this._isMulti(d)) for (const s of d.shapes) this._img(s.image)
     const p = { name, d, x, y }
     this.pendingProps.push(p)
     return p
   }
 
   _shapeImage(d) { return d.shape?.image || d.sprite?.image || null }
+  /**
+   * 走 Box2D 多体路径的道具(第 29 条 ④):有关节的 / 多张形状图的(矿车 / 木车 / 滑板 / 轮架 / 物理蘑菇 / 家具 / 钉墙轮 / 齿轮门)。
+   * 单张图 + ATTACH_TO_NEARBY_SURFACE(小灯笼 lantern_small)暂仍走 ropes(它有找墙 / 挂直 / 像素掉了就断的一套细节);chain_to_ceiling 的吊链也是 ropes
+   */
+  _isMulti(d) {
+    if (!this.physics || !d.shapes?.length) return false
+    if (d.chains) return false
+    if (d.shapes.length === 1 && d.joints?.some((j) => j.kind === 'new' && /ATTACH/.test(j.type))) return false
+    return d.shapes.length > 1 || (d.joints?.length > 0)
+  }
+  _shapesReady(d) { return !this._isMulti(d) || d.shapes.every((s) => this.images.has(s.image)) }
 
   /**
    * LooseGroundComponent 的一块:从世界里抠出一团地面(mask 由调用方给,1 = 该格属于这块),变成 chunk_material 的像素刚体落下来。
@@ -365,6 +379,103 @@ export class Entities {
     }
     this.stats.bodies++
     return b
+  }
+
+  /**
+   * Box2D 多体道具(第 29 条 ④):每个 body_id 一个 RigidBody(各自的形状图 / 材质 / planck body),关节按 xml 建在 planck 里。
+   * 老式(矿车 / 木车 / 滑板 / 轮架 / 齿轮门):几张图同一画布、centered,pos_x/pos_y 是图内像素坐标 → 世界锚点 = 实体位置 + (pos − 画布中心);nail_to_wall = 钉在地上
+   * 新式(props/physics/minecart / 蘑菇 / 家具):PhysicsImageShape 各带 offset(centered → 图心在实体 + offset;否则左上角在实体 + offset),Joint2 offset 是实体坐标;
+   *   REVOLUTE_ATTACH_TO_NEARBY_SURFACE 从锚点沿 ray 找第一格实心钉到地上(蘑菇的脚 ray (0,30));找不到就不钉(原版一样倒)
+   * 整组共用 multi:{parts, joints};睡 / 醒 / 支撑按整组算(见 _updateBodies)
+   */
+  _makeMultiBody(p) {
+    const d = p.d, PH = this.physics
+    const M = { parts: [], joints: [], name: p.name, age: 0, group: -(++this._multiSeq || (this._multiSeq = 1)) }
+    const byId = new Map()
+    const bodyOf = (id) => d.bodies?.find((b) => b.uid === id)
+    for (const s of d.shapes) {
+      const png = this.images.get(s.image)
+      if (!png?.data || byId.has(s.bodyId)) continue
+      const cx = s.centered ? p.x + s.offX : p.x + s.offX + png.width / 2
+      const cy = s.centered ? p.y + s.offY : p.y + s.offY + png.height / 2
+      const matId = this.mats.byName.get(s.material || '') ?? this.mats.byName.get('wood_prop')
+      const b = new RigidBody(d, png, cx, cy, matId)
+      b.name = p.name; b.isBody = true; b.multi = M; b.partId = s.bodyId; b.isCircle = s.isCircle; b.z = s.z; b.filterGroup = M.group
+      b.density = this.mats.list[matId]?.density ?? 6
+      b.gravScale = this.mats.list[matId]?.solidGravityScale || 1
+      if (this.mats.list[matId]?.normalMapped) b.baseColor = this.mats.color[matId]
+      const bd = bodyOf(s.bodyId) || d.body || {}
+      b.linDamp = bd.linear_damping ?? 0; b.angDamp = bd.angular_damping ?? 0; b.fixedRot = !!bd.fixed_rotation
+      b.canvasW = png.width; b.canvasH = png.height
+      byId.set(s.bodyId, b); M.parts.push(b)
+    }
+    if (!M.parts.length) return null
+    // 根部件(is_root,没标的取第一张图 = 老式的 uid 1):血 / 爆炸 / 库存记在它身上
+    M.root = M.parts.find((b) => d.shapes.find((s) => s.bodyId === b.partId)?.isRoot) || M.parts[0]
+    for (const b of M.parts) if (b !== M.root) { b.inventory = null; b.light = null } // 油桶那种"装东西 / 带光"的只算根一次
+    // 画的顺序:z 大的先画(Noita z 越小越靠前,轮子 z=-1 画在车身前面)
+    M.parts.sort((a, b) => b.z - a.z)
+    for (const b of M.parts) { PH.attach(b); this.bodies.push(b); this.stats.bodies++ }
+    for (const j of d.joints || []) {
+      const A = byId.get(j.body1), B = byId.get(j.body2)
+      if (!A) continue
+      let ax, ay
+      if (j.kind === 'old') { ax = p.x + j.px - A.canvasW / 2; ay = p.y + j.py - A.canvasH / 2 } else { ax = p.x + j.ox; ay = p.y + j.oy }
+      let toGround = j.kind === 'old' ? (j.nail || !B) : !B
+      if (j.kind === 'new' && /ATTACH/.test(j.type)) {
+        // 沿 ray 找地面:锚点挪到第一格实心(往回退 surface_attachment_offset_y),没有就不钉
+        const len = Math.hypot(j.rayX, j.rayY) || 10, dx = j.rayX / len, dy = j.rayY / len
+        let hit = null
+        for (let t = 0; t <= len; t++) { const x = Math.floor(ax + dx * t), y = Math.floor(ay + dy * t); if (this._solidB(x, y)) { hit = [ax + dx * Math.max(0, t - j.surfOffY), ay + dy * Math.max(0, t - j.surfOffY)]; break } }
+        if (!hit) continue
+        ax = hit[0]; ay = hit[1]; toGround = true
+      }
+      const other = toGround ? null : B
+      const pj = /WELD/.test(j.type) ? PH.weld(A, other, ax, ay) : PH.revolute(A, other, ax, ay, { motor: j.motor, motorTorque: j.motorTorque })
+      if (!pj) continue
+      // break_distance 是 Box2D 米(1.4142 m = 8.5px;蘑菇 5 → 30px、脚 8 → 48px):按像素算的话矿车落地那一下就断了
+      M.joints.push({ j: pj, A, B: other, breakDist: (j.kind === 'new' ? j.breakDistance : (j.breakable ? 1.4142 : 0)) * 6, breakForce: j.kind === 'new' ? j.breakForce : 0, breakOnModified: !!j.breakOnModified, aliveA: A.alive, aliveB: other ? other.alive : 0 })
+    }
+    // physics_fungus.lua:lift 浮力 + 电机正弦摆(speed_mult = ProceduralRandomf(entity_id, 4, 0.1, 0.75))
+    if (d.lift) M.lift = d.lift
+    if (d.scripts?.some((s) => s.endsWith('physics_fungus'))) { M.seed = (Math.abs(Math.floor(p.x)) * 31 + Math.abs(Math.floor(p.y))) % 1000; M.sway = 0.1 + ((M.seed * 7919) % 1000) / 1000 * 0.65 }
+    this.multis ||= []
+    this.multis.push(M)
+    return M
+  }
+  /**
+   * 多体组每帧:断裂检查(拉开超过 break_distance / 约束力超过 break_force × PHYSICS_JOINT_MAX_FORCE_MULTIPLIER 160 / 关节所在的块像素掉了 break_on_body_modified);
+   * 死掉的部件把它的关节拆掉;physics_fungus.lua:根体每帧受 lift 浮力、各节电机速度 = sin(t + joint×0.632) × speed_mult(第 1 节反向)
+   */
+  _updateMultis(dt) {
+    if (!this.multis) return
+    const PH = this.physics
+    for (let i = this.multis.length - 1; i >= 0; i--) {
+      const M = this.multis[i]
+      M.age += dt
+      const root = M.root
+      if (root && !root.dead && !root.asleep && root.pb) {
+        if (M.lift) root.pb.applyForceToCenter({ x: 0, y: M.lift }, true) // lift -25 = 向上 25 N
+        if (M.sway) {
+          const t = M.age * 60 * 0.02 + M.seed * 2.721
+          let n = 0
+          for (const J of M.joints) { if (J.B && J.j.isMotorEnabled?.()) { n++; const spd = Math.sin(t + n * 0.632) * M.sway; J.j.setMotorSpeed(n === 1 ? -spd : spd) } }
+        }
+      }
+      for (let k = M.joints.length - 1; k >= 0; k--) {
+        const J = M.joints[k]
+        const dead = J.A.dead || !J.A.pb || (J.B && (J.B.dead || !J.B.pb))
+        let broken = dead
+        if (!broken && !J.A.asleep) {
+          if (J.breakDist > 0 && PH.jointGap(J.j) > J.breakDist) broken = true
+          if (J.breakForce > 0 && PH.jointForce(J.j) > J.breakForce * 160) broken = true
+          if (J.breakOnModified && (J.A.alive !== J.aliveA || (J.B && J.B.alive !== J.aliveB))) broken = true
+        }
+        if (broken) { if (!dead) PH.destroyJoint(J.j); M.joints.splice(k, 1) }
+      }
+      M.parts = M.parts.filter((b) => !b.dead)
+      if (!M.parts.length) this.multis.splice(i, 1)
+    }
   }
 
   /**
@@ -475,7 +586,9 @@ export class Entities {
         const p = this.pendingProps[i]
         if (!this.images.has(this._shapeImage(p.d))) continue
         if (p.d.sprite?.image && !this.images.has(p.d.sprite.image)) continue
+        if (!this._shapesReady(p.d)) continue
         this.pendingProps.splice(i, 1)
+        if (this._isMulti(p.d) && !p.item && !p.ragdoll) { this._makeMultiBody(p); continue }
         const b = this._makeBody(p)
         if (b) this.bodies.push(b)
       }
@@ -561,6 +674,7 @@ export class Entities {
           // 布娃娃部件:关节钉在像素上,像素被烧 / 挖掉关节就断;支撑看整组(挂在躯干上的手臂自己不着地),没支撑整组醒
           if (lost && b.group) b.group.checkAnchors()
           if (!b.dead && b.group?.connected(b)) { if (!b.group.supported(this._solidB)) b.group.wakeAll(sim) }
+          else if (!b.dead && b.multi) { if (!this._multiSupported(b.multi)) b.wake(sim) } // 多体:整组有一块着地 / 有钉在地上的关节就算有支撑(车身悬在轮子上不算没支撑)
           else if (!b.dead && !b.supported(this._solidB)) b.wake(sim)
         }
         continue
@@ -612,11 +726,45 @@ export class Entities {
       restList.sort((a, b) => a.y - b.y) // 从数组尾(y 最大 = 最低)往前
       for (let pass = 0; pass < 3 && restList.length; pass++) {
         let n = 0
-        for (let i = restList.length - 1; i >= 0; i--) { const b = restList[i]; if (b.supported(this._solidB)) { this._gridSleep(b); restList.splice(i, 1); n++ } }
+        for (let i = restList.length - 1; i >= 0; i--) {
+          const b = restList[i]
+          if (b.multi) {
+            // 多体:全部部件都在 planck 里睡了 + 整组有支撑 → 整组一起写格子(部件之间的关节随 body 停用)
+            const M = b.multi
+            if (!M.parts.every((q) => q.dead || q.asleep || !q.pb?.isAwake()) || !this._multiSupported(M)) { restList.splice(i, 1); continue }
+            for (const q of M.parts.slice().sort((a, b) => a.z - b.z)) if (!q.dead && !q.asleep) this._gridSleep(q) // z 小(靠前)的先写格子:重叠处留前面那块的像素(轮子在车身前)
+            restList = restList.filter((q) => !M.parts.includes(q)); n++
+            i = restList.length // 数组换了,从尾重来
+            continue
+          }
+          if (b.supported(this._solidB)) { this._gridSleep(b); restList.splice(i, 1); n++ }
+        }
         if (!n) break
       }
     }
+    this._updateMultis(dt)
     this._updateRagdolls(dt, x0, y0, x1, y1)
+  }
+  /** 多体的支撑:钉在地上的关节算;某部件脚下有实心且那格**不是兄弟部件睡进格子的像素**才算(车身压在自己睡着的轮子上不算有支撑,不然挖空脚下整组不醒) */
+  _multiSupported(M) {
+    if (M.joints.some((J) => !J.B)) return true
+    const sets = []
+    for (const p of M.parts) if (!p.dead && p.asleep && p.cellSet) sets.push(p.cellSet)
+    const P = [0, 0]
+    for (const p of M.parts) {
+      if (p.dead) continue
+      if (p.hanging) return true
+      for (let e = 0; e < p.edge.length; e++) {
+        p.worldOf(p.edge[e], P)
+        const x = Math.floor(P[0]), y = Math.floor(P[1] + 1)
+        if (!this._solidB(x, y)) continue
+        const key = x * 65536 + (y & 65535)
+        let own = false
+        for (const s of sets) if (s.has(key)) { own = true; break }
+        if (!own) return true
+      }
+    }
+    return false
   }
   /** 写进格子睡觉(+ 材质 solid_on_sleep_convert:concrete_collapsed → concrete_static,睡着就化成静态混凝土,刚体撤掉) */
   _gridSleep(b) {
@@ -705,6 +853,19 @@ export class Entities {
   _bodyDamaged(b, dmg, lost = 0, hx = b.x, hy = b.y) {
     if (b.dead) return
     const d = b.d
+    // 多体(蘑菇 / 矿车):一个实体一条命,血 / 爆炸都记在根部件上;根死了整组一起撤
+    if (b.multi) {
+      const M = b.multi, root = M.root
+      if (root && root !== b && !root.dead) {
+        if (dmg > 0) root.hp -= dmg
+        const live = M.parts.filter((q) => !q.dead)
+        const avgDestroyed = live.reduce((s, q) => s + q.destroyed, 0) / Math.max(1, live.length)
+        const req = d.explode?.physics_body_destruction_required
+        if (root.hp <= 0 || (lost > 0 && req !== undefined && avgDestroyed >= req)) { this._destroyBody(root, hx, hy); return }
+        if (b.destroyed > 0.6) this._destroyBody(b, hx, hy) // 这一块被打得剩不下什么了:只撤这一块,别的部件留着
+        return
+      }
+    }
     if (dmg > 0) b.hp -= dmg
     const ex = d.explode
     let die = b.hp <= 0
@@ -750,6 +911,8 @@ export class Entities {
     const sim = this.sim
     if (b.asleep) b.wake(sim) // 先把世界里的像素收回
     if (b.pb) this.physics.detach(b)
+    // 多体的根死了(蘑菇炸了):整组撤掉(kill_entity_if_body_destroyed);部件死了根还在(轮子被打飞)→ 别的照旧
+    if (b.multi && b.multi.root === b) for (const q of b.multi.parts) if (q !== b && !q.dead) { if (q.asleep) q.wake(sim); q.dead = true }
     const d = b.d
     // 装的液体全洒出来(油桶 300 油 / 药水)
     if (b.inventory) for (const slot of b.inventory) {

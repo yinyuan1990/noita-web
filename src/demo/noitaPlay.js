@@ -54,7 +54,7 @@ const sim = new CellSim(mats, reactions, {
 })
 let simBound = false
 // ── Box2D 世界(planck,第 ① 步:地形碰撞;`?phys=0` 关;`?physTest=1` 出生点上方丢几个测试箱子看落地)──
-const physics = Q.get('phys') !== '0' ? new Physics(sim, { gravity: 350, mats }) : null
+const physics = Q.get('phys') !== '0' ? new Physics(sim, { mats }) : null // 重力用 Physics 默认(exe 反出的 60 px/s² = 10 m/s²)
 const PHYS_TEST = Q.get('physTest') === '1'
 const PHYS_DRAW = Q.get('physDraw') === '1'
 let physTestDone = false

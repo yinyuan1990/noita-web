@@ -765,6 +765,23 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         油桶 pb 落台 gap 0.09;打掉 24 像素 fixtures 1 → 3、质量 20 → 16;r18 爆炸把 29px 处的石头抛 9px、15px 处的抠掉六成炸碎(`physics_crate` 带 ExplodeOnDamage 被爆炸挖像素会连锁炸掉,测抛飞要用 harmless / 石头);
         旧探针 `_noita-body-shot`(崩塌块砸地炸 + 睡着变 concrete_static 120 格 / 金块打光)/ `_noita-ragdoll-shot`(12 块 11 关节 0 断)不回归。物理 p50 0.7 / p95 1.1ms(多边形三角化比 chain 贵、落沙区每帧重建几块;iPhone 预算 0.5ms,后面看要不要给三角化加缓存)。
         node 单测 `_noita-box2d-unit.mjs`:20×20 带 6×6 洞 + 2×2 气泡 → 16 块凸多边形,洞心 / 气泡不在任何多边形里;方块 1 块 / 桌子 5 块 / 环 11 块(填洞)。
+      ④ ✅ 第一批(已上线)关节 / 多体:prepare 抽全部 `d.shapes[{image, material, bodyId, isRoot, isCircle, centered, offX, offY, z}]` / `d.bodies`(老式 uid 各自的阻尼)/ `d.joints`(老式 PhysicsJoint:REVOLUTE,pos 图内像素坐标,nail;
+        新式 Joint2:REVOLUTE / WELD / *_ATTACH_TO_NEARBY_SURFACE,offset 实体坐标,break_force / break_distance / break_on_body_modified,Mutator 电机)/ `d.lift`(VariableStorage);PROPS 加 wheel_stand ×3、physics_fungus 全家 11 种、templedoor2。
+        坐标约定(量过图):老式几张图同一画布各画自己那块,`pos` = 轮子像素中心(矿车左轮 (4.5,12.5) ↔ pos (4,12),轮架 (46,37) ↔ pos (46,37));新式小图 + offset(centered → 图心在实体 + offset,否则左上角)。
+        `Entities._makeMultiBody`:每个 body_id 一个 RigidBody(`multi` 共享组、`partId`、`isCircle` → Circle fixture 按像素包围盒、z 大的先画),planck `revolute / weld`(nail / 没 body2 → ground;ATTACH 沿 ray 找第一格实心钉地,退 surface_attachment_offset_y);
+        同一实体的部件 `filterGroupIndex` 负组不互撞(原版 Box2D_CreateFilterData;蘑菇帽和第二节茎、桌腿和桌面本来就重叠,不设一出生就弹飞);≤40 像素的小件(2.5px 的矿车轮)开 `bullet` 免穿台面;
+        整组同睡(全部 planck 睡 + 组有支撑)/ 同醒(`RigidBody.wake` 叫醒兄弟)/ 支撑按组算(钉地关节算;部件脚下的格子**不能是兄弟睡进格子的像素**,不然车身压着自己的轮子永远"有支撑",挖空不醒);
+        睡时按 z 从前往后写格子、`cellSet` 只记自己真正写进去的格子 —— 醒 / 清点只看这些(轮子和车身同材质重叠,之前先醒的把同材质格子全收走、后醒的当"被挖光"→ 轮子销毁关节没了);
+        血 / 爆炸记在根部件(`M.root`,is_root 或第一张图),根死整组撤;`_updateMultis`:break_distance(**Box2D 米 ×6**:1.4142 → 8.5px、蘑菇 5 → 30px;按像素算矿车落地那一下就断)/ break_force × PHYSICS_JOINT_MAX_FORCE_MULTIPLIER 160 / break_on_body_modified / 部件死了拆关节。
+        **physics_fungus.lua**:每帧 `PhysicsApplyForce(0, lift)`(-25 = 向上 25 N 浮力)+ 各节 Joint2Mutator `motor_speed = sin(t + joint×0.632) × ProceduralRandomf(0.1..0.75)`(第 1 节反向)—— 蘑菇是"气球 + 脚下地锚"立着的,`motor_max_torque 10`(零速电机 = 刹车)只是摆动阻尼;
+        `M.lift / M.sway` 照做,`enableMotor` 在 torque > 0 时也开(之前只看速度,茎是一串自由铰链就折倒了)。
+        **反出两个尺度常数(改了全局)**:① Box2D 世界重力 = exe `global_gravity = scale(6) × 10 = 60 px/s² = 10 m/s²`(0x756d09;不是我们一直用的 350 —— 原版箱子 / 尸体确实"飘着"落、药水能扔出平飞远弧),`BODY_GRAVITY` 也改 60;
+        ② fixture 密度 = 材质 density / 36(每像素 density/1296 kg):各尺寸蘑菇 lift/像素 ≈ 0.06~0.095 N 恒定 = 略大于每像素重量,只有这个尺度下 262 像素的蘑菇(12 N)被 25 N 拉直;ragdoll 躯干 0.28 kg 自重 ≪ MIN_BREAK_FORCE 200;
+        轮架 5 kg 的轮 200 N·m 电机 0.2s 到 1.5 rad/s;矿车 `break_force 20`×160 扛得住落地。之前 density 直接当 kg/m² 时蘑菇怎么都立不住。
+        探针 `_noita-box2d-joint-shot.mjs`:高空石台上 矿车 3 部件 2 关节 / 滑板 3-2 / 轮架 2-1(轮 w=1.5)/ 蘑菇 6-6 含 1 钉地(帽 y 稳在台面上 30px,六节一条竖线轻摆)/ 桌子 4-4;推车身 90px/s → 走 30~44px 轮子转 3~12 rad 关节不断;
+        r14 爆炸炸帽 → 根死整株撤;整组睡进格子 → 挖台面 → 整组醒掉 33px。旧探针 `_noita-body-shot` / `_noita-ragdoll-shot`(12 块 11 关节)不回归。物理 p50 0.3 / p95 0.6ms。
+        **摆位教训**:重力小了以后车会慢慢滚到滑板上,压在别的物体上算有支撑、挖台面就不醒 —— 探针把滑板挪开了。
+        还差(④ 第二批):小灯笼 lantern_small(单图 + ATTACH,仍走 ropes,`_noita-lantern-shot` 40 发不碎是之前就有的状态,线上旧版一样)、chain_to_ceiling 吊链、excavationsite_machine_3b/3c、PhysicsThrowable、break_force 的准确语义。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
         **睡着**(planck isAwake=false 持续 0.5s)→ 像素留在格子里、fixture 设 inactive(不删 body 保留关节),`audit()` 照旧清点支撑 / 缺损;支撑没了 / 被爆炸 / 被推 → setAwake。`solid_on_sleep_convert` 睡着换材质并撤 body。
@@ -782,7 +799,8 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 本机 `git config http.proxy socks5h://127.0.0.1:2801`(用户的本地代理是 SOCKS5,走 http:// 会超时)。`noita-ref/`(原版解包数据 + 存档真值)不在仓库里,只在本机 `e:\soft\xiaoshuodongtai\web\noita-ref`。
 **当前状态(2026-09-05)**:主线 + 非主线全部群系、圣山全套(商店 / 特权 / 守卫 / 入口传送门 / 出口崩塌 / 诅咒)、玩法闭环 UI(导航 / 引导 / 背包 / 踢 / 暂停 / 滚轮 / 手游布局)、存档、趟沙、
 怪物随区块卸载 / 重刷、走路 AI 重做(真碰撞盒寻路 + 抛物跳)、自由模式(法术库全开 / 无限法力,`?free=0` 回经典)全部上线(第 9 条);09-05 一批(2.4 第 11~19 条:植被 / 状态区 / 灯笼 / 圣山崩塌 / 刚体摇晃 / platform_type / **尸体 ragdoll 关节 + RAGDOLL_FX 全分支**)已上线。
-**正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① 地形(多边形)② 形状图刚体 / 物品 / 崩塌块上 planck + 睡醒桥接 已上线;下一步 ③ 盖章协议细节(埋进实心顶出 / hax_fix)与 ④ 关节(矿车轮子 → wheel_stand → 蘑菇链 → 家具 / 灯笼 ropes 换真关节)。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
+**正在做:接 Box2D(planck.js)** —— 反 / 选型 / 六步计划在 2.4 第 29 条;① 地形(多边形)② 形状图刚体 / 物品 / 崩塌块上 planck + 睡醒桥接 ④ 关节第一批(矿车 / 滑板 / 轮架 / 物理蘑菇 / 家具 / 钉墙轮)已上线;
+**Box2D 重力 60 px/s²、密度 = 材质 density/36 是反出来的两个全局尺度(见 ④)**。下一步:④ 第二批(小灯笼 / 吊链换真关节、PhysicsThrowable)与 ⑤(碰撞伤害走 postSolve、浮力按 buoyancy 0.7、go_through_sand、solid_on_collision_*)。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **线上证书过期**(见 `docs/ssl-cert-renewal.md`),用户在阿里云走免费证书流程中(手机验证码未收到卡住);冒烟用 `$env:ORIGIN_IP='8.162.5.160'; $env:IGNORE_CERT='1'` + https URL 直连(http 已被 301)。
 
 **先读**:本文档 → `src/noita-map/README.md`(模块全貌 + 每一步的实现细节表)→ `docs/ai-guide.md §10`(服务器 / 部署 / 日志)。原版数据在 `noita-ref/unpacked/`(data.wak 解包件,`node scripts/unpack-wak.mjs <wak> extract noita-ref/unpacked <substr>` 可补解包),存档真值在 `noita-ref/save-truth/`。

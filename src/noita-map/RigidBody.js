@@ -278,6 +278,8 @@ export class RigidBody {
     if (this.pb) this.pb.getUserData().phys.setGridSleep(this, true) // planck body 停用:像素接下来住在格子里
     const cells = []
     const P = [0, 0]
+    // 记下自己真正写进去的格子:多体的部件像素会重叠(矿车轮子和车身同一画布、同是 metal_rust),没写进去的像素醒来时不能当"被挖了"
+    const set = (this.cellSet ||= new Set()); set.clear()
     for (let k = 0; k < this.n; k++) {
       if (!this.mask[this._idx(k)]) continue
       this.worldOf(k, P)
@@ -285,7 +287,7 @@ export class RigidBody {
       const m = sim.get(ix, iy)
       if (m < 0) continue
       const kd = m ? sim.kind[m] : 0
-      if (m === 0 || kd === K_LIQUID || kd > K_LIQUID) { sim.set(ix, iy, this.mat, 0); cells.push(ix, iy) }
+      if (m === 0 || kd === K_LIQUID || kd > K_LIQUID) { sim.set(ix, iy, this.mat, 0); cells.push(ix, iy); set.add(ix * 65536 + (iy & 65535)) }
     }
     this.cells = cells
   }
@@ -296,34 +298,38 @@ export class RigidBody {
     this.asleep = false; this.restT = 0
     let lost = 0
     if (this.cells) {
-      const P = [0, 0]
-      // 按像素回收:每个像素看自己那格还在不在
+      const P = [0, 0], set = this.cellSet
+      // 按像素回收:只看自己当初写进去的那格还在不在(没写进去的 = 当时被别的实心 / 兄弟部件占着,像素还在)
       for (let k = 0; k < this.n; k++) {
         const idx = this._idx(k)
         if (!this.mask[idx]) continue
         this.worldOf(k, P)
         const ix = Math.floor(P[0]), iy = Math.floor(P[1])
+        if (set && !set.has(ix * 65536 + (iy & 65535))) continue
         const m = sim.get(ix, iy)
         if (m === this.mat) sim.set(ix, iy, 0, 0)
-        else if (m >= 0 && !(m > 0 && sim.kind[m] <= K_STATIC)) { this.mask[idx] = 0; lost++ } // 变成空气/液体/火 = 被挖/烧掉;埋在别的实心里的不算
+        else if (m >= 0 && !(m > 0 && sim.kind[m] <= K_STATIC)) { this.mask[idx] = 0; lost++ } // 变成空气/液体/火 = 被挖/烧掉;变成别的实心(被埋)不算
       }
       this.cells = null
     }
     if (lost) { this.alive -= lost; this._rebuildEdge() }
     if (this.pb) this.pb.getUserData().phys.setGridSleep(this, false) // 像素收回来了,planck body 重新启用
+    if (this.multi) for (const q of this.multi.parts) if (q !== this && q.asleep && !q.dead) q.wake(sim) // 多体一起醒(车身醒了轮子还睡在格子里,关节就拧着了)
     return lost
   }
 
   /** 睡着时清点:自己的格子还剩多少(被挖 / 烧掉的算缺损),返回本次新缺的像素数 */
   audit(sim) {
     if (!this.asleep) return 0
-    const P = [0, 0]
+    const P = [0, 0], set = this.cellSet
     let lost = 0
     for (let k = 0; k < this.n; k++) {
       const idx = this._idx(k)
       if (!this.mask[idx]) continue
       this.worldOf(k, P)
-      const m = sim.get(Math.floor(P[0]), Math.floor(P[1]))
+      const ix = Math.floor(P[0]), iy = Math.floor(P[1])
+      if (set && !set.has(ix * 65536 + (iy & 65535))) continue // 没写进格子的像素(被兄弟部件 / 别的实心占着)不清点
+      const m = sim.get(ix, iy)
       if (m !== this.mat && m >= 0 && !(m > 0 && sim.kind[m] <= K_STATIC)) { this.mask[idx] = 0; lost++ }
     }
     if (lost) { this.alive -= lost; this._rebuildEdge() }

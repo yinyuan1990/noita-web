@@ -58,6 +58,9 @@ const PROPS = [
   'physics_box_explosive', 'physics_barrel_oil', 'physics_barrel_radioactive', 'physics_crate', 'physics/minecart', 'physics_cart', 'physics_stone_01', 'physics_stone_02', 'physics_stone_03', 'physics_stone_04', 'physics/lantern_small', 'physics_skateboard', 'physics_brewing_stand', 'physics_bottle_green', 'physics_bottle_red', 'physics_bottle_blue', 'physics_bottle_yellow', 'physics_candle_1', 'physics_candle_2', 'physics_candle_3', 'physics_mining_lamp',
   // 挖掘场(吊桶 physics_bucket 挂钉子上摆、吊罐 suspended_* 拴链子到顶:RigidBody.ropes;多体机械 excavationsite_machine_3b/3c 仍跳过)
   'physics_seamine', 'physics_wheel', 'physics_wheel_small', 'physics_wheel_tiny', 'physics_bucket', 'suspended_container', 'suspended_tank_radioactive', 'suspended_seamine', 'suspended_tank_acid',
+  // Box2D 多体(第 29 条 ④):轮架(架 + 带电机的轮)、物理蘑菇(帽 + 茎链 + 脚钉地)、齿轮门
+  'physics_wheel_stand_01', 'physics_wheel_stand_02', 'physics_wheel_stand_03',
+  'physics_fungus', 'physics_fungus_small', 'physics_fungus_big', 'physics_fungus_hugeish', 'physics_fungus_huge', 'physics_fungus_acid', 'physics_fungus_acid_small', 'physics_fungus_acid_big', 'physics_fungus_acid_hugeish', 'physics_fungus_acid_huge', 'physics_fungus_trap', 'physics_templedoor2',
   // 雪窟
   'physics_propane_tank', 'physics_trap_electricity_enabled', 'physics_skull_01', 'physics_skull_02', 'physics_skull_03', 'physics_bone_01', 'physics_bone_02', 'physics_bone_03', 'physics_bone_04', 'physics_bone_05', 'physics_bone_06', 'stonepile', 'physics_barrel_burning', 'physics_lantern_small',
   // 雪城堡(家具是多体 + 关节,先只取第一块形状图当整块;forcefield_generator 的护盾子实体不做)
@@ -230,6 +233,26 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     // 新格式 PhysicsJoint2Component(props/physics/lantern_small):REVOLUTE_JOINT_ATTACH_TO_NEARBY_SURFACE = 在 offset 处找最近的墙钉一个铰链,break_force 超了 / 像素被打掉(break_on_body_modified)就断
     const pj2 = first(e, 'PhysicsJoint2Component')
     if (pj2 && !d.joint) d.joint = { nail: true, attach: /ATTACH_TO_NEARBY_SURFACE/.test(pj2.type || ''), px: num(pj2.offset_x, 0), py: num(pj2.offset_y, 0), motor: 0, breakable: true, breakForce: num(pj2.break_force, 0), breakOnModified: pj2.break_on_body_modified === '1' }
+    // ── Box2D 多体(第 29 条 ④):全部形状 / 刚体 / 关节 ──
+    // 老式:每个 PhysicsBodyComponent(uid)配一张 PhysicsImageShape(body_id),几张图同一画布尺寸各画自己那块(矿车 18×15:车身 + 左右轮),
+    //   PhysicsJointComponent pos_x/pos_y 是图内像素坐标(= 轮子像素中心),默认 revolute;nail_to_wall = 和地钉在一起
+    // 新式:一个 PhysicsBody2Component,PhysicsImageShape 各带 body_id / is_root / offset(蘑菇:帽 + 4 节茎 + 脚),PhysicsJoint2Component offset 是实体坐标,
+    //   type REVOLUTE / WELD / *_ATTACH_TO_NEARBY_SURFACE(沿 ray 找地面钉到地),break_force / break_distance / break_on_body_modified;Joint2Mutator 给电机
+    const allShapes = (e.comps.get('PhysicsImageShapeComponent') || []).filter((s) => s.image_file && s._enabled !== '0')
+    const allJoints = (e.comps.get('PhysicsJointComponent') || []).filter((j) => j._enabled !== '0')
+    const allJoints2 = (e.comps.get('PhysicsJoint2Component') || []).filter((j) => j._enabled !== '0')
+    if (allShapes.length > 1 || allJoints.length || allJoints2.length) {
+      d.shapes = allShapes.map((s) => ({ image: copyGfx(s.image_file), material: s.material || '', bodyId: num(s.body_id, 0), isRoot: s.is_root === '1', isCircle: s.is_circle === '1', centered: s.centered === '1', offX: num(s.offset_x, 0), offY: num(s.offset_y, 0), z: num(s.z, 0) }))
+      const bodies = (e.comps.get('PhysicsBodyComponent') || []).filter((b) => b._enabled !== '0')
+      if (bodies.length) d.bodies = bodies.map((b) => ({ uid: num(b.uid, 0), linear_damping: num(b.linear_damping, 0), angular_damping: num(b.angular_damping, 0), auto_clean: b.auto_clean !== '0', fixed_rotation: b.fixed_rotation === '1', update_entity_transform: b.update_entity_transform !== '0' }))
+      const mut = new Map(); for (const m of e.comps.get('PhysicsJoint2MutatorComponent') || []) mut.set(num(m.joint_id, 0), { motorSpeed: num(m.motor_speed, 0), motorTorque: num(m.motor_max_torque, 1) })
+      // physics_fungus.lua:VariableStorage lift = 每帧 PhysicsApplyForce(0, lift) 给根体的浮力(-25 = 向上 25 N),蘑菇靠它拉直、靠脚下地锚立着;各节电机按正弦摆
+      const lift = (e.comps.get('VariableStorageComponent') || []).find((v) => v.name === 'lift'); if (lift) d.lift = num(lift.value_int, 0)
+      d.joints = [
+        ...allJoints.map((j) => ({ kind: 'old', type: 'REVOLUTE', body1: num(j.body1_id, 0), body2: num(j.body2_id, 0), px: num(j.pos_x, 0), py: num(j.pos_y, 0), nail: j.nail_to_wall === '1', grid: j.grid_joint === '1', breakable: j.breakable === '1', motor: j.mMotorEnabled === '1' ? num(j.mMotorSpeed, 0) : 0, motorTorque: num(j.mMaxMotorTorque, 1) })),
+        ...allJoints2.map((j) => { const m = mut.get(num(j.joint_id, 0)); return { kind: 'new', type: (j.type || 'REVOLUTE_JOINT').replace(/_JOINT/, ''), body1: num(j.body1_id, 0), body2: num(j.body2_id, 0), ox: num(j.offset_x, 0), oy: num(j.offset_y, 0), rayX: num(j.ray_x, 0), rayY: num(j.ray_y, -10), surfOffY: num(j.surface_attachment_offset_y, 2.5), breakForce: num(j.break_force, 1.3), breakDistance: num(j.break_distance, 1.4142), breakOnModified: j.break_on_body_modified === '1', shearDeg: num(j.break_on_shear_angle_deg, 0), motor: m ? m.motorSpeed : 0, motorTorque: m ? m.motorTorque : 0 } }),
+      ]
+    }
     // PhysicsBody2Component root_offset:图的根(中心)相对实体位置的偏移(lantern_small 5,7 ≈ 9×13 图的中心)—— 按标记点放的时候用它对齐
     const pb2 = first(e, 'PhysicsBody2Component'); if (pb2 && d.body) { d.body.rootOffX = num(pb2.root_offset_x, 0); d.body.rootOffY = num(pb2.root_offset_y, 0) }
     // chain_to_ceiling.lua:VariableStorage chain_N_x/y 是挂点(相对实体),没有就 (0,0);每根链往上找 200px 内的顶

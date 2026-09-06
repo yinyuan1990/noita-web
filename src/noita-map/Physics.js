@@ -7,7 +7,7 @@
 // 这里的地形碰撞:按 CellSim 的 32×32 块做 marching squares → Douglas-Peucker 简化 → 耳切三角化(洞桥接)→ 合并成 ≤8 顶点凸块 → planck Polygon
 //   (和原版一样是多边形;chain 在 Box2D 2.3 里会让平放的箱子在顶点上永远抖,见 _buildTile);
 //   只给动态刚体包围盒 ±TERRAIN_NEAR 内的块建;块里格子的实心性变了(CellSim.tver)就重建;久不用的块释放。
-import { World, Vec2, Box, Circle, Polygon, Settings } from 'planck'
+import { World, Vec2, Box, Circle, Polygon, Settings, RevoluteJoint, WeldJoint } from 'planck'
 
 export const PPM = 6            // pixels per meter
 export const FIXED_DT = 1 / 60
@@ -30,7 +30,9 @@ export class Physics {
    */
   constructor(sim, opt = {}) {
     this.sim = sim
-    this.gravity = opt.gravity ?? 350
+    // Box2D 世界重力:exe 里 global_gravity = scale(6) × 10 = 60 px/s² = 10 m/s²(0x756d09;比角色的 pixel_gravity 350 慢得多 —— 原版尸体 / 箱子确实"飘着"落,药水能扔出平飞的远弧)。
+    // 和 density/36 一起才对得上 ragdoll 关节 MIN_BREAK_FORCE 200(躯干 ~60px → 10kg → 自重 100N 不会自己扯断)、蘑菇茎 motor_max_torque 10 撑得住帽子
+    this.gravity = opt.gravity ?? 60
     this.terrainFriction = opt.friction ?? 0.75 // PhysicsShapeComponent 默认 friction
     // 材质 id → solid_friction / solid_restitution(materials.json;0 = 没写)
     const L = opt.mats?.list
@@ -182,6 +184,8 @@ export class Physics {
       linearVelocity: new Vec2(rb.vx / PPM, rb.vy / PPM), angularVelocity: rb.w,
       linearDamping: rb.linDamp || 0, angularDamping: rb.angDamp || 0,
       fixedRotation: !!rb.fixedRot, allowSleep: true, gravityScale: rb.gravScale || 1,
+      // 小件(矿车 2.5px 的轮子 / 金粒)开连续碰撞:6px=1m 下落地速度 ≈ 24 m/s、一步走 2.4px,比轮子半径还大,离散碰撞会穿过 8px 的台面
+      bullet: !!rb.isBullet || rb.alive <= 40,
     })
     b.setUserData({ rb, phys: this, noTerrain: false })
     rb.pb = b
@@ -207,7 +211,18 @@ export class Physics {
     const b = rb.pb
     const fr = (this.matFriction && this.matFriction[rb.mat]) || rb.friction || 0.75
     const re = (this.matRestitution && this.matRestitution[rb.mat]) || 0
-    const opt = { density: rb.density || 6, friction: fr, restitution: re }
+    // 密度 = 材质 density / 36(每像素质量 = density/1296 kg):physics_fungus.lua 每帧给帽子 lift 25 N 的浮力、各尺寸蘑菇 lift/像素 ≈ 0.06~0.095 N 恒定,
+    // 只有这个尺度下 262 像素的蘑菇(12 N)才会被浮力拉直、靠脚下地锚立着;ragdoll 躯干 0.28 kg 自重远小于关节 MIN_BREAK_FORCE 200;轮架 5 kg 的轮 200 N·m 电机 0.2s 转起来
+    const opt = { density: (rb.density || 6) / (PPM * PPM), friction: fr, restitution: re }
+    if (rb.filterGroup) opt.filterGroupIndex = rb.filterGroup // 同一多体实体的部件互不碰撞(原版 Box2D_CreateFilterData 按实体分组;蘑菇帽和第二节茎、桌腿和桌面本来就重叠)
+    if (rb.isCircle) {
+      // PhysicsImageShapeComponent is_circle:"看像素的包围盒,圆心在盒中心,半径 = 到直边的距离"(轮子)
+      const bb = maskBounds(rb.mask, rb.w0, rb.h0)
+      if (!bb) return
+      const cx = (bb.x0 + bb.x1 + 1) / 2 - rb.w0 / 2, cy = (bb.y0 + bb.y1 + 1) / 2 - rb.h0 / 2
+      b.createFixture(new Circle(new Vec2(cx / PPM, cy / PPM), Math.max(0.5, Math.min(bb.x1 - bb.x0 + 1, bb.y1 - bb.y0 + 1) / 2) / PPM), opt)
+      return
+    }
     const polys = pixelPolygons(rb.mask, rb.w0, rb.h0)
     if (!polys.length) {
       // 太小 / 太细(1~3 像素的金粒、1px 宽的杆):用像素包围盒
@@ -218,7 +233,7 @@ export class Physics {
       return
     }
     for (const poly of polys) b.createFixture(new Polygon(poly.map((p) => new Vec2(p[0] / PPM, p[1] / PPM))), opt)
-    if (b.getMass() <= 0) b.setMassData({ mass: Math.max(1, rb.alive) * (rb.density || 6) / (PPM * PPM), center: new Vec2(0, 0), I: 1 })
+    if (b.getMass() <= 0) b.setMassData({ mass: Math.max(1, rb.alive) * (rb.density || 6) / (PPM * PPM) / (PPM * PPM), center: new Vec2(0, 0), I: 0.001 })
   }
   /** 外部改了 rb 的位置 / 速度(爆炸冲量 / 玩家推 / 顶出实心 / 浮力)→ 写进 planck */
   pushToPhysics(rb) {
@@ -254,6 +269,33 @@ export class Physics {
     if (asleep) { b.setLinearVelocity(new Vec2(0, 0)); b.setAngularVelocity(0); b.setActive(false) }
     else { b.setTransform(new Vec2(rb.x / PPM, rb.y / PPM), rb.rot); b.setActive(true); b.setAwake(true); rb._px = rb.x; rb._py = rb.y; rb._prot = rb.rot }
   }
+
+  // ── 关节(第 ④ 步)──
+  /**
+   * 铰链:PhysicsJointComponent(默认 revolute;nail_to_wall = 和地连)/ PhysicsJoint2Component REVOLUTE。bodyB 为空 = 钉在地(ground body)上。
+   * motor:mMotorSpeed(rad/s)/ mMaxMotorTorque —— 轮架的轮子、挖掘场的钉墙轮
+   */
+  revolute(rbA, rbB, wx, wy, opt = {}) {
+    const a = rbA.pb, b = rbB ? rbB.pb : this.ground
+    if (!a || !b) return null
+    // motor_speed 0 + motor_max_torque > 0(蘑菇茎的 Joint2Mutator)= 刹车:关节抵抗转动直到扭矩超过上限,一串铰链才立得住
+    const j = new RevoluteJoint({ enableMotor: !!opt.motor || opt.motorTorque > 0, motorSpeed: opt.motor || 0, maxMotorTorque: opt.motorTorque || 0, collideConnected: false }, a, b, new Vec2(wx / PPM, wy / PPM))
+    this.world.createJoint(j)
+    return j
+  }
+  /** 焊接:PhysicsJoint2Component WELD(家具的横梁和腿) */
+  weld(rbA, rbB, wx, wy) {
+    const a = rbA.pb, b = rbB ? rbB.pb : this.ground
+    if (!a || !b) return null
+    const j = new WeldJoint({ collideConnected: false }, a, b, new Vec2(wx / PPM, wy / PPM))
+    this.world.createJoint(j)
+    return j
+  }
+  destroyJoint(j) { if (j) this.world.destroyJoint(j) }
+  /** 关节两端锚点被拉开多少 px(break_distance 用) */
+  jointGap(j) { const a = j.getAnchorA(), b = j.getAnchorB(); return Math.hypot(a.x - b.x, a.y - b.y) * PPM }
+  /** 关节上一步的约束力(Box2D 单位 N;break_force 用,换算关系还没反出来) */
+  jointForce(j) { const f = j.getReactionForce(60); return Math.hypot(f.x, f.y) }
 
   // ── 测试刚体(第 ① 步验证用:`?physTest=1` 在出生点上方丢几个箱子 / 圆,看它们落到真实地形上停稳)──
   addTestBox(x, y, w = 8, h = 8, opt = {}) {
@@ -303,6 +345,12 @@ export class Physics {
         else if (sh.m_vertices) { ctx.beginPath(); const vs = sh.m_vertices; ctx.moveTo(vs[0].x * PPM, vs[0].y * PPM); for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x * PPM, vs[i].y * PPM); ctx.closePath(); ctx.stroke() }
         ctx.restore()
       }
+    }
+    // 关节:锚点画个洋红小圈
+    ctx.strokeStyle = 'rgba(255,80,220,0.9)'
+    for (let j = this.world.getJointList(); j; j = j.getNext()) {
+      const a = j.getAnchorA()
+      ctx.beginPath(); ctx.arc(a.x * PPM - ox, a.y * PPM - oy, 1.5, 0, Math.PI * 2); ctx.stroke()
     }
     ctx.restore()
   }
