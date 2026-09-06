@@ -84,17 +84,21 @@ export class RigidBody {
     }
     return wetF
   }
-  /** 泡在液体里的边缘像素比例(每 3 个边缘像素采一个) */
+  /** 泡在液体里的边缘像素比例(小件全采,大件每 3 个边缘像素采一个 —— 尸块只有十几个边缘像素,隔 3 采一个浮力就是 1/5 一跳) */
   wetFraction(liquidDensity) {
-    let wet = 0
-    const P = [0, 0]
-    for (let k = 0; k < this.edge.length; k += 3) { this.worldOf(this.edge[k], P); if (liquidDensity(Math.floor(P[0]), Math.floor(P[1])) > 0) wet++ }
-    return this.edge.length ? wet / Math.ceil(this.edge.length / 3) : 0
+    let wet = 0, n = 0
+    const P = [0, 0], st = this.edge.length > 60 ? 3 : 1
+    for (let k = 0; k < this.edge.length; k += st) { n++; this.worldOf(this.edge[k], P); if (liquidDensity(Math.floor(P[0]), Math.floor(P[1])) > 0) wet++ }
+    return n ? wet / n : 0
   }
-  /** 浮力 / 重力 之比(全泡时):木(6)在水(4)里 ≈ 1.07 → 漂;金属(8) ≈ 0.8 → 慢沉 */
+  /**
+   * 浮力 / 重力 之比(全泡时)。原版不是阿基米德(木 density 6 > 水 4 却漂得很快;PhysicsBodyComponent.buoyancy 0.7 在 exe +0x78,施力处没反到),
+   * 这里按"观察到的行为"拟的近似:水里 木 / 肉 / 冰(6)→ 1.35 三秒浮出水面,金属 / 石(8)→ 0.85 慢沉,混凝土(10)→ 0.35 直沉;
+   * 按液体密度线性缩放:熔岩(6)里金属也漂(1.28),油(1)里木头沉(0.34),酸(2.9)里木头近中性
+   */
   buoyFactor(liquidDensity, myDensity) {
     const ld = liquidDensity(Math.floor(this.x), Math.floor(this.y)) || 3
-    return (ld / Math.max(1, myDensity)) * 1.6
+    return (ld / 4) * Math.max(0, 2.85 - 0.25 * Math.max(1, myDensity))
   }
 
   step(dt, gravity, solid, liquidDensity, myDensity) {

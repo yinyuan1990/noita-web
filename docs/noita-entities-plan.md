@@ -815,6 +815,17 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         现在 `Physics.applyBuoyancy`:applyForceToCenter(重力 × buoy × 淹没比例,wake=false)+ 液体阻尼(线 2/s 角 2.5/s,出水复原),不碰 rb 速度;泡水(>50%)的静止阈值放宽到 4px/s / 0.25rad/s(边缘采样的台阶浮力让水面永远有 2~3px/s 起伏);
         歇下但脚下没格子且泡着 → `_floatSleep`:planck setAwake(false)、不写格子(水照常从旁边流),记入睡时淹没比例,水位降到 −0.15 以下 / 被撞 / 关节邻居醒 → 醒过来掉下去再走正常入睡。planck 自己睡着的物品(金块)定期查:没接触又没泡水就叫醒。
         探针 `_noita-corpse-water-shot`:1 具 2s 全浮睡、5 具 7s 全睡(醒 0),放水后全醒掉到底;木箱泡水 7s 浮到水面睡。
+        **回收**(用户反馈尸体 / 灯笼越来越多):原版 b2body 是 camera bound 的,离相机远了就销毁(组件文档 on_death_really_leave_body 那句"camera bound... god damn"),尸体不存盘;道具随 chunk 序列化。
+        我们:① `unloadChunk` 连刚体一起收(道具 / 尸块 / 崩塌块;物品留着,玩家回来东西还在;睡进格子的像素本来就在 chunk.mat 里)—— streamer LRU 40 块,刚体总数被这个兜住;
+        ② 尸块在 planck 里睡(浮睡 / 压在同伴上)也算睡,睡够 8s 到期:干的写成肉像素、泡水的散掉(之前只有写进格子的才到期,水坑里的永远攒着);
+        ③ 尸块上限 `MAX_RAGDOLL_PARTS` 96(≈8 具):超了先收最老的、睡着的 —— 60 块 600 对接触在 PC 上就 4.5ms,手机上这就是 20fps。
+        **浮睡改成写格子**:只 setAwake(false) 不写格子的话,Box2D 下一步建岛时把接触 / 关节连着的睡体一起拉醒(b2World::Solve 的 DFS 会 SetAwake 岛内所有 body),
+        十具尸体挤一坑各自歇下的时刻对不上,睡 → 拉醒 → 循环(线上探针 floatS 0/12/36/0 抖);写进格子 = 停用,岛断开各睡各的 —— 这也正是原版的做法(睡了像素就进世界,不管在不在水里)。
+        醒的条件换 `_wetNear`(边缘像素 4 邻格里有液体的比例 ≥15%):水退了就醒掉下去;`_multiSupported` 里浮睡且身边有水的部件算支撑。浮睡到期(8s)收回像素散掉,不留浮着的肉筏。
+        **水里的静止判定**(`_stepPhysBody`):整具尸体按"有一块泡着"算在水里(翘在水面上的胳膊按陆上阈值永远歇不下);线速 <8、角速 <0.5 算歇着(3 像素的小尸块转动惯量小,关节一拽角速 0.3~0.8),
+        但 vy < −1.5(还在往上浮)不算 —— 木箱从水底浮上来 2.5px/s,不然半水深就停住;偶尔一帧超限不清零只往回扣 4×dt。施力用低通过的淹没比例(wetS,0.25/帧),小件边缘像素全采不隔 3。
+        浮力系数换成 `(ld/4)×(2.85−0.25ρ)`(仍是拟合:木 / 肉 1.35 三秒浮出,金属 0.85 慢沉,混凝土 0.35;原版 buoyancy 0.7 在 PhysicsBodyComponent +0x78 反到了字段,施力处没找到);液体阻尼线 3 / 角 4。
+        探针:10 具 120 块 → 上限 96、6s 醒 84、11s 醒 13;5 具 11s 醒 12;木箱 4s 浮到水面睡;搅动后 2~5s 重新睡下。偶发 `RangeError: Invalid array length`(十次里两次,无堆栈,未定位,已在探针里加 window.onerror 抓)。
         ✅(已上线)**挖掘场多体机械 excavationsite_machine_3b/3c**(`spawn_physicsstructure` 标记 0a50ff,−5,−5 处):机身 PhysicsBodyComponent `is_static=1` → planck 静态体(`rb.isStatic`),
         `centered=0` → 画布左上角在实体;三个轮子写着 centered=1 但和机身共用一张 150×125 画布(轮子包围盒中心 (35.5,64.5)(93.5,37.5)(82.5,89.5) 正好是关节 pos_x/pos_y),
         所以老式多体统一按"根图定画布左上角(根 centered 则 实体 − 画布/2),所有图都画在这张画布里,关节 pos = 画布像素"—— 矿车 / 轮架全 centered 的情况结果不变。

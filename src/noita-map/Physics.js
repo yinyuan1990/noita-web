@@ -266,7 +266,7 @@ export class Physics {
   }
   /**
    * 浮力:向上的力 = 重力 × buoy × 淹没比例(wake=false:睡着的浮体不被叫醒),液体阻尼叠在 xml 阻尼上
-   * (线 2/s、角 2.5/s:比手写求解器的 35% / 30% 再重些,把水面起伏压小让它能歇下;Box2D 自带 b2BuoyancyController 的默认拖拽也是这个量级);出水后阻尼复原
+   * (线 3/s、角 4/s:比手写求解器的 35% / 30% 重得多,把水面起伏和一坑尸块的互相碰撞压下去让它们能歇下;Box2D 自带 b2BuoyancyController 的默认拖拽 2 / 1);出水后阻尼复原
    */
   applyBuoyancy(rb, wetF, buoy, gravity) {
     const b = rb.pb
@@ -274,7 +274,7 @@ export class Physics {
     if (wetF > 0) {
       const m = b.getMass()
       b.applyForceToCenter(new Vec2(0, -(gravity / PPM) * (rb.gravScale || 1) * buoy * wetF * m), false)
-      b.setLinearDamping((rb.linDamp || 0) + 2 * wetF); b.setAngularDamping((rb.angDamp || 0) + 2.5 * wetF)
+      b.setLinearDamping((rb.linDamp || 0) + 3 * wetF); b.setAngularDamping((rb.angDamp || 0) + 4 * wetF)
       rb._wetDamp = true
     } else if (rb._wetDamp) { rb._wetDamp = false; b.setLinearDamping(rb.linDamp || 0); b.setAngularDamping(rb.angDamp || 0) }
   }

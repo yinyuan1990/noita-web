@@ -15,6 +15,7 @@ import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from 
 
 const K_LIQUID = 3
 const MAX_SWAY = 4 // 同时在摆的物理蘑菇上限(见 _updateMultis;真菌洞 6 株 ≈ 45 个部件 2.5~5ms)
+const MAX_RAGDOLL_PARTS = 96 // 同时活着的尸块上限(≈8 具僵尸;见 _capRagdolls)
 const BODY_GRAVITY = 72 // Box2D 世界重力:反 exe b2World 构造的重力向量 (0, 12) m/s² = 72 px/s²,见 Physics.js;原版箱子 / 尸体确实比角色(pixel_gravity 350)落得慢得多
 
 export class Entities {
@@ -40,6 +41,7 @@ export class Entities {
     this.bodies = []       // 像素刚体(物理道具)
     this.pendingProps = [] // 形状图还没到的道具
     this.ragdolls = []     // 布娃娃组(Ragdoll:部件刚体 + 关节)
+    this._bornSeq = 0      // 尸块出生序号(超上限先收最老的)
     this.pendingRagdolls = [] // 部件图还没全到的布娃娃
     this.spawnedChunks = new Set() // 放过道具 / 物品的 chunk(只放一次)
     this.liveChunks = new Set()    // 当前有怪在世界里的 chunk(卸载时清)
@@ -122,13 +124,40 @@ export class Entities {
     }
   }
 
-  /** 区块被卸载:收掉落在这块里的怪 / 虫(醒着的刚体与物品留着),下次这块回来 spawnChunk 会重刷怪 */
+  /**
+   * 区块被卸载:收掉落在这块里的怪 / 虫,下次这块回来 spawnChunk 会重刷怪;
+   * 刚体(道具 / 尸块 / 崩塌块)也收 —— 原版的 b2body 是 camera bound 的,离相机远了就销毁(on_death_really_leave_body 那条注释说的就是这事),
+   * 不收的话走过的每个区块的灯笼 / 尸块全攒在 bodies 里,几百个之后每帧白跑一遍。睡进格子的像素本来就在 chunk.mat 里(灯笼变成一堆钉在墙上的像素),
+   * 醒着 / 冻着的散掉。物品(金块 / 药水 / 心 / 箔子)留着 —— 玩家走开再回来东西还得在(道具只在第一次就位时放,回来不会补)
+   */
   unloadChunk(entry) {
     this.liveChunks.delete(entry.key)
     const x0 = (entry.cx - WCX) * CHUNK, y0 = (entry.cy - WCY) * CHUNK
     const inside = (e) => e.x >= x0 && e.x < x0 + CHUNK && e.y >= y0 && e.y < y0 + CHUNK
     for (let i = this.list.length - 1; i >= 0; i--) if (inside(this.list[i])) this.list.splice(i, 1)
     for (let i = this.worms.length - 1; i >= 0; i--) if (inside(this.worms[i])) this.worms.splice(i, 1)
+    for (const b of this.bodies) if (!b.dead && !b.isItem && !b.nailed && inside(b)) { b.dead = true; this.stats.evicted = (this.stats.evicted || 0) + 1 }
+  }
+
+  /**
+   * 尸块到期(睡够 8s / 超出上限):干的、歇下的写成肉像素留在世界里(原版尸体最后也就是一堆 meat),泡在水里 / 还在动的直接散掉;
+   * 上限 MAX_RAGDOLL_PARTS(≈8 具):原版靠 C++ Box2D 扛几十具挤在一起,我们手机上 60 块 600 对接触就 4~5ms,超了先收最老的、睡着的
+   */
+  _expireRagdollPart(b) {
+    if (b.dead) return
+    if (b.asleep && b.floatSleep) { this._reclaimPixels(b); b.dead = true; return } // 漂着睡的收回像素
+    if (!b.asleep && (b.wetF || 0) < 0.3 && (!b.pb || !b.pb.isAwake())) b.sleep(this.sim) // 干的、歇下的留肉像素
+    b.dead = true
+  }
+  /** 把睡着的刚体像素从格子收回但不连累多体兄弟(wake 会把整具叫醒;到期收尸只想拿走自己那块) */
+  _reclaimPixels(b) { const M = b.multi; b.multi = null; b.wake(this.sim); b.multi = M }
+  _capRagdolls(extra) {
+    const live = this.bodies.filter((b) => b.isRagdoll && !b.dead)
+    let over = live.length + extra - MAX_RAGDOLL_PARTS
+    if (over <= 0) return
+    const resting = (b) => b.asleep || (b.pb && !b.pb.isAwake())
+    live.sort((a, b) => (resting(b) - resting(a)) || (a.born - b.born))
+    for (const b of live) { if (over-- <= 0) break; this._expireRagdollPart(b) }
   }
 
   /** 一只怪要用到的全部贴图先排队解码(主精灵 / PhysicsAI 本体图 / lukki 的腿与叠层) */
@@ -618,16 +647,27 @@ export class Entities {
   _stepPhysBody(b, dt) {
     b.age += dt
     // 浮力走 Box2D 的力(wake=false)+ 液体里加阻尼,不改 rb 速度 —— 之前每帧改 vy 再 pushToPhysics 会 setAwake(true),泡在水里的尸块 / 箱子永远睡不着
-    // (用户反馈:几具尸体挤在水坑里一直动、掉帧)。planck 睡着的浮体不受力也不受重力,水退了要叫醒(floatSleep 记入睡时的淹没比例)
+    // (用户反馈:几具尸体挤在水坑里一直动、掉帧)
     const wetF = b.wetF = b.wetFraction(this._liqDensity)
-    this.physics.applyBuoyancy(b, wetF, wetF > 0 ? b.buoyFactor(this._liqDensity, b.density) : 0, BODY_GRAVITY)
-    if (b.floatSleep != null) { if (wetF < b.floatSleep - 0.15) { b.floatSleep = null; b.pb.setAwake(true) } else if (b.pb.isAwake()) b.floatSleep = null }
+    // 施力用平滑过的淹没比例:按边缘像素数的台阶式浮力在水面会来回跳(一个像素出水浮力少 1/N),一坑尸块互相顶着永远歇不下;低通一下起伏小得多
+    const wetS = b.wetS = b.wetS === undefined ? wetF : b.wetS + (wetF - b.wetS) * 0.25
+    this.physics.applyBuoyancy(b, wetS, wetS > 0 ? b.buoyFactor(this._liqDensity, b.density) : 0, BODY_GRAVITY)
+    b.floatSleep = false
     this.physics.pushToPhysics(b)
     // 自己的静止计时:附近滴水 / 落沙让地形块重建,planck 拆 fixture 时会把压着的刚体叫醒,永远攒不够它的 0.5s —— 速度 ≈0 且贴着东西 0.5s 就算歇下了(写格子后就不受重建影响)
     // 阈值 1.5px/s / 0.06rad/s:一串铰链吊着浮力(蘑菇)会有 0.2~0.5px/s 的残留微抖,0.5s 内最多挪 0.75px,写格子就冻住了
     // 泡在水里的放宽到 4px/s / 0.25rad/s:浮力按边缘采样是台阶式的,漂着的东西在水面有 2~3px/s 的永久小起伏,按陆上阈值永远歇不下(浮睡把速度清零,4px/s 的一顿看不出来)
-    const vl = wetF > 0.5 ? 4 : 1.5, wl = wetF > 0.5 ? 0.25 : 0.06
-    if (Math.abs(b.vx) < vl && Math.abs(b.vy) < vl && Math.abs(b.w) < wl) b.restT += dt; else b.restT = 0
+    // (阈值从沾水 15% 就放宽:露出水面一半的尸块被水里的邻居牵着晃,它一个不歇整具都睁着眼;全淹着的不放宽 —— 木箱在水底以 2.5px/s 往上浮,放宽了就在半水深停住不浮了)
+    // (多体按整具算:躯干泡着、一条胳膊翘在水面上晃 2px/s,那条胳膊按陆上阈值永远歇不下,整具就永远醒着)
+    const touching = this.physics.touching(b)
+    const M = b.multi
+    if (M && wetF > 0.15) M.wetT = this.time
+    const inWater = wetF > 0.15 || (M && M.wetT !== undefined && this.time - M.wetT < 0.1)
+    if (inWater) {
+      // 水里:线速 <8、角速 <0.5 算歇着,但"还在往上浮"(vy < −1.5px/s,木箱从水底浮上来 2.5px/s)不算 —— 不然箱子 / 整具尸体在半水深就停住不浮了;
+      // 偶尔一帧被邻居顶一下不清零,只往回扣(3 像素的小尸块转动惯量小,关节一拽角速就 0.3~0.8,按"一次超限就清零"整具永远凑不齐)
+      if (Math.abs(b.vx) < 8 && b.vy > -1.5 && b.vy < 8 && Math.abs(b.w) < 0.5) b.restT += dt; else b.restT = Math.max(0, b.restT - 4 * dt)
+    } else if (Math.abs(b.vx) < 1.5 && Math.abs(b.vy) < 1.5 && Math.abs(b.w) < 0.06) b.restT += dt; else b.restT = 0
     // 全埋进实心里的刚体(塌方 / 落沙压住、出生点在墙里)看不到 chain 的边会一直往下掉 —— 原版 hax_fix_going_through_ground:在地里就往上抬
     if (b.age > 0.5 && b.alive > 0 && !b.isStatic) {
       const P = [0, 0]
@@ -635,7 +675,7 @@ export class Entities {
       for (let e = 0; e < b.edge.length; e += 2) { b.worldOf(b.edge[e], P); if (this._solidB(Math.floor(P[0]), Math.floor(P[1]))) inside++ }
       if (inside >= Math.ceil(b.edge.length / 2) * 0.9) { b.y -= 1; b.vy = Math.min(b.vy, 0); this.physics.pushToPhysics(b); b.restT = 0 }
     }
-    return this.physics.touching(b)
+    return touching
   }
 
   _updateBodies(dt, x0, y0, x1, y1) {
@@ -730,10 +770,12 @@ export class Entities {
           if (sim.get(fx, fy) === 0) sim.set(fx, fy, F, 8 + ((Math.random() * 10) | 0))
         }
       }
+      // 尸块在 planck 里睡着(浮睡在水里 / 压在别的尸块上没格子可写)也算睡:睡够 8s 一样到期(干的写成肉像素,泡水的散掉),不然水坑里的尸体永远攒着
+      if (b.isRagdoll && !b.asleep && b.pb && !b.pb.isAwake()) { b.sleptT = (b.sleptT || 0) + dt; if (b.sleptT > 8) { this._expireRagdollPart(b); continue } }
       if (b.asleep) {
         b.age += dt // 火苗这类垫底动画睡着也要走
-        // 尸块睡够 8s 就"化"进世界:刚体对象撤掉,肉像素留着(原作尸体最后也就是一堆 meat)
-        if (b.isRagdoll) { b.sleptT = (b.sleptT || 0) + dt; if (b.sleptT > 8) { b.dead = true; continue } }
+        // 尸块睡够 8s 就"化"进世界:刚体对象撤掉,肉像素留着(原作尸体最后也就是一堆 meat);漂在水里睡的把像素收回(不留一筏子浮着的肉)
+        if (b.isRagdoll) { b.sleptT = (b.sleptT || 0) + dt; if (b.sleptT > 8) { if (b.floatSleep) this._reclaimPixels(b); b.dead = true; continue } }
         // 睡着:定期清点缺损 / 支撑
         b.checkT -= dt
         if (b.checkT <= 0) {
@@ -744,7 +786,7 @@ export class Entities {
           if (lost && b.group) b.group.checkAnchors()
           if (!b.dead && b.group?.connected(b)) { if (!b.group.supported(this._solidB)) b.group.wakeAll(sim) }
           else if (!b.dead && b.multi) { if (!this._multiSupported(b.multi)) b.wake(sim) } // 多体:整组有一块着地 / 有钉在地上的关节就算有支撑(车身悬在轮子上不算没支撑)
-          else if (!b.dead && !b.supported(this._solidB)) b.wake(sim)
+          else if (!b.dead && !b.supported(this._solidB) && !(b.floatSleep && this._wetNear(b))) b.wake(sim) // 浮睡的:身边还有水就接着睡
         }
         continue
       }
@@ -789,7 +831,7 @@ export class Entities {
       if (b.isStatic || b.multi?.hasStatic) continue // 静态机身的机械(挖掘场机械):一直留在 planck 里,电机轮子永远转
       // 入睡:planck 的睡眠判定(0.5s 线速 <0.03m/s 角速 <2°/s)/ 手写求解器 restT;脚下要真有格子 —— planck 上的先攒着,下面一起从低到高连锁写格子
       // 泡在液体里(淹没 >50%)漂着不动 0.5s 也算歇下:进 restList 后没支撑就"浮睡"(planck setAwake(false),水退 / 被撞再醒)
-      const rest = b.pb ? (!b.pb.isAwake() || (b.restT > 0.5 && (touching || b.wetF > 0.5 || b.multi?.joints.some((J) => !J.B)))) : b.restT > 0.5 // 吊在地上的(灯笼)没接触也算歇下
+      const rest = b.pb ? (!b.pb.isAwake() || (b.restT > 0.5 && (touching || b.wetF > 0.15 || b.multi?.joints.some((J) => !J.B)))) : b.restT > 0.5 // 吊在地上的(灯笼)没接触也算歇下
       if (!rest) continue
       if (b.pb) { (restList ||= []).push(b); continue }
       if (b.supported(this._solidB)) this._gridSleep(b)
@@ -807,14 +849,14 @@ export class Entities {
             const M = b.multi
             if (!M.parts.every((q) => q.dead || q.asleep || !q.pb?.isAwake() || q.restT > 0.5)) { restList.splice(i, 1); continue }
             if (this._multiSupported(M)) { for (const q of M.parts.slice().sort((a, b) => a.z - b.z)) if (!q.dead && !q.asleep) this._gridSleep(q) } // z 小(靠前)的先写格子:重叠处留前面那块的像素(轮子在车身前)
-            else if (M.parts.every((q) => q.dead || q.asleep || (q.wetF || 0) > 0.3)) { for (const q of M.parts) if (!q.dead && !q.asleep) this._floatSleep(q) } // 整具尸体漂在水里:planck 里睡,不写格子
+            else if (M.parts.some((q) => !q.dead && !q.asleep && (q.wetF || 0) > 0.15)) { for (const q of M.parts.slice().sort((a, b) => a.z - b.z)) if (!q.dead && !q.asleep) this._floatSleep(q) } // 整具尸体漂在水里(有一块泡着就行,露在水面上的手臂靠关节挂着;要求每块都湿 / 有接触的话一条翘着的胳膊让整具永远睡不着)
             else { restList.splice(i, 1); continue }
             restList = restList.filter((q) => !M.parts.includes(q)); n++
             i = restList.length // 数组换了,从尾重来
             continue
           }
           if (b.supported(this._solidB)) { this._gridSleep(b); restList.splice(i, 1); n++ }
-          else if (b.wetF > 0.5) { this._floatSleep(b); restList.splice(i, 1); n++ }
+          else if (b.wetF > 0.15) { this._floatSleep(b); restList.splice(i, 1); n++ }
         }
         if (!n) break
       }
@@ -831,6 +873,7 @@ export class Entities {
     for (const p of M.parts) {
       if (p.dead) continue
       if (p.hanging) return true
+      if (p.asleep && p.floatSleep && this._wetNear(p)) return true // 浮睡的整具尸体:哪块身边还有水就接着漂
       for (let e = 0; e < p.edge.length; e++) {
         p.worldOf(p.edge[e], P)
         const x = Math.floor(P[0]), y = Math.floor(P[1] + 1)
@@ -843,14 +886,24 @@ export class Entities {
     }
     return false
   }
-  /** 写进格子睡觉(+ 材质 solid_on_sleep_convert:concrete_collapsed → concrete_static,睡着就化成静态混凝土,刚体撤掉) */
-  /** 浮睡:漂在液体里歇下的刚体在 planck 里睡(速度清零、不解算、不受力),像素不写格子(水还得从它旁边流);水位降到入睡时的 85% 以下 / 被撞 / 关节邻居醒 → 醒 */
-  _floatSleep(b) {
-    if (!b.pb) return
-    if (b.floatSleep == null) b.floatSleep = b.wetF // 已经浮睡的别每帧刷新,不然水慢慢退时基准跟着走,永远叫不醒
-    if (b.pb.isAwake()) b.pb.setAwake(false)
-    b.vx = b.vy = b.w = 0; b._sx = b._sy = b._sw = 0 // setAwake(false) 已把 planck 速度清零;_s* 跟上,下一帧 pushToPhysics 别又把它叫醒
+  /**
+   * 浮睡:漂在液体里歇下的刚体也写进格子(原版 Box2D 一睡像素就进世界,不管在不在水里;水从它旁边流)。
+   * 试过只在 planck 里 setAwake(false) 不写格子:一个 body 睡了,下一步它所在的岛(接触 / 关节连着的一串)里只要有醒着的整岛又被拉醒,
+   * 十具尸体挤一坑各自歇下的时刻对不上,睡 → 拉醒 → 再等 0.5s 循环不止(线上探针 floatS 0/12/36/0 抖);写进格子就停用了,岛断开,各睡各的。
+   * 醒的条件换成 `_wetNear`:睡着时清点若脚下没实心且身边也没液体了(水退了)→ 醒,掉下去再正常入睡
+   */
+  _floatSleep(b) { this._gridSleep(b); b.floatSleep = true }
+  /** 睡着的刚体身边还有液体吗(边缘像素的 4 邻格里有液体的比例 ≥ 15%):浮睡的支撑判定 */
+  _wetNear(b) {
+    let wet = 0, n = 0
+    const P = [0, 0], L = this._liqDensity
+    for (let k = 0; k < b.edge.length; k += 3) {
+      b.worldOf(b.edge[k], P); const x = Math.floor(P[0]), y = Math.floor(P[1]); n++
+      if (L(x, y + 1) > 0 || L(x, y - 1) > 0 || L(x + 1, y) > 0 || L(x - 1, y) > 0) wet++
+    }
+    return n > 0 && wet / n >= 0.15
   }
+  /** 写进格子睡觉(+ 材质 solid_on_sleep_convert:concrete_collapsed → concrete_static,睡着就化成静态混凝土,刚体撤掉) */
   _gridSleep(b) {
     const sim = this.sim
     b.sleep(sim)
@@ -2345,7 +2398,8 @@ export class Entities {
         g.blood = { mat: sm, left: Math.round(amount * 2 * (0.8 + Math.random() * 0.4)), dx: il > 1 ? r.ix / il : 0, dy: il > 1 ? r.iy / il : -1 }
       }
     }
-    for (const b of live) this.bodies.push(b)
+    this._capRagdolls(live.length)
+    for (const b of live) { b.born = ++this._bornSeq; this.bodies.push(b) }
     this.ragdolls.push(g)
   }
 
@@ -2371,6 +2425,8 @@ export class Entities {
     b.name = 'ragdoll'; b.isBody = true; b.isRagdoll = true
     b.density = this.mats.list[matId]?.density ?? 6
     b.vx = r.vx; b.vy = r.vy; b.w = Math.random() * 8 - 4
+    this._capRagdolls(1)
+    b.born = ++this._bornSeq
     this.bodies.push(b); this.stats.bodies++
     const g = new Ragdoll([b], [])
     g.fx = r.fx
