@@ -714,7 +714,10 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       真值的边界剖面也对上了:离空气 1~2px 处 sand 80%(c 0.53~0.95 的 smoothstep 过渡带),7px 以外 sand 40% / rock_wet 55%。
     - biomes.json 多了每群系 `mats`(MaterialComponent 全字段,含 add_perlin / add_perlin_scale_x/y);`BandResolver.pick(biome,x,y,c)` 用它,旧手写表只做 xml 缺失时的兜底;`World._fillFromWang` 按 exe 两遍采样(0.5 倍抖动取材质色像素,1.0 倍抖动取灰度 c)。
     - 存疑 / 未做:① 没匹配到任何条目原版返回 0(空气);神殿类 add_perlin 群系按字面深处两成格子会是洞,这里退回区间上限最大的那条(没有神殿真值);② 圣山 temple_wall 真值下半块全空(y ≥ 1280,三块一样)像是存档没生成那半块,跳过;
-      ③ 地表 / 山体(type-0 过程群系:0x90a860 随机浮点位图 + mGradient 高度场 + 0x90b280/0x90b110 逐像素混合)真值是 1~2px 的细麻点渐变,我们还是大斑块,没反完;④ 丘陵 wood_loose 树 vs 真值空气:原版树是 PixelSprite 实体不在材质层里,对照不了。
+      ③ 地表 / 山体(type-0 过程群系:0x90a860 随机浮点位图 + mGradient 高度场 + 0x90b280/0x90b110 逐像素混合)没反完,按真值**校成概率混合**(`World._surfacePixel`):
+      soil → 第二带在 90px 内线性过渡(真值 24~48px 一半一半);山桩 sand 里 rock_static 的概率按**世界 y**爬升 P=(y−140)/330 封顶 0.8(真值左桩 y<160 0% → 320 42% → 448 83%,右桩早 80px、封顶 70%),
+      山体 rock_hard 里 rock_static P=0.35+y/900;颗粒 = 20px simplex 斑块 + 2px 细麻点。右桩 sand 48.7/rock 39.6 vs 真值 47.2/35.9、段长 22.6/20 vs 18.9/21.2;左桩 rock 40 vs 27(两桩剖面本就不同,取了折中)。之前是 soil<52px / sand<325px 的硬阈值,山桩整片沙。
+      ④ 丘陵 wood_loose 树 vs 真值空气:原版树是 PixelSprite 实体不在材质层里,对照不了。
 
 ## 2.5 接手指南(新会话从这里开始)
 

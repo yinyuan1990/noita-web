@@ -7,7 +7,7 @@
 // 材质 id 见 assets.materials;渲染/物理都只依赖这个数组,因此可整体搬到手机。
 
 import { CHUNK, TILE, WANG_SAMPLE_OFFSET, BIOME_MAP_W, BIOME_MAP_H, WORLD_CENTER_CHUNK_X, WORLD_CENTER_CHUNK_Y, absToWangX, absToWangY } from './core/coords.js'
-import { wangJitter } from './core/noitaNoise.js'
+import { wangJitter, simplex2 } from './core/noitaNoise.js'
 import { BIOMES, NOISE_EDGE_BIOMES, biomeNameOf, findBiomeRegions } from './core/biomes.js'
 import { generateRegionLayer, wangAt } from './core/wangLayer.js'
 import { collectScenes, collectLights, collectSpawns, collectVines, rollSpawn, ALL_MARK_COLORS, BIOME_SCENES, BIOME_FIXED_SCENES, PIXEL_SPRITES, SCENE_PROPS, sceneDir } from './core/scenes.js'
@@ -43,9 +43,13 @@ SURFACE_BANDS.scale = SURFACE_BANDS.watchtower = SURFACE_BANDS.desert // 沙漠�
 // left_stub / right_stub 是 sand_static 带,同 hills
 // 山体内部按真值校准(chunk(512,−512) hall:rock_static 102k / rock_hard 73k,coal 只有 56 格):rock_hard 带压到 0.75、不撒煤;
 // stub(chunk(−512,0):sand 163k / rock 70k)的沙比丘陵深得多 —— 我们的 v 是按"离地表深度"算的,山高所以要把沙带拉长到 1.35
-SURFACE_BANDS.mountain = { amp: 1, bands: [['soil', 0.53], ['rock_hard', 0.75]], deep: 'rock_static', mixFrom: 0.7, coal: false }
+// 09-05 改成概率混合(_surfacePixel 注释):山体 rock_hard 里 rock_static 随 v 爬升(真值 hall rock_static 39% / rock_hard 28%,段长 13 / 10 的细混合);
+// 山桩 sand 里 rock_static 48px 起 12% → 360px 70%(真值 chunk(1536,0) 剖面)
+// 山体(整图外的填充部分)真值 hall 里 rock_static 103k / rock_hard 73k(58%),山顶在 y≈−600:P(y) = 0.35 + y/900 → y −300 时 0.02,y 0 时 0.35,y 300 时 0.68
+SURFACE_BANDS.mountain = { amp: 1, bands: [['soil', 0.53], ['rock_hard', 9]], deep: 'rock_static', mixFrom: 0.7, coal: false, ramp: { base: 0.35, per: 900, min: 0.02, max: 0.7 } }
 SURFACE_BANDS.mountain_hall = SURFACE_BANDS.mountain_left_entrance = SURFACE_BANDS.mountain_right = SURFACE_BANDS.mountain_top = SURFACE_BANDS.mountain
-SURFACE_BANDS.mountain_left_stub = SURFACE_BANDS.mountain_right_stub = { amp: 1, bands: [['soil', 0.53], ['sand_static', 1.12]], deep: 'rock_static', mixFrom: 1.05, coal: true }
+// 山桩真值按 32px 行的 rock/(rock+sand):左桩 y<160 0% → 192 8% → 256 19% → 320 42% → 384 67% → 448 83%;右桩早 ~80px 起、封顶 65~75% → 取 P(y) = (y − 140)/330,封顶 0.8
+SURFACE_BANDS.mountain_left_stub = SURFACE_BANDS.mountain_right_stub = { amp: 1, bands: [['soil', 0.53], ['sand_static', 9]], deep: 'rock_static', mixFrom: 1.05, coal: true, ramp: { base: -140 / 330, per: 330, min: 0, max: 0.8 } }
 
 export class NoitaWorld {
   /**
@@ -701,7 +705,7 @@ export class NoitaWorld {
     let B = this._bandCache?.get(biome)
     if (B) return B
     const def = SURFACE_BANDS[biome] || SURFACE_BANDS.hills
-    B = { amp: def.amp, bands: def.bands.map(([n, hi]) => [this.mats.id(n), hi]), deep: this.mats.id(def.deep), mixFrom: def.mixFrom, coal: !!def.coal }
+    B = { amp: def.amp, bands: def.bands.map(([n, hi]) => [this.mats.id(n), hi]), deep: this.mats.id(def.deep), mixFrom: def.mixFrom, coal: !!def.coal, ramp: def.ramp || null }
     ;(this._bandCache ||= new Map()).set(biome, B)
     return B
   }
@@ -776,14 +780,35 @@ export class NoitaWorld {
     return F.C + F.A * this._surfaceAmp(wx) * (n - 0.5) * 2
   }
 
-  /** 地表以下某像素的材质(wy ≥ surf) */
+  /**
+   * 地表以下某像素的材质(wy ≥ surf)。原版 type-0 过程群系(0x90a860:随机浮点位图 + mGradient + 逐像素混合)没反完,
+   * 按真值剖面(chunk(1536,0) 山桩,每 24px 一档)校成"概率混合":soil 0~24px 94% → 24~48 50% → 48~72 19% → 72~96 4%;
+   * rock_static 48px 起 12% → 100px 20% → 150 31% → 200~280 48% → 320 63% → 360+ 70%,颗粒 = 9px simplex 斑块 + 2px 细麻点(真值 rock 段长 12~20 / sand 6~8)。
+   * 之前是硬阈值(soil<52px、sand<325px 再突变成 rock),真值里 300px 以内根本没有"整片沙",是沙里越来越密的石头麻点。
+   */
   _surfacePixel(wx, wy, surf, B) {
-    const v = 0.45 + (wy - surf) / 650 + 0.05 * (valueNoise(wx / 18, wy / 14, 5) * 2 - 1)
+    const d = wy - surf
+    const v = 0.45 + d / 650 + 0.05 * (valueNoise(wx / 18, wy / 14, 5) * 2 - 1)
+    // 混合噪声 ∈ [0,1]:中尺度斑块(14px simplex)+ 细颗粒(2px 值噪声);真值山桩 sand 段长 19~24 / rock 11~21
+    const mixN = (ox) => Math.min(1, Math.max(0, 0.5 + 0.42 * simplex2((wx + ox) / 20, wy / 20) + 0.16 * (valueNoise(wx / 2.3 + ox, wy / 2.3, 6) - 0.5)))
     let m = B.deep
     for (const [id, hi] of B.bands) if (v < hi) { m = id; break }
-    // 最后一带与深层的交叠段(0.9~0.95):按噪声互嵌成条带
-    const lastHi = B.bands[B.bands.length - 1][1]
-    if (v >= B.mixFrom && v < lastHi && valueNoise(wx / 9, wy / 9, 6) < (v - B.mixFrom) / (lastHi - B.mixFrom)) m = B.deep
+    const first = B.bands[0][0]
+    if (first === this.M_SOIL && B.bands.length > 1) {
+      // soil → 第二带:80px 的概率过渡(真值 24~48px 处一半一半)
+      const pSoil = Math.min(1, Math.max(0, (90 - d) / 80))
+      if (d < 90) m = mixN(0) < pSoil ? this.M_SOIL : B.bands[1][0]
+    }
+    if (B.ramp) {
+      // 深层材质的概率按**世界 y**(不是离地表深度:真值左桩上半区一片沙、越往下石头麻点越密,和局部地表无关)线性爬升:
+      // 山桩 P(y) = 0.06 + y/520,封顶 0.72(真值 y 48 → 12%,150 → 31%,200~280 → 48%,360+ → 70%,再深仍有 25% 沙),其余留给最后一带
+      const p = Math.min(B.ramp.max, Math.max(B.ramp.min ?? 0, B.ramp.base + wy / B.ramp.per))
+      if (m !== this.M_SOIL) m = mixN(1000) < p ? B.deep : B.bands[B.bands.length - 1][0]
+    } else {
+      // 最后一带与深层的交叠段(0.9~0.95):按噪声互嵌成条带
+      const lastHi = B.bands[B.bands.length - 1][1]
+      if (v >= B.mixFrom && v < lastHi && valueNoise(wx / 9, wy / 9, 6) < (v - B.mixFrom) / (lastHi - B.mixFrom)) m = B.deep
+    }
     // coal(is_rare polka,v 0.51~0.55,prob 0.16,scale 0.01×0.0036):贴着 soil/sand 交界的扁煤层
     if (B.coal && v >= 0.51 && v < 0.55 && this.M_COAL >= 0 && valueNoise(wx * 0.06, wy * 0.0216, 101) > 1 - 0.16 * 0.55) m = this.M_COAL
     return m
