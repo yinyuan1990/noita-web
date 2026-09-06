@@ -222,11 +222,71 @@ const BIOME_BANDS = {
   },
 }
 
+/**
+ * 反 exe 的材质带(09-05 重做,之前上面那张表是"同参数的近似实现",噪声尺度差 3 倍、沙 / 湿岩比例反了):
+ *   WorldGen 每格:c = wang 位图灰度在抖动后坐标的 smoothstep 双线性采样(白 1 / 黑 0,边界 0.5,进实心 ~5px 到 1)
+ *   value = 0x908e70(x, y, c) = max(0.5, c + simplex((x,y)+15.5·valueNoise 扭曲, 20px) × 5.0825 × ((c−0.5)/2)²)
+ *   BiomeMaterials::GetMaterial(0x8f5030):按 material_index 升序(同 index 保持 xml 顺序)逐条:limit_y 过滤 → value ∈ [min, max) →
+ *   非稀有直接取;稀有再过 rare_use_perlin(simplexD(x·sx, y·sy) ∈ (reqMin, reqMax])与 rare_use_polka(polka(x·sx, y·sy) ∈ (reqMin, reqMax])。
+ *   结果:边界 ~5px 是 sand(c 0.53~0.95),深处 sand 31% / rock_static_wet 69% 里再抠煤 / 铜 / 金的 polka 圆点。
+ * 排序按 material_index 升序是从真值反推的(挖掘场 coal_static index 9 要先于 rock_static_grey index 10 判,否则 coal_static 永远取不到)。
+ */
+import { materialValue, polka, simplexD } from './noitaNoise.js'
+
 export class BandResolver {
-  constructor(mats) {
+  /**
+   * @param {object} mats  材质表
+   * @param {object} [biomes]  biomes.json(每群系 mats = xml MaterialComponent 全字段)
+   */
+  constructor(mats, biomes = null) {
     this.mats = mats
+    this.biomes = biomes
     this.cache = new Map()
+    this.xmlCache = new Map()
     this.fallback = mats.id('rock_static')
+  }
+
+  /** xml 的 MaterialComponent 列表(材质 id 化、按 material_index 稳定升序);没有就 null */
+  xml(biome) {
+    let c = this.xmlCache.get(biome)
+    if (c !== undefined) return c
+    const list = this.biomes?.[biome]?.mats
+    if (!list?.length) c = null
+    else {
+      c = list.map((m, i) => ({ ...m, id: this.mats.id(m.mat), i })).filter((m) => m.id > 0)
+      c.sort((a, b) => a.index - b.index || a.i - b.i)
+    }
+    this.xmlCache.set(biome, c)
+    return c
+  }
+
+  /**
+   * @param {string} biome
+   * @param {number} wx 世界 x   @param {number} wy 世界 y(玩家坐标系,决定 limit_y)
+   * @param {number} [c=1] 该格的 wang 灰度(实心度,0.5 边界 ~ 1 深处)
+   */
+  pick(biome, wx, wy, c = 1) {
+    const L = this.xml(biome)
+    if (!L) return this.pickLegacy(biome, wx, wy)
+    const v = materialValue(wx, wy, c)
+    for (const m of L) {
+      if (m.limitY && (wy < m.yMin || wy > m.yMax)) continue
+      // add_perlin(exe +0x2c):这一条自己再叠一层 simplexD(x·scale_x, y·scale_y)——挖掘场 coal_static / 神殿 rock_hard & 砖 的大斑块就是它
+      const vv = m.addPerlin ? v + simplexD(wx * m.apx, wy * m.apy) : v
+      if (vv < m.min || vv >= m.max) continue
+      if (!m.rare) return m.id
+      const px = wx * m.sx, py = wy * m.sy
+      if (m.perlin) { const n = simplexD(px, py); if (n <= m.reqMin || n > m.reqMax) continue }
+      if (m.polka) { const p = polka(px, py, m.radLow, m.radHigh, m.boxed, m.prob); if (p <= m.reqMin || p > m.reqMax) continue }
+      return m.id
+    }
+    // 一条都没落到:原版 GetMaterial 返回 0 = 空气。边界 value 0.5~0.53(煤矿 soil 只限 y<424)→ 最外 0.3px 空,照原版;
+    // 但 add_perlin 群系(神殿:rock_hard 0.6~1.0 / 砖 0.8~3.6 都叠了 ±1 的 simplexD)深处按字面会有两成的格子谁都不要 → 这里退回该群系区间上限最大的那条,
+    // 免得墙里全是洞(没有神殿真值,存疑:也可能原版就是这样的蜂窝墙)
+    if (c < 0.6) return 0
+    let deep = null
+    for (const m of L) if (!m.rare && !m.limitY && (!deep || m.max > deep.max)) deep = m
+    return deep ? deep.id : 0
   }
 
   /** 群系配置 → 材质 id 化 */
@@ -250,7 +310,7 @@ export class BandResolver {
    * @param {string} biome
    * @param {number} wx 世界 x   @param {number} wy 世界 y(玩家坐标系,决定 limit_y)
    */
-  pick(biome, wx, wy) {
+  pickLegacy(biome, wx, wy) {
     const c = this.config(biome)
     if (!c) return this.fallback
     // 基带:大尺度斑块。真值统计(seed 1674172626 煤矿白块):rock_static_wet 44942 ≈ sand_static 42522,soil 极少,

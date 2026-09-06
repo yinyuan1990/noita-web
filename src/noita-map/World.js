@@ -6,7 +6,8 @@
 // 坐标:cx, cy 为 chunk 绝对坐标(群系图像素;世界 (0,0) 在 chunk (35,14) 左上)。
 // 材质 id 见 assets.materials;渲染/物理都只依赖这个数组,因此可整体搬到手机。
 
-import { CHUNK, BIOME_MAP_W, BIOME_MAP_H, WORLD_CENTER_CHUNK_X, WORLD_CENTER_CHUNK_Y, absToWangX, absToWangY } from './core/coords.js'
+import { CHUNK, TILE, WANG_SAMPLE_OFFSET, BIOME_MAP_W, BIOME_MAP_H, WORLD_CENTER_CHUNK_X, WORLD_CENTER_CHUNK_Y, absToWangX, absToWangY } from './core/coords.js'
+import { wangJitter } from './core/noitaNoise.js'
 import { BIOMES, NOISE_EDGE_BIOMES, biomeNameOf, findBiomeRegions } from './core/biomes.js'
 import { generateRegionLayer, wangAt } from './core/wangLayer.js'
 import { collectScenes, collectLights, collectSpawns, collectVines, rollSpawn, ALL_MARK_COLORS, BIOME_SCENES, BIOME_FIXED_SCENES, PIXEL_SPRITES, SCENE_PROPS, sceneDir } from './core/scenes.js'
@@ -57,7 +58,7 @@ export class NoitaWorld {
     this.mats = assets.materials
     this.seed = seed >>> 0
     this.ng = opt.ngPlus || 0
-    this.bands = new BandResolver(this.mats)
+    this.bands = new BandResolver(this.mats, assets.biomes)
     this.cacheLimit = opt.chunkCache || 64
     this.chunks = new Map()        // "cx,cy" → {mat, scenes, t}
     this.layers = new Map()        // regionKey → layer(含 scenes)
@@ -559,33 +560,59 @@ export class NoitaWorld {
     return out
   }
 
+  /**
+   * wang 群系填格(反 exe GetCellMaterial 0x908f40 的 type-2 路径 + WorldGen):每个世界格
+   *   ① 抖动 0.5 倍(0x908cb0)→ 最近的 wang 像素是材质色(砖 / 木 / 钢…)→ 直接该材质
+   *   ② 抖动 1.0 倍 → 灰度位图 smoothstep 双线性采样得 c(白 1 / 黑 0 / 标记色 0 / 材质色 1);c < 0.5 → 空气
+   *      c ≥ 0.5:该处 wang 像素是材质色 → 该材质;否则 bands.pick(biome, x, y, c)(c 决定边界 ~5px 的 sand 圈)
+   * 抖动噪声(simplex + 梯度 + 值噪声,置换表抠自 exe)幅度只有 ±1~5px,砖边的"有机感"主要来自 c 的 smoothstep 过渡与材质带。
+   */
   _fillFromWang(mat, layer, ax0, ay0, wx0, wy0, biome) {
     const mats = this.mats
     const bands = this.bands
     const M_ROCK = this.M_ROCK
-    // 边缘扰动:引擎把世界坐标查 wang 表前先用 perlin 扭一下(mInsidePerlin* / noise_biome_edges),
-    // 所以真值的砖边是有机的波浪而不是 10px 台阶。这里用同幅度(±EDGE_WARP px)的值噪声近似,形状不逐位一致。
-    const WARP = EDGE_WARP, WS = EDGE_WARP_SCALE
+    const gray = (c) => {
+      if (c <= 0) return 0
+      if (c === 0xffffff) return 1
+      if (mats.fromWang(c) >= 0) return 1
+      const r = c >> 16, g = (c >> 8) & 255, b = c & 255
+      if (r === g && g === b) return r / 255
+      return 0 // spawn 标记 / 未知色
+    }
+    // 灰度按 wang 像素缓存(mapW × mapH 的 Float32),带 4 行 padding 的 buffer 直接索引
+    if (!layer.grayCache) {
+      const W = layer.mapW, H = layer.mapH, G = new Float32Array(W * H)
+      for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) G[ty * W + tx] = gray(wangAt(layer, tx, ty))
+      layer.grayCache = G
+    }
+    const G = layer.grayCache, W = layer.mapW, H = layer.mapH
+    const gAt = (tx, ty) => (tx < 0 || ty < 0 || tx >= W || ty >= H ? 0 : G[ty * W + tx])
+    const oxw = (ax0 + WANG_SAMPLE_OFFSET - layer.originX) / TILE, oyw = (ay0 + WANG_SAMPLE_OFFSET - layer.originY) / TILE // 本 chunk 左上格的 wang 坐标(格中心 = 整数 + 0.5 处)
     for (let j = 0; j < CHUNK; j++) {
-      const ay = ay0 + j
       const wy = wy0 + j
       let row = j * CHUNK
       for (let i = 0; i < CHUNK; i++, row++) {
-        const ax = ax0 + i
-        const dx = (valueNoise(ax / WS, ay / WS, 11) * 2 - 1) * WARP
-        const dy = (valueNoise(ax / WS + 37.7, ay / WS - 19.3, 23) * 2 - 1) * WARP
-        const tx = absToWangX(layer, ax + dx)
-        const ty = absToWangY(layer, ay + dy)
-        const c = wangAt(layer, tx, ty)
-        if (c <= 0) continue // 越界 / 黑 = 空气
-        if (c === 0xffffff) { mat[row] = bands.pick(biome, wx0 + i, wy); continue }
-        const m = mats.fromWang(c)
-        if (m >= 0) { mat[row] = m; continue }
-        const r = c >> 16, g = (c >> 8) & 255, b = c & 255
-        // 灰阶:真值统计 亮灰(≥0xdd)= 实心带,暗灰(#010101~#323232 房间描摹/占位)= 空气
-        if (r === g && g === b) { mat[row] = r < 0x80 ? 0 : bands.pick(biome, wx0 + i, wy); continue }
-        if (ALL_MARK_COLORS.has(c)) continue // spawn 标记像素:空气
-        mat[row] = M_ROCK
+        const wx = wx0 + i
+        const [j1x, j1y] = wangJitter(wx, wy, 1)
+        const [b0x, b0y] = wangJitter(wx, wy, 0)
+        const dx = j1x - b0x, dy = j1y - b0y // 抖动(wang px);0.5 倍 = 一半
+        // ① 材质色:0.5 倍抖动最近像素
+        const c1 = wangAt(layer, Math.floor(oxw + i / TILE + dx * 0.5), Math.floor(oyw + j / TILE + dy * 0.5))
+        const m1 = c1 > 0 ? mats.fromWang(c1) : -1
+        if (m1 >= 0) { mat[row] = m1; continue }
+        // ② 灰度 smoothstep 双线性(格中心在 整数+0.5,先减 0.5 再取整)
+        const sx = oxw + i / TILE + dx - 0.5, sy = oyw + j / TILE + dy - 0.5
+        const fx0 = Math.floor(sx), fy0 = Math.floor(sy)
+        let tx = sx - fx0, ty = sy - fy0
+        tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty)
+        const g00 = gAt(fx0, fy0), g10 = gAt(fx0 + 1, fy0), g01 = gAt(fx0, fy0 + 1), g11 = gAt(fx0 + 1, fy0 + 1)
+        const c = (g00 + (g10 - g00) * tx) * (1 - ty) + (g01 + (g11 - g01) * tx) * ty
+        if (c < 0.5) continue
+        const c2 = wangAt(layer, Math.floor(oxw + i / TILE + dx), Math.floor(oyw + j / TILE + dy))
+        const m2 = c2 > 0 ? mats.fromWang(c2) : -1
+        if (m2 >= 0) { mat[row] = m2; continue }
+        if (c2 > 0 && !(c2 === 0xffffff || (((c2 >> 16) === ((c2 >> 8) & 255)) && (((c2 >> 8) & 255) === (c2 & 255)))) && !ALL_MARK_COLORS.has(c2)) { mat[row] = M_ROCK; continue } // 未知彩色:兜底石头
+        mat[row] = bands.pick(biome, wx, wy, c)
       }
     }
   }

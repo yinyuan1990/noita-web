@@ -216,7 +216,21 @@ for (const f of fs.readdirSync(`${UNPACKED}/biome`)) {
     })
   }
   const top = attrsOf((/<Topology\b([^>]*)>/.exec(s) || ['', ''])[1])
-  biomesOut[f.replace(/\.xml$/, '')] = { veg, bg: top.background_image ? path.basename(top.background_image) : null }
+  // <Materials> 的 MaterialComponent 全字段(反 exe BiomeMaterials::GetMaterial 0x8f5030 要用:区间 / limit_y / is_rare 的 polka & perlin 门),按 xml 顺序
+  const mats = []
+  for (const m of s.matchAll(/<MaterialComponent\b([^>]*)>/g)) {
+    const a = attrsOf(m[1])
+    if (a._enabled === '0' || !a.material_name) continue
+    mats.push({
+      mat: a.material_name, index: +(a.material_index ?? 0), min: +(a.material_min ?? 0), max: +(a.material_max ?? 0),
+      limitY: a.limit_y === '1', yMin: +(a.limit_min_y ?? -1e9), yMax: +(a.limit_max_y ?? 1e9),
+      rare: a.is_rare === '1', prob: +(a.rare_polka_probability ?? 0), sx: +(a.rare_scale_x ?? 0), sy: +(a.rare_scale_y ?? 0),
+      perlin: a.rare_use_perlin === '1', polka: a.rare_use_polka === '1', reqMin: +(a.rare_required_min ?? 0), reqMax: +(a.rare_required_max ?? 10),
+      radLow: +(a.rare_polka_radius_low ?? 0), radHigh: +(a.rare_polka_radius_high ?? 0), boxed: a.rare_polka_is_boxed === '1',
+      addPerlin: a.add_perlin === '1', apx: +(a.add_perlin_scale_x ?? 0), apy: +(a.add_perlin_scale_y ?? 0),
+    })
+  }
+  biomesOut[f.replace(/\.xml$/, '')] = { veg, bg: top.background_image ? path.basename(top.background_image) : null, mats }
 }
 fs.writeFileSync(`${OUT}/biomes.json`, JSON.stringify(biomesOut))
 console.log(`veg: ${nVeg} 张贴图;biomes.json ${Object.keys(biomesOut).length} 个群系`)

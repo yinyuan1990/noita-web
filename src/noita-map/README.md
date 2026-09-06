@@ -78,10 +78,16 @@ painter.paint(chunk, canvas512)
 精确(和游戏逐位一致):PRNG、wang 拼砖、重掷校验、秘室、随机布景选择与坐标、f0bbee 材质掷骰、整图布景位置、
 wang 色 → 材质、布景材质层盖章。
 
+- **wang 群系的材质带与砖边**(09-05 反 exe 后精确,`core/noitaNoise.js` + `bands.js` + `World._fillFromWang`):
+  每格 → `wangJitter`(0x908cb0:simplex / 梯度 / 值噪声,置换表抠自 exe)→ wang 灰度位图 smoothstep 双线性得 c(0.5 = 边界)→ `materialValue`(0x908e70:c + simplex(20px,15.5px 值噪声扭曲)×5.08×((c−0.5)/2)²)
+  → `BiomeMaterials::GetMaterial`(0x8f5030:按 material_index 升序,limit_y / [min,max) / add_perlin 叠 simplexD / 稀有过 polka(0x8fbe60)与 simplexD 门)。
+  真值对照:煤矿 sand 连续段 8.9/6.4 vs 真值 8.6/6.3、rock_wet 10.4/7.9 vs 10.1/7.9;挖掘场 coal_static 26.5% vs 26.4%、rock_static_grey 段长 18.3/12.5 vs 18.7/12.6;
+  逐像素材质一致率 煤矿 71~77% → 85~92%、挖掘场 74~79% → 96.7%。之前那套"同参数近似"斑块大 3 倍、沙 / 湿岩比例反了。统计脚本 `_noita-band-stats.mjs`。
+
 近似(形状对、不逐位):
-- **材质带**(白块 → soil/sand/rock_wet/coal/gold):xml 参数照抄,噪声函数不是引擎的。真值统计 rock_wet≈sand 各半,已按此校准。
-  山体(mountain_hall / entrance / right / top)是 soil → rock_hard → rock_static,按真值 chunk(512,−512) 校到 rock_static 103k / rock_hard 73k(真值 102k / 73k);stub 两头 sand 带拉深到 1.12。
-- **砖边扰动**(±4.5px,波长 24px)和**草**(soil/sand 顶面 83%):引擎的 perlin 与 rand_seed 不可复现,按真值目测。
+- **地表 / 山体材质带**(hills / mountain_* 这类 type-0 过程群系,`SURFACE_BANDS`):xml 参数照抄,原版是 0x90a860 的随机浮点位图 + mGradient 高度场 + 逐像素抖动混合(真值里 sand / rock_static 是 1~2px 的细麻点渐变,我们是大斑块),没反完。
+  山体按真值 chunk(512,−512) 校到 rock_static 103k / rock_hard 73k(真值 102k / 73k);stub 两头 sand 带拉深到 1.12。
+- **草**(soil/sand 顶面 83%):引擎的 rand_seed 不可复现,按真值目测。
 - **地表高度场**(`World._surfaceHeight`):原作 SIN_CAPPED_SIMPLEX 不可复现,用存档真值剖面(x∈[−1024,0]∪[1536,2048])拟合
   平滑值噪声(`scripts/_fit-surface.mjs`:格距 330px、峰 −121 / 谷 +114、rms 16px,实心一致 98%+),默认种子用拟合参数,其他种子同分布。
   **两条硬约束**:① 没有碎尖——之前 4 倍频 4 层 fbm 出来的三角尖是错的,原作一座山一个谷;② **全域最陡 ≤0.85(40°)**——soil/grass 是落沙,

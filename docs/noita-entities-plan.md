@@ -702,6 +702,19 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     - LightComponent 缺省色 (255,178,118),所有带 LightComponent 的实体 / 道具都按 xml 半径与颜色给光(之前灯笼半径 ×0.5、怪 ×0.35 都是拍的)。
     合成在 1/4 分辩率光图上逐像素做(107×61),雾 / 天光先按 32px 格取成小数组再双线性:0.5ms/帧(第一版逐像素查 Map 1.6ms)。
     效果:矿洞截图和原版视频帧(scripts/out/noita-hd/t60.png)同一种"黑 + 暖褐 + 灯边亮"的调子;地表黄昏橙光、山洞内部黑。
+28. **逐模块对表第二批:模块 2 世界生成 —— wang 群系的材质带反成逐位一致(推翻了 27 条里"不可复现、暂缓"的判断)**:
+    先量化:`_noita-band-stats.mjs` 对真值块算每种材质占比 + 横/竖连续段长(= 斑块尺度),并把两边平色输出成 png。煤矿我们 sand 段长 25~29 vs 真值 8.5、rock_wet 20 vs 11,比例还反了(我们 sand 22% / rock_wet 9%,真值 17% / 18%);山桩 sand 段长 146 vs 19。
+    反 exe(断言源文件 `procedural_utils/biome_materials.cpp` / `noise_utils.cpp` + WorldGen):
+    - `GetCellMaterial`(0x908f40)wang 群系走 type-2:每格 `0x908cb0` 抖动(Wang offset 4.5 → floor((x+5)/10) 正是我们实测的半格;抖动 = valueNoise·(0.45·simplex+0.1) / gradNoise·((1−w)·0.33+0.111),单位 wang px,幅度只 ±1~5 世界 px)
+      → 灰度位图 smoothstep 双线性得 c(白 1 黑 0 标记色 0,c<0.5 空气)→ `0x908e70`:value = max(0.5, c + simplex((x,y)+15.5·valueNoise(x·0.035,y·0.07), ×0.0489)×5.35×0.95×((c−0.5)/2)²)
+      → `BiomeMaterials::GetMaterial`(0x8f5030):逐条 limit_y → (add_perlin ? value+simplexD(x·sx,y·sy) : value) ∈ [min,max) → 非稀有直接取;稀有再过 rare_use_perlin(simplexD ∈ (reqMin,reqMax])与 rare_use_polka(`0x8fbe60`:格哈希 < probability 才有点,半径 lerp(radLow,radHigh,h3),(1−d²)³,boxed 用 u⁴+v⁴)。
+      条目顺序按 material_index 升序(从真值反推:挖掘场 coal_static idx 9 必须先于 rock_static_grey idx 10,否则 coal_static 永远取不到;推出来深处 63.9/36.1,真值 63/37)。
+    - 三个噪声函数的置换表直接抠 exe(0x114d700 自带 256 表 → 值噪声 / 8 向梯度噪声;0x114ced0 标准 Ken Perlin 表 → Gustavson simplexnoise1234 ×40;0x114cc50 短表 → SimplexNoise.java 版 ×70 的 simplexD;polka 的格哈希是 float32 的 (x mod 71+26)²·(y mod 71+161)²·0.001013 取小数)→ `core/noitaNoise.js`。
+    - 结果(真值对照):煤矿 sand 8.9/6.4 vs 8.6/6.3、rock_wet 10.4/7.9 vs 10.1/7.9;挖掘场 coal_static 26.5 vs 26.4%、段长 32.2/21.6 vs 32.7/21.8;逐像素材质一致率 煤矿 71~77% → 85~92%,挖掘场 74~79% → **96.7%**。
+      真值的边界剖面也对上了:离空气 1~2px 处 sand 80%(c 0.53~0.95 的 smoothstep 过渡带),7px 以外 sand 40% / rock_wet 55%。
+    - biomes.json 多了每群系 `mats`(MaterialComponent 全字段,含 add_perlin / add_perlin_scale_x/y);`BandResolver.pick(biome,x,y,c)` 用它,旧手写表只做 xml 缺失时的兜底;`World._fillFromWang` 按 exe 两遍采样(0.5 倍抖动取材质色像素,1.0 倍抖动取灰度 c)。
+    - 存疑 / 未做:① 没匹配到任何条目原版返回 0(空气);神殿类 add_perlin 群系按字面深处两成格子会是洞,这里退回区间上限最大的那条(没有神殿真值);② 圣山 temple_wall 真值下半块全空(y ≥ 1280,三块一样)像是存档没生成那半块,跳过;
+      ③ 地表 / 山体(type-0 过程群系:0x90a860 随机浮点位图 + mGradient 高度场 + 0x90b280/0x90b110 逐像素混合)真值是 1~2px 的细麻点渐变,我们还是大斑块,没反完;④ 丘陵 wood_loose 树 vs 真值空气:原版树是 PixelSprite 实体不在材质层里,对照不了。
 
 ## 2.5 接手指南(新会话从这里开始)
 
