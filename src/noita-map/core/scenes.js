@@ -107,18 +107,30 @@ export const BIOME_SPAWN_FUNCS = {
     [0x80ff5a, 'spawn_vines'], [0x535988, 'spawn_statue_back'], [0x33934c, 'spawn_shopitem'],
   ],
 }
+// 天空神殿 ×4 + 沙漠瞭望塔(biome_impl/static_tile/temples_common.lua,static_tile 群系:*_fg.png 直接当 wang 层):wandcave 那套碎石 / 云陷阱 + 自己的一串标记
+// ffeedd 在这里不是 init 钩子而是 spawn_boss(Kolmisilmän sydän 本体);watchtower.lua 另加 aaff00 / ffaa00 两色小怪大怪表
+const SKY_TEMPLES = ['biome_boss_sky', 'biome_barren', 'biome_darkness', 'biome_potion_mimics', 'watchtower']
+const TEMPLES_COMMON_SPAWNS = [
+  [0x805000, 'spawn_cloud_trap'], [0x397780, 'load_floor_rubble'], [0x00ffa0, 'load_floor_rubble_l'], [0x1ca7ff, 'load_floor_rubble_r'],
+  [0xffeed1, 'spawn_puzzle_watchtower'], [0xffeeda, 'spawn_puzzle_barren'], [0xffeedb, 'spawn_puzzle_potion_mimics'], [0xffeedc, 'spawn_puzzle_darkness'], [0xffeedd, 'spawn_boss'],
+  [0xffeede, 'spawn_potion_mimic_empty'], [0xffeedf, 'spawn_potion_mimic'], [0xffeed0, 'spawn_fish_many'], [0xffeed2, 'spawn_boss_phase2_marker'], [0xffeed3, 'spawn_book_barren'],
+  [0xffeed4, 'spawn_potion_beer'], [0xffeed5, 'spawn_potion_milk'], [0xffeed6, 'spawn_scorpion'], [0xffaaaa, 'spawn_sign_left'], [0xffaadd, 'spawn_sign_right'],
+]
+for (const b of SKY_TEMPLES) BIOME_SPAWN_FUNCS[b] = [...DEFAULT_SPAWNS, ...TEMPLES_COMMON_SPAWNS, ...(b === 'watchtower' ? [[0xaaff00, 'spawn_small_enemies2'], [0xffaa00, 'spawn_big_enemies2']] : [])]
 /** 该群系 lua 里定义成空函数的默认色(fungicave):标记照旧算标记色,但什么都不出 */
 const EMPTY_FUNCS = {
   fungicave: new Set(['spawn_lamp', 'load_pixel_scene', 'load_pixel_scene2', 'spawn_props2', 'spawn_props3', 'spawn_unique_enemy', 'spawn_unique_enemy2', 'spawn_unique_enemy3', 'spawn_ghostlamp', 'spawn_candles']),
   crypt: new Set(['spawn_crawlers', 'spawn_doors']), // 门:原版注释掉了(关节没做)
   liquidcave: new Set(['spawn_items', 'spawn_props3', 'load_pixel_scene2', 'spawn_unique_enemy', 'spawn_unique_enemy2', 'spawn_unique_enemy3', 'spawn_ghostlamp', 'spawn_candles']),
   wandcave: new Set(['spawn_props2', 'spawn_props3', 'load_pixel_scene', 'load_pixel_scene2', 'spawn_unique_enemy', 'spawn_unique_enemy2', 'spawn_unique_enemy3', 'spawn_ghostlamp', 'spawn_candles', 'spawn_potions', 'spawn_wands']),
-  pyramid: new Set(['spawn_items', 'spawn_crawlers', 'spawn_ghost_crystal', 'spawn_doors', 'spawn_boss_limbs_trigger']),
+  pyramid: new Set(['spawn_items', 'spawn_crawlers', 'spawn_ghost_crystal', 'spawn_doors']),
   meat: new Set(['load_pixel_scene', 'load_pixel_scene2', 'spawn_props2', 'spawn_props3', 'spawn_unique_enemy3']),
   robobase: new Set(['load_pixel_scene', 'load_pixel_scene2', 'spawn_props2', 'spawn_props3', 'spawn_unique_enemy', 'spawn_unique_enemy2', 'spawn_unique_enemy3', 'spawn_shopitem']),
   wizardcave: new Set(['spawn_statues', 'spawn_statue_back', 'load_pixel_scene', 'load_pixel_scene2', 'load_pixel_scene3', 'load_pixel_scene4', 'load_pixel_scene5', 'load_pixel_scene5b', 'load_beam', 'load_cavein', 'load_background_scene', 'spawn_crawlers', 'spawn_doors', 'spawn_shopitem', 'spawn_props2', 'spawn_props3', 'spawn_unique_enemy2', 'spawn_unique_enemy3']),
-  the_end: new Set(['load_pixel_scene2', 'spawn_props', 'spawn_props2', 'spawn_props3', 'spawn_unique_enemy2', 'spawn_unique_enemy3', 'spawn_apparition', 'spawn_potions', 'spawn_heart', 'spawn_moon', 'spawn_wands', 'spawn_potion_altar', 'spawn_shopitem', 'spawn_specialshop']), // g_ghost_crystal 全空;门是关节;boss_limbs 触发器(Kolmisilmän koipi 战)没做
+  the_end: new Set(['load_pixel_scene2', 'spawn_props', 'spawn_props2', 'spawn_props3', 'spawn_unique_enemy2', 'spawn_unique_enemy3', 'spawn_apparition', 'spawn_potions', 'spawn_heart', 'spawn_moon', 'spawn_wands', 'spawn_potion_altar', 'spawn_shopitem', 'spawn_specialshop']), // g_ghost_crystal 全空;门是关节
 }
+// temples_common.lua:小怪 / 大怪 / props2/3 / pixel_scene* / unique* / ghostlamp / candles / potions / wands 全是空函数;三道谜题逻辑实体(puzzle_logic_*)不做
+for (const b of SKY_TEMPLES) EMPTY_FUNCS[b] = new Set(['spawn_small_enemies', 'spawn_big_enemies', 'spawn_props2', 'spawn_props3', 'load_pixel_scene', 'load_pixel_scene2', 'spawn_unique_enemy', 'spawn_unique_enemy2', 'spawn_unique_enemy3', 'spawn_ghostlamp', 'spawn_candles', 'spawn_potions', 'spawn_wands', 'spawn_puzzle_watchtower', 'spawn_puzzle_barren', 'spawn_puzzle_potion_mimics', 'spawn_puzzle_darkness'])
 // 色 → 函数名(每群系一张 Map,查得快)
 const FUNC_BY_COLOR = Object.fromEntries(Object.entries(BIOME_SPAWN_FUNCS).map(([b, l]) => [b, new Map(l.filter(([, f]) => !EMPTY_FUNCS[b]?.has(f)).map(([c, f]) => [c, f]))]))
 export function spawnFuncOf(biome, color) { return FUNC_BY_COLOR[biome]?.get(color) || null }
@@ -281,7 +293,12 @@ const SANDCAVE_SCENES = {
 }
 const THE_END_SCENES = { g_pixel_scene_01: [PY('cathedral'), PY('mining')] } // the_end.lua 也借 crypt 的图
 const WIZARDCAVE_SCENES = { g_background_scenes: [{ prob: 4, name: '' }, { prob: 1, name: 'drape_1', bg: true, z: 40 }, { prob: 0.66, name: 'drape_2', bg: true, z: 40 }, { prob: 0.33, name: 'drape_3', bg: true, z: 40 }] }
-export const BIOME_SCENES = { coalmine: COALMINE_SCENES, coalmine_alt: COALMINE_ALT_SCENES, excavationsite: EXCAVATIONSITE_SCENES, snowcave: SNOWCAVE_SCENES, snowcastle: SNOWCASTLE_SCENES, rainforest: RAINFOREST_SCENES, vault: VAULT_SCENES, crypt: CRYPT_SCENES, liquidcave: LIQUIDCAVE_SCENES, wandcave: WANDCAVE_SCENES, pyramid: PYRAMID_SCENES, sandcave: SANDCAVE_SCENES, the_end: THE_END_SCENES, wizardcave: WIZARDCAVE_SCENES }
+// temples_common.lua 的碎石三池和 wandcave 一模一样,图借 biome_impl/wandcave/ 的
+const SKY_TEMPLE_SCENES = Object.fromEntries(Object.entries(WANDCAVE_SCENES).map(([k, list]) => [k, list.map((s) => (s.name ? { ...s, dir: 'wandcave' } : s))]))
+export const BIOME_SCENES = {
+  coalmine: COALMINE_SCENES, coalmine_alt: COALMINE_ALT_SCENES, excavationsite: EXCAVATIONSITE_SCENES, snowcave: SNOWCAVE_SCENES, snowcastle: SNOWCASTLE_SCENES, rainforest: RAINFOREST_SCENES, vault: VAULT_SCENES, crypt: CRYPT_SCENES, liquidcave: LIQUIDCAVE_SCENES, wandcave: WANDCAVE_SCENES, pyramid: PYRAMID_SCENES, sandcave: SANDCAVE_SCENES, the_end: THE_END_SCENES, wizardcave: WIZARDCAVE_SCENES,
+  ...Object.fromEntries(SKY_TEMPLES.map((b) => [b, SKY_TEMPLE_SCENES])),
+}
 /**
  * PixelSpriteComponent 的 props(煤矿木架 / 丛林树 / 金库机器):一张图钉在世界里,anchor 像素对齐实体位置。
  * 原作里是可打可烧的像素(create_box2d_bodies),人能穿过;这里先当背景贴图放(World._buildChunk 把这些生成点换成 bgSprite 布景),不进材质。
@@ -558,7 +575,9 @@ function spawnScene(ctx, biome, func, x, y) {
     if (func === 'load_pixel_scene3') return loadRandomPixelScene(ctx, biome, scenes.g_pixel_scene_03, x, y)
     if (func === 'load_pixel_scene4') return loadRandomPixelScene(ctx, biome, scenes.g_pixel_scene_04, x - 5, y)
   }
-  if (biome === 'wandcave') {
+  if (biome === 'wandcave' || SKY_TEMPLES.includes(biome)) {
+    // temples_common.lua spawn_sign_left/right:LoadPixelScene(sign_left.png, sign_left_visual.png, x−10, y−15)
+    if (func === 'spawn_sign_left' || func === 'spawn_sign_right') return { name: func.slice(6), biome, dir: 'static_tile', x: x - 10, y: y - 15, material: null }
     if (func === 'spawn_items') {
       // wandcave.lua spawn_items:PR(x,y) < 0.47 空;PR(x−11.431, y+10.5257) ≥ 0.725 → wand_altar (x−10, y−17)
       const p2 = new NollaPrng(0)
@@ -878,6 +897,37 @@ const SPAWN_TABLES = {
       g_candles: T([[0.33, 1, 1, 'props/physics_candle_1', 0, 0], [0.33, 1, 1, 'props/physics_candle_2', 0, 0], [0.33, 1, 1, 'props/physics_candle_3', 0, 0]]),
     }
   })(),
+  // ── 整图房间的表(roomMarks.js 的 ROLL 用;_dump-spawn-tables.mjs 抽自各房间 lua)──
+  robot_egg: {
+    g_small_enemies: T([[0.2, 1, 1, 'animals/vault/roboguard', 0, 0], [0.2, 1, 1, 'animals/vault/assassin', 0, 0], [1, 1, 1, 'animals/monk', 0, 0]]),
+    g_big_enemies: T([[1, 1, 1, 'animals/spearbot', 0, 0]]),
+    g_items: T([[0, 0, 0, '', 0, 0], [5, 1, 1, 'items/wand_level_05', 0, 0], [5, 1, 1, 'items/wand_level_05_better', 0, 0], [3, 1, 1, 'items/wand_unshuffle_03', 0, 0], [2, 1, 1, 'items/wand_unshuffle_04', 0, 0]]),
+  },
+  // friend_1~6.lua 同一份表
+  friend: {
+    g_trees: T([[1.5, 1, 1, '', 0, 0], [0.4, 1, 1, 'props/rainforest_tree_01', -10, -113], [0.4, 1, 1, 'props/rainforest_tree_02', 0, 0], [0.4, 1, 1, 'props/rainforest_tree_03', 0, 0], [0.4, 1, 1, 'props/rainforest_tree_04', 0, 0], [0.4, 1, 1, 'props/rainforest_tree_05', 0, 0], [0.4, 1, 1, 'props/rainforest_tree_06', 0, 0]]),
+    g_lamp: T([[1, 1, 1, 'props/physics/lantern_small', 0, 0]]),
+  },
+  // snowcave_secret_chamber / snowcastle_hourglass_chamber / excavationsite_cube_chamber 三份 lua 一样
+  chamber: {
+    g_items: T([[1, 1, 1, 'items/wand_level_03', 0, 0], [1, 1, 1, 'items/wand_unshuffle_02', 0, 0]]),
+    g_skulls: T([[6, 1, 1, '', 0, 0], [1.5, 1, 1, 'props/physics_skull_01', 0, 0], [1.5, 1, 1, 'props/physics_skull_02', 0, 0], [1.5, 1, 1, 'props/physics_skull_03', 0, 0], ...[1, 2, 3, 4, 5, 6].map((i) => [0.5, 1, 1, `props/physics_bone_0${i}`, 0, 0])]),
+    g_lamp: T([[0.25, 1, 1, '', 0, 0], [1, 1, 1, 'props/physics/temple_lantern', 0, 0]]),
+  },
+  snowcastle_cavern: {
+    g_lamp: T([[0.2, 1, 1, '', 0, 0], [0.8, 1, 1, 'props/physics/lantern_small', 0, 0]]),
+    g_props: T([[0.2, 0, 0, '', 0, 0], [0.5, 1, 1, 'props/physics_box_explosive', 0, 0], [0.5, 1, 1, 'props/physics_propane_tank', 0, 0], [0.1, 1, 1, 'props/physics_seamine', 0, -8]]),
+    g_fish: T([[1, 2, 5, 'animals/fish', 0, 0]]),
+  },
+  lavalake_racing: { g_skulls: T([[0.5, 1, 1, '', 0, 0], [0.2, 1, 1, 'props/physics_skull_01', 0, 0], [0.2, 1, 1, 'props/physics_skull_02', 0, 0], [0.2, 1, 1, 'props/physics_skull_03', 0, 0]]) },
+  gourd_room: { g_lamp: T([[1, 1, 1, 'props/physics/lantern_small', 0, 0]]) },
+  watercave: { g_small_enemies: T([[0.1, 0, 0, '', 0, 0], [0.1, 1, 2, 'animals/slimeshooter', 0, 0], [0.1, 1, 2, 'animals/acidshooter', 0, 0], [0.02, 1, 1, 'animals/giantshooter', 0, 0], [0.05, 1, 1, 'animals/lasershooter', 0, 0]]) },
+  lake_statue: {
+    g_fish: T([[1, 1, 1, 'animals/fish', 0, 0], [1, 1, 1, '', 0, 0]]),
+    g_small_animals: T([[1, 1, 1, '', 0, 0], [1, 1, 3, 'animals/deer', 0, 0], [1, 1, 3, 'animals/duck', 0, 0], [1, 1, 1, 'animals/elk', 0, 0], [1, 2, 5, 'animals/sheep', 0, 0], [0.05, 1, 1, 'animals/wolf', 0, 0]]),
+    g_lamp: T([[0.4, 1, 1, '', 0, 0], [0.7, 1, 1, 'props/physics_lantern_small', 0, 0]]),
+  },
+  mountain_tree: { g_egg: T([[0.4, 1, 1, 'items/pickup/egg_worm', 0, 0], [0.02, 1, 1, 'items/pickup/egg_purple', 0, 0]]) },
 }
 
 /** random_from_table:NG+ 不够 / 圣诞限定的行连 total 都不算 */
@@ -1016,6 +1066,24 @@ const SPAWN_FUNCS = {
     spawn_pressureplates: ['g_pressureplates', 0, 0, 0, 0], spawn_scavengers: ['g_scavengers', 0, 0, 0, 0], spawn_scorpions: ['g_scorpions', 0, 0, 4, 4], spawn_bones: ['g_bones', 0, -12, 4, 4],
   },
 }
+// 表名以 '=' 开头 = 不掷表直接 EntityLoad 一只(temples_common.lua / rainforest spawn_dragonspot / pyramid spawn_boss_limbs_trigger 这种一行 EntityLoad 的函数)
+SPAWN_FUNCS.rainforest.spawn_dragonspot = ['=dragonspot', 0, 0]
+SPAWN_FUNCS.pyramid.spawn_boss_limbs_trigger = ['=boss_limbs_trigger', 0, 0]
+for (const b of SKY_TEMPLES) {
+  SPAWN_FUNCS[b] = {
+    ...SPAWN_FUNCS_DEFAULT, spawn_props: ['g_props', 0, -3, 0, 0], spawn_cloud_trap: ['g_cloud_trap', -5, -10, 4, 4],
+    spawn_boss: ['=boss_sky', 0, 0], spawn_boss_phase2_marker: ['=boss_sky_phase2_marker', 7, 0], spawn_potion_mimic_empty: ['=mimic_potion', 0, 0], spawn_potion_mimic: ['=potion_mimic', 0, 0],
+    spawn_book_barren: ['=book_barren', 0, -5], spawn_potion_beer: ['=potion_beer', 0, -5], spawn_potion_milk: ['=potion_milk', 0, -5], spawn_scorpion: ['=scorpion_watchtower', 0, 0],
+    spawn_fish_many: ['=fish_many', 0, 0], spawn_small_enemies2: ['g_small_enemies', 0, 0, 4, 4], spawn_big_enemies2: ['g_big_enemies', 0, 0, 4, 4],
+  }
+  SPAWN_TABLES[b] = {
+    g_props: SPAWN_TABLES.wandcave.g_props, g_cloud_trap: SPAWN_TABLES.wandcave.g_cloud_trap,
+    // watchtower.lua(只有瞭望塔注册了 aaff00 / ffaa00):拾荒者营地那套(圣诞行略)
+    g_small_enemies: T([[0.2, 0, 0, '', 0, 0], [0.1, 1, 2, '', 0, 0, { g: ['animals/scavenger_grenade', 'animals/scavenger_smg'] }], [0.1, 1, 2, '', 0, 0, { g: [{ e: 'animals/scavenger_grenade', min: 1, max: 2 }, { e: 'animals/scavenger_smg', min: 0, max: 2 }] }], [0.1, 1, 1, 'animals/sniper', 0, 0], [0.1, 1, 2, 'animals/miner', 0, 0], [0.1, 1, 2, 'animals/shotgunner', 0, 0], [0.05, 1, 2, 'animals/tank', 0, 0], [0.01, 1, 2, 'animals/tank_rocket', 0, 0], [0.002, 1, 2, 'animals/tank_super', 0, 0], [0.04, 1, 1, 'animals/scavenger_heal', 0, 0], [0.1, 1, 1, 'animals/tank_super', 0, 0, { ng: 1 }], [0.1, 1, 1, 'animals/scavenger_leader', 0, 0, { ng: 2 }], [0.1, 1, 1, '', 0, 0, { g: [{ e: 'animals/scavenger_grenade', min: 0, max: 1 }, { e: 'animals/scavenger_smg', min: 1, max: 2 }, { e: 'animals/coward', min: 0, max: 1 }] }], [0.1, 1, 1, 'animals/shotgunner_hell', 0, 0, { ng: 1 }], [0.1, 1, 1, 'animals/sniper_hell', 0, 0, { ng: 2 }]]),
+    g_big_enemies: T([[0.3, 0, 0, '', 0, 0], [0.1, 1, 1, '', 0, 0, { g: ['animals/scavenger_leader', { e: 'animals/scavenger_grenade', min: 1, max: 3 }, { e: 'animals/scavenger_smg', min: 1, max: 3 }] }], [0.1, 1, 1, '', 0, 0, { g: ['animals/scavenger_leader', { e: 'animals/scavenger_grenade', min: 1, max: 2 }, { e: 'animals/scavenger_smg', min: 1, max: 2 }, { e: 'animals/coward', min: 1, max: 2 }], ng: 1 }], [0.1, 1, 1, 'animals/tank', 0, 0], [0.03, 1, 1, 'animals/tank_rocket', 0, 0], [0.04, 1, 1, 'animals/scavenger_heal', 0, 0], [0.005, 1, 1, 'animals/tank_super', 0, 0], [0.02, 1, 1, '', 0, 0, { g: ['animals/scavenger_clusterbomb', { e: 'animals/scavenger_grenade', min: 1, max: 3 }, { e: 'animals/scavenger_smg', min: 1, max: 3 }, { e: 'animals/scavenger_heal', min: 1, max: 1 }] }], [0.04, 1, 1, '', 0, 0, { g: ['animals/coward', { e: 'animals/scavenger_grenade', min: 1, max: 2 }, { e: 'animals/scavenger_smg', min: 1, max: 2 }] }], [0.05, 1, 1, 'buildings/hpcrystal', 0, 0, { ng: 1 }], [0.075, 1, 1, 'animals/necrobot', 0, 0, { ng: 2 }], [0.04, 1, 1, 'animals/necrobot_super', 0, 0, { ng: 3 }]]),
+  }
+  LAMP[b] = LAMP.wandcave
+}
 /**
  * spawn 函数体里 spawn() 之前的门控(返回 false = 这个标记什么都不出):
  *   excavationsite 小怪/大怪:r = PR(x,y) 与 BiomeMapGetVerticalPositionInsideBiome(群系内纵向 0~1)比,越往下越多
@@ -1071,6 +1139,13 @@ export function collectSpawns(layer, ctx) {
         const r = func === 'spawn_chest' ? 0.5 : prng.ProceduralRandom(ws, mx, my0)
         if (r > 0.7) out.push({ entity: 'heart', x: mx, y: my0, func })
         else if (r > 0.3) out.push({ entity: 'chest_random', x: mx, y: my0, func })
+        continue
+      }
+      // '=实体':一行 EntityLoad(x+dx, y+dy);fish_many = temples_common spawn_fish_many 的 10 条鱼(x + (PR(x,y)−0.5)×20, y + 80 + i×10)
+      if (spec[0][0] === '=') {
+        const ent = spec[0].slice(1)
+        if (ent === 'fish_many') { const r = prng.ProceduralRandom(ws, mx, my0) - 0.5; for (let i = 1; i <= 10; i++) out.push({ entity: 'fish', x: mx + r * 20, y: my0 + 80 + i * 10, func }) }
+        else out.push({ entity: ent, x: mx + spec[1], y: my0 + spec[2], func })
         continue
       }
       const table = tables[spec[0]]

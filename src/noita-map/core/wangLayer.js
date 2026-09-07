@@ -122,6 +122,31 @@ export function generateRegionLayer(o) {
   }
 }
 
+/**
+ * static_tile="1" 的群系(biome_impl/static_tile/biome_*.xml:天空神殿 ×4 / 沙漠瞭望塔):不拼砖,wang_template_file 指的 *_fg.png 本身就是
+ * 这片区域的 wang 层(黑 = 空、白 / 灰 = 材质带、彩色 = temples_common.lua 的标记),按 wang_map_width/height 从区域左上铺进去,图外全黑。
+ * 输出和 generateRegionLayer 同形(4 行 padding、originX/Y、validChunks),后面 materialize / collectScenes / collectSpawns 一行不改。
+ * @param {{biome:string, points:Array, bbox:number[], tile:{rgb:Uint8Array,width:number,height:number}, wangFile:string}} o
+ */
+export function generateStaticTileLayer(o) {
+  const { biome, points, bbox, tile, wangFile } = o
+  const { width: mapW, height: mapH } = mapDimensions(bbox)
+  const outH = mapH + 4
+  const buffer = new Uint8Array(mapW * outH * 3)
+  const W = Math.min(mapW, tile.width), H = Math.min(mapH, tile.height)
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const si = (y * tile.width + x) * 3, di = ((y + 4) * mapW + x) * 3
+    buffer[di] = tile.rgb[si]; buffer[di + 1] = tile.rgb[si + 1]; buffer[di + 2] = tile.rgb[si + 2]
+  }
+  const [minCX, minCY] = bbox
+  const origin = correctedOrigin(minCX, minCY)
+  return {
+    biome, wangFile, buffer, mapW, mapH, outH, minChunkX: minCX, minChunkY: minCY, bbox,
+    validChunks: new Set(points.map((p) => p[0] + ',' + p[1])),
+    originX: origin.x, originY: origin.y, w: mapW * TILE, h: mapH * TILE, path: [], rerolls: 0, rooms: [], staticTile: true,
+  }
+}
+
 /** 读 wang 像素(自动跳过 4 行 padding);越界返回 -1 */
 export function wangAt(layer, tx, ty) {
   if (tx < 0 || ty < 0 || tx >= layer.mapW || ty >= layer.mapH) return -1

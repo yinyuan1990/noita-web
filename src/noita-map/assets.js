@@ -98,7 +98,13 @@ export class NoitaAssets {
       for (let i = 0; i < img.width * img.height; i++) {
         rgb[i * 3] = img.data[i * 4]; rgb[i * 3 + 1] = img.data[i * 4 + 1]; rgb[i * 3 + 2] = img.data[i * 4 + 2]
       }
-      const ts = WangTileset.fromRGB(rgb, img.width, img.height)
+      // static_tile 群系(天空神殿 / 瞭望塔):*_fg.png 不是砖库,本身就是那片区域的 wang 层(1px = 10 世界像素),原样交给 generateStaticTileLayer;
+      // 同名 *_bg.png 是 static_tile_bg_mask(白 = 这格后面有群系背景墙,黑 = 露天空)
+      let ts
+      if (wangFile.startsWith('static_tile/')) {
+        const bgMask = await this.decodePng(`${this.base}/scenes/${wangFile.replace(/_fg\.png$/, '_bg.png')}`).catch(() => null)
+        ts = { staticTile: true, rgb, width: img.width, height: img.height, bgMask }
+      } else ts = WangTileset.fromRGB(rgb, img.width, img.height)
       this.tilesets.set(wangFile, ts)
       return ts
     })
@@ -119,7 +125,7 @@ export class NoitaAssets {
       const [mat, visual, bg] = await Promise.all([
         this.decodePng(`${url}.png`).catch(() => null),
         visualName === '' ? null : this.decodePng(`${this.base}/scenes/${dir}/${visualName || name + '_visual'}.png`).catch(() => null),
-        this.decodePng(`${this.base}/scenes/${dir}/${bgName || name + '_background'}.png`).catch(() => null),
+        bgName === '' ? null : this.decodePng(`${this.base}/scenes/${dir}/${bgName || name + '_background'}.png`).catch(() => null),
       ])
       const sc = mat ? { w: mat.width, h: mat.height, mat, visual, bg } : null
       this.scenes.set(key, sc)

@@ -150,6 +150,15 @@ export class ChunkPainter {
       const offX = ((ax0 % bw) + bw) % bw, offY = ((ay0 % bh) + bh) % bh
       for (let y = -offY; y < CHUNK; y += bh) for (let x = -offX; x < CHUNK; x += bw) ctx.drawImage(bg.image, x, y)
       ctx.fillStyle = `rgba(0,0,0,${1 - dim})`; ctx.fillRect(0, 0, CHUNK, CHUNK)
+      // static_tile 群系(天空神殿)的 static_tile_bg_mask:蒙版为黑的 8px 块把背景墙抠掉露天空(按行合并成条)
+      if (chunk.bgMask) {
+        const M = chunk.bgMask
+        for (let bj = 0; bj < 64; bj++) for (let bi = 0; bi < 64;) {
+          if (M[bj * 64 + bi]) { bi++; continue }
+          let e = bi; while (e < 64 && !M[bj * 64 + e]) e++
+          ctx.clearRect(bi * 8, bj * 8, (e - bi) * 8, 8); bi = e
+        }
+      }
     } else if (!openSky) { ctx.fillStyle = '#161210'; ctx.fillRect(0, 0, CHUNK, CHUNK) }
     // ② 背景贴图(LoadBackgroundSprite:挖掘场的塔 / 横梁 / 机械,z 大的先画在最后面)→ 布景 _background(圣山雕像柱廊 / 油罐后墙 / 山洞大厅),只在空气处露出来
     const bgSprites = chunk.scenes.filter((sc) => sc.bgSprite).sort((a, b) => (b.z || 0) - (a.z || 0))

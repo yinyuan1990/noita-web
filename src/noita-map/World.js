@@ -9,13 +9,13 @@
 import { CHUNK, TILE, WANG_SAMPLE_OFFSET, BIOME_MAP_W, BIOME_MAP_H, WORLD_CENTER_CHUNK_X, WORLD_CENTER_CHUNK_Y, absToWangX, absToWangY } from './core/coords.js'
 import { wangJitter, simplex2 } from './core/noitaNoise.js'
 import { BIOMES, NOISE_EDGE_BIOMES, biomeNameOf, findBiomeRegions } from './core/biomes.js'
-import { generateRegionLayer, wangAt } from './core/wangLayer.js'
+import { generateRegionLayer, generateStaticTileLayer, wangAt } from './core/wangLayer.js'
 import { collectScenes, collectLights, collectSpawns, collectVines, rollSpawn, ALL_MARK_COLORS, BIOME_SCENES, BIOME_FIXED_SCENES, PIXEL_SPRITES, SCENE_PROPS, sceneDir } from './core/scenes.js'
 import { BandResolver } from './core/bands.js'
 import { valueNoise } from './core/noise.js'
 import { NollaPrng } from './core/NollaPrng.js'
 import { staticScenesFor, STATIC_SCENE_INIT, STATIC_DECOR_MARKS, STATIC_VINES, VINE_POOL, splicedScenesIn } from './core/staticScenes.js'
-import { scanTempleMarks, TEMPLE_MARK_BIOMES, TEMPLE_MARK_COLORS } from './core/templeMarks.js'
+import { scanSceneMarks, ROOM_MARK_BIOMES, ROOM_MARK_COLORS } from './core/roomMarks.js'
 
 // 整图布景最多向右/下伸出 2 个 chunk(hall_bottom_2 x+552、altar_right_extra y+542)
 const STATIC_REACH = 2
@@ -127,10 +127,12 @@ export class NoitaWorld {
     const ts = this.assets.tileset(b.wang)
     if (!ts) return null
     const t0 = performance.now()
-    const layer = generateRegionLayer({
-      biome: def.biome, points: def.points, bbox: def.bbox, tileset: ts, wangFile: b.wang,
-      overlay: this.assets.overlay, seed: this.seed, ngPlus: this.ng, randomColors: b.randomColors || null,
-    })
+    const layer = ts.staticTile
+      ? generateStaticTileLayer({ biome: def.biome, points: def.points, bbox: def.bbox, tile: ts, wangFile: b.wang })
+      : generateRegionLayer({
+        biome: def.biome, points: def.points, bbox: def.bbox, tileset: ts, wangFile: b.wang,
+        overlay: this.assets.overlay, seed: this.seed, ngPlus: this.ng, randomColors: b.randomColors || null,
+      })
     if (!layer) return null
     layer.scenes = collectScenes(layer, {
       seed: this.seed, ng: this.ng,
@@ -164,20 +166,23 @@ export class NoitaWorld {
    * 产出的附加布景(商店第二排)追加进所属 chunk 的整图布景表,之后 _buildChunk 一起盖章。
    */
   async _scanStaticMarks(near) {
-    const jobs = []
-    for (const sc of near) {
-      if (sc.marks || !TEMPLE_MARK_BIOMES.has(sc.biome)) continue
-      const s = this.assets.scene(sc.dir, sc.name)
-      if (!s?.mat) continue
-      sc.marks = scanTempleMarks(s.mat, sc, this.seed + this.ng, this.globals)
-      const list = this.staticScenes.get(sc.owner)
+    const pending = [...near]
+    while (pending.length) {
+      const sc = pending.shift()
+      // 整图房间 / 圣山:布景所属群系有表;spliced 大图(boss_arena / lake_statue / tree / gourd_room / watercave …)按像素所在群系查,整张都扫
+      if (sc.marks || !(sc.biome === 'spliced' || ROOM_MARK_BIOMES.has(sc.biome))) continue
+      const s = this.assets.scene(sc.dir, sc.name) || await this.assets.loadScene(sc.dir, sc.name, sc.visual, sc.bgName, sc.matName)
+      if (!s?.mat) { sc.marks = { spawns: [], lights: [], extra: [] }; continue }
+      sc.marks = scanSceneMarks(s.mat, sc, { ws: this.seed + this.ng, ng: this.ng, globals: this.globals, biomeAtWorld: (x, y) => this.biomeAtWorld(x, y) })
+      // 标记产出的附加布景(商店第二排 / 水洞随机布局):挂回所属 chunk 的表;spliced 的没有 owner,进全局附加表。附加布景自己也可能带标记(watercave_layout_N 的心),排队再扫
+      const list = sc.owner ? this.staticScenes.get(sc.owner) : (this.splicedExtra ||= [])
       for (const ex of sc.marks.extra) {
-        const e = { ...ex, biome: sc.biome, material: null, colorMaterial: null, func: 'mark', owner: sc.owner, marks: { spawns: [], lights: [], extra: [] } }
+        const e = { ...ex, biome: sc.biome === 'spliced' ? this.biomeAtWorld(ex.x, ex.y) || sc.biome : sc.biome, material: null, colorMaterial: null, func: 'mark', owner: sc.owner }
         if (list) list.push(e)
-        jobs.push(this.assets.loadScene(e.dir, e.name))
+        await this.assets.loadScene(e.dir, e.name, e.visual, e.bgName, e.matName)
+        pending.push(e)
       }
     }
-    await Promise.all(jobs)
   }
 
   /** 可能盖到该 chunk 的整图布景(来自邻近 chunk 的 init) */
@@ -188,13 +193,15 @@ export class NoitaWorld {
     // 全局固定布景(巨树 / 熔岩湖 / 水洞…):不属于任何 chunk 的 init,按包围盒挑
     const wx0 = (cx - WORLD_CENTER_CHUNK_X) * CHUNK, wy0 = (cy - WORLD_CENTER_CHUNK_Y) * CHUNK
     out.push(...splicedScenesIn(wx0, wy0, wx0 + CHUNK, wy0 + CHUNK))
+    // spliced 大图标记产出的附加布景(水洞随机布局)
+    if (this.splicedExtra) for (const e of this.splicedExtra) { const s = this.assets.scene(e.dir, e.name); if (s && e.x < wx0 + CHUNK && e.x + s.w > wx0 && e.y < wy0 + CHUNK && e.y + s.h > wy0) out.push(e) }
     return out
   }
 
   /** 异步:把该 chunk 需要的砖库 + 布景 PNG 全加载好,并生成层 */
   async prepareChunk(cx, cy) {
     const near = this.staticScenesNear(cx, cy)
-    const jobs = near.map((s) => this.assets.loadScene(s.dir, s.name, s.visual))
+    const jobs = near.map((s) => this.assets.loadScene(s.dir, s.name, s.visual, s.bgName, s.matName))
     // 布景标记色会贴的散件图(草丛整图等)
     for (const s of near) for (const d of Object.values(STATIC_DECOR_MARKS[s.biome] || {})) if (d.kind === 'sprite') jobs.push(this.assets.loadScene(d.dir, d.name))
     // 植被贴图(本 chunk 与下一 chunk 的群系;落点要知道图的尺寸)
@@ -256,6 +263,17 @@ export class NoitaWorld {
       if (layer) this._fillFromWang(mat, layer, ax0, ay0, wx0, wy0, biome)
       else mat.fill(this.M_ROCK)
       if (NOISE_EDGE_BIOMES.has(biome)) this._bleedSurfaceEdges(mat, cx, cy, wx0, wy0)
+      // static_tile 群系的背景蒙版(*_bg.png,1px = 10 世界像素):按 8px 块采样成 64×64,ChunkPainter 只在蒙版为白的地方画群系背景墙,其余露天空
+      const bm = layer?.staticTile ? this.assets.tileset(def.wang)?.bgMask : null
+      if (bm) {
+        const mask = new Uint8Array(64 * 64)
+        for (let bj = 0; bj < 64; bj++) for (let bi = 0; bi < 64; bi++) {
+          const tx = absToWangX(layer, ax0 + bi * 8 + 4), ty = absToWangY(layer, ay0 + bj * 8 + 4)
+          if (tx < 0 || ty < 0 || tx >= bm.width || ty >= bm.height) continue
+          if (bm.data[(ty * bm.width + tx) * 4] > 0x20) mask[bj * 64 + bi] = 1
+        }
+        out.bgMask = mask
+      }
     } else if (kind === 'surface') {
       this._fillSurface(mat, wx0, wy0, biome)
     } else if (kind === 'air') {
@@ -268,6 +286,10 @@ export class NoitaWorld {
       mat.fill(this.M_GOLD)
     } else if (kind === 'scene') {
       // 整图布景群系:底是空气,形状全由 init() 放的大图给(下面盖章)
+    } else if (kind === 'solid' && def?.fill) {
+      // coarse_map_force_terrain + _EMPTY_ 砖(水洞 / 雪窟隧道 / 岩浆竖井 / 龙穴 …):整块先按该群系 xml 的材质带填实,再由 init() / spliced 整图挖出房间
+      if (this.bands.xml(biome)) { for (let j = 0; j < CHUNK; j++) for (let i = 0; i < CHUNK; i++) mat[j * CHUNK + i] = this.bands.pick(biome, wx0 + i, wy0 + j) }
+      else mat.fill(this.mats.id(def.fill) > 0 ? this.mats.id(def.fill) : this.M_ROCK)
     } else {
       mat.fill(this.M_ROCK)
     }
@@ -295,18 +317,21 @@ export class NoitaWorld {
     out.lights = []
     // 实体生成点(敌人 / 物理道具):落在本 chunk 内的,主线程首次拿到该 chunk 时实例化一次
     out.spawns = []
-    for (const layer of this.layers.values()) for (const s of layer.spawns || []) {
+    // 生成点来源:wang 层标记 + 整图 / spliced 布景里的标记(圣山灯 / 商店 / 特权 / 传送门 / 碎石,房间里的 boss / 宝珠 / 书 …)
+    const nearMarks = this.staticScenesNear(cx, cy).filter((sc) => sc.marks)
+    const allSpawns = () => { const a = []; for (const layer of this.layers.values()) if (layer.spawns) a.push(...layer.spawns); for (const sc of nearMarks) a.push(...sc.marks.spawns); return a }
+    for (const s of allSpawns()) {
       if (s.x >= wx0 && s.x < wx0 + CHUNK && s.y >= wy0 && s.y < wy0 + CHUNK) out.spawns.push(s)
     }
     // PixelSprite props(煤矿木架 / 丛林树 / 金库机器):不是实体,当背景贴图钉在 (x - anchor) 处;图可能伸进邻 chunk,所以邻近 chunk 的生成点也要看
-    for (const layer of this.layers.values()) for (const s of layer.spawns || []) {
+    for (const s of allSpawns()) {
       const ps = PIXEL_SPRITES[s.entity]
       if (!ps) continue
       const img = this.assets.scene('props', ps.img)
       if (!img) continue
       const sx = s.x - ps.ax, sy = s.y - ps.ay
       if (sx >= wx0 + CHUNK || sy >= wy0 + CHUNK || sx + img.w <= wx0 || sy + img.h <= wy0) continue
-      out.scenes.push({ dir: 'props', name: ps.img, biome: layer.biome, x: sx, y: sy, ax: sx + WORLD_CENTER_CHUNK_X * CHUNK, ay: sy + WORLD_CENTER_CHUNK_Y * CHUNK, w: img.w, h: img.h, bgSprite: true, z: 30, func: 'pixelsprite', material: null, colorMaterial: null })
+      out.scenes.push({ dir: 'props', name: ps.img, biome, x: sx, y: sy, ax: sx + WORLD_CENTER_CHUNK_X * CHUNK, ay: sy + WORLD_CENTER_CHUNK_Y * CHUNK, w: img.w, h: img.h, bgSprite: true, z: 30, func: 'pixelsprite', material: null, colorMaterial: null })
     }
     out.spawns = out.spawns.filter((s) => !PIXEL_SPRITES[s.entity] && s.entity !== 'physics_hanging_wire') // 吊线走 _wireDecor
     // 布景图里的标记像素:法杖祭坛 wand_altar.png 的 0x50a0f0 @(10,3) → spawn_wands → spawn(g_items, x-5, y, 0, 0)
@@ -320,12 +345,8 @@ export class NoitaWorld {
     for (const layer of this.layers.values()) for (const l of layer.lights) {
       if (l.x >= wx0 - 64 && l.x < wx0 + CHUNK + 64 && l.y >= wy0 - 64 && l.y < wy0 + CHUNK + 64) out.lights.push(l)
     }
-    // 圣山整图布景的标记(灯 / 商店 / 特权 / 传送门 / 碎石)
-    for (const sc of this.staticScenesNear(cx, cy)) {
-      if (!sc.marks) continue
-      for (const s of sc.marks.spawns) if (s.x >= wx0 && s.x < wx0 + CHUNK && s.y >= wy0 && s.y < wy0 + CHUNK) out.spawns.push(s)
-      for (const l of sc.marks.lights) if (l.x >= wx0 - 64 && l.x < wx0 + CHUNK + 64 && l.y >= wy0 - 64 && l.y < wy0 + CHUNK + 64) out.lights.push(l)
-    }
+    // 整图布景标记里的光源(圣山灯)
+    for (const sc of nearMarks) for (const l of sc.marks.lights) if (l.x >= wx0 - 64 && l.x < wx0 + CHUNK + 64 && l.y >= wy0 - 64 && l.y < wy0 + CHUNK + 64) out.lights.push(l)
     return out
   }
 
@@ -672,7 +693,7 @@ export class NoitaWorld {
             const r = c >> 16, g = (c >> 8) & 255, b = c & 255
             // 白/亮灰 = 群系材质带(和 wang 白一样);暗灰 = 空;标记色 = 空;其他未知色跳过
             if (r === g && g === b) m = r < 0x80 ? 0 : this.bands.pick(bandBiome, wx0 + ox + x, wy0 + oy + y)
-            else if (ALL_MARK_COLORS.has(c) || TEMPLE_MARK_COLORS.has(c)) m = 0
+            else if (ALL_MARK_COLORS.has(c) || ROOM_MARK_COLORS.has(c)) m = 0
             else continue
           }
         }

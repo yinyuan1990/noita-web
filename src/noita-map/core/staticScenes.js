@@ -8,6 +8,13 @@ import { NollaPrng } from './NollaPrng.js'
 const M = (name, dx, dy, visual) => ({ dir: 'mountain', name, x: dx, y: dy, visual })
 const T = (name, dx, dy, visual) => ({ dir: 'temple', name, x: dx, y: dy, visual })
 const P = (name, dx, dy, visual) => ({ dir: 'pyramid', name, x: dx, y: dy, visual })
+/**
+ * biome_impl 根目录的整图(scenes/general/):o.visual / o.bgName 缺省 = <name>_visual / <name>_background,'' = 明确没有;
+ * o.matName = 材质图另有其名(同一张 essenceroom.png 配不同背景时 name 只当缓存键)
+ */
+const G = (name, dx = 0, dy = 0, o = {}) => ({ dir: 'general', name, x: dx, y: dy, ...o })
+const ESSENCE_WD = G('essenceroom_wd', 0, 0, { matName: 'essenceroom', visual: 'essenceroom_visual', bgName: 'essenceroom_background_with_diamond' })
+const ESSENCE_D = G('essenceroom_d', 0, 0, { matName: 'essenceroom', visual: 'essenceroom_visual', bgName: 'essenceroom_background_diamond' })
 
 /** temple_altar_top_shared.lua spawn_altar_top */
 function altarTop(seed, x, y, isSolid) {
@@ -50,15 +57,62 @@ export const STATIC_SCENE_INIT = {
   pyramid_right: () => [P('right_bottom', 512 - 61, 512, ''), P('right', 0, 0, '')],
   pyramid_top: () => [P('right_bottom', 512 - 61, 512, ''), P('left_bottom', 0, 512, ''), P('top', 0, 0)],
   // snowcave.lua init(x, y, w, h):全群系 8 只雕像手,位置 ProceduralRandomi(109, i*53, -2350..2350) / (111, i*2.9, 3140..4500),落在本 chunk 的才放
-  snowcave: (seed, x, y) => {
-    const prng = new NollaPrng(0), out = []
-    for (let i = 1; i <= 8; i++) {
-      const px = prng.ProceduralRandomi(seed, 109, i * 53, -2350, 2350)
-      const py = prng.ProceduralRandomi(seed, 111, i * 2.9, 3140, 4500)
-      if (px >= x && px <= x + 512 && py >= y && py <= y + 512) out.push({ dir: 'snowcave', name: 'statue_hand', x: px - 22 - x, y: py - 22 - y })
-    }
-    return out
+  snowcave: statueHands,
+  snowcave_tunnel: statueHands, // snowcave_tunnel.xml 的 lua_script 也是 snowcave.lua
+  // ── 单 chunk 整图房间(各 biome lua 的 init(x, y):LoadPixelScene(材质图, 手绘图, x, y, 背景图)),2026-09-07 全境补齐 ──
+  // 宝珠室 ×8:orbroom.png + orbroom_visual + orbroom_background
+  ...Object.fromEntries(['02', '04', '05', '06', '07', '08', '09', '10'].map((n) => ['orbroom_' + n, () => [G('orbroom')]])),
+  // 精华室:同一张 essenceroom.png,背景分 with_diamond / diamond 两种;essenceroom_alc 用 essenceroom_submerged.png(水淹)
+  essenceroom: () => [ESSENCE_WD], essenceroom_hell: () => [ESSENCE_WD], gun_room: () => [ESSENCE_WD], solid_wall_tower_10: () => [ESSENCE_WD],
+  essenceroom_alc: () => [G('essenceroom_submerged', 0, 0, { visual: 'essenceroom_visual', bgName: 'essenceroom_background_with_diamond' })],
+  essenceroom_air: () => [ESSENCE_D], rock_room: () => [ESSENCE_D], moon_room: () => [ESSENCE_D],
+  mystery_teleport: () => [G('mystery_teleport', 0, 0, { visual: '', bgName: 'essenceroom_background' })],
+  song_room: () => [G('alchemist_secret_music', 0, 0, { bgName: '' })],
+  ocarina: () => [G('ocarina', 0, 0, { visual: '', bgName: '' })],
+  alchemist_secret: () => [G('alchemist_secret', 0, 0, { bgName: '' })],
+  secret_lab: () => [G('secret_lab')], mestari_secret: () => [G('secret_lab')], ghost_secret: () => [G('secret_lab')],
+  meatroom: () => [G('meatroom', 0, 0, { visual: '', bgName: '' })],
+  roboroom: () => [G('roboroom', 0, 0, { visual: '', bgName: '' })],
+  robot_egg: () => [G('robot_egg')],
+  funroom: () => [G('funroom', 0, 0, { visual: '', bgName: '' })],
+  null_room: () => [G('null_room', 0, 0, { bgName: '' })],
+  teleroom: () => [G('teleroom', 0, 0, { visual: '', bgName: '' })],
+  // friend_N.lua:SetRandomSeed(24, 32);Random(1, 6) == N 的那一间是 cavern.png(有标记:友人 / 杀手 / 葫芦 / 树),其余五间 friendroom.png(空屋)
+  ...Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => ['friend_' + n, (seed) => {
+    const prng = new NollaPrng(0); prng.SetRandomSeed(seed, 24, 32)
+    return prng.Random(1, 6) === n ? [G('cavern', 0, 0, { visual: '' })] : [G('friendroom', 0, 0, { visual: '', bgName: '' })]
+  }])),
+  snowcave_secret_chamber: () => [{ dir: 'snowcave', name: 'secret_chamber', x: 0, y: 0, bgName: '' }],
+  snowcastle_hourglass_chamber: () => [{ dir: 'snowcastle', name: 'hourglass_chamber', x: 0, y: 0, visual: '' }],
+  excavationsite_cube_chamber: () => [{ dir: 'excavationsite', name: 'cube_chamber', x: 0, y: 0 }],
+  // snowcastle_cavern.lua:is_right = ProceduralRandom(0,0) > 0.5;|x| > 10000 不放;右边那间 (x−50, y) / 左边那间 (x+50, y)
+  snowcastle_cavern: (seed, x) => {
+    if (x > 10000 || x < -10000) return []
+    const isRight = new NollaPrng(0).ProceduralRandom(seed, 0, 0) > 0.5
+    if (isRight && x > 0) return [{ dir: 'snowcastle', name: 'side_cavern_right', x: -50, y: 0 }]
+    if (!isRight && x < 0) return [{ dir: 'snowcastle', name: 'side_cavern_left', x: 50, y: 0 }]
+    return []
   },
+  wizardcave_entrance: () => [G('wizardcave_entrance')],
+  bridge: () => [{ dir: 'spliced', name: 'bridge', x: 0, y: 0, visual: '', bgName: '' }],
+  // lavalake_pit.lua:y ∈ (2000, 2400) 的那一格用裂开的版本
+  lavalake_pit: (seed, x, y) => [G(y > 2000 && y < 2400 ? 'lavalake_pit_cracked' : 'lavalake_pit', 0, 0, { visual: '', bgName: '' })],
+  lavalake_racing: () => [G('lavalake_racing', 0, 0, { visual: '' })],
+  dragoncave: () => [G('dragoncave')],
+  boss_victoryroom: () => [G('boss_victoryroom')],
+  // temple_altar_right_snowcastle.lua:spawn_altar_top + altar_right_snowcastle.png @ (x, y−40+300),手绘 / 背景借 altar_right 的
+  temple_altar_right_snowcastle: (seed, x, y) => [...altarTop(seed, x, y, false), { dir: 'temple', name: 'altar_right_snowcastle', x: 0, y: 260, visual: 'altar_right_visual', bgName: 'altar_right_background' }],
+}
+
+/** snowcave.lua init(x, y, w, h):全群系 8 只雕像手,位置 ProceduralRandomi(109, i*53, -2350..2350) / (111, i*2.9, 3140..4500),落在本 chunk 的才放 */
+function statueHands(seed, x, y) {
+  const prng = new NollaPrng(0), out = []
+  for (let i = 1; i <= 8; i++) {
+    const px = prng.ProceduralRandomi(seed, 109, i * 53, -2350, 2350)
+    const py = prng.ProceduralRandomi(seed, 111, i * 2.9, 3140, 4500)
+    if (px >= x && px <= x + 512 && py >= y && py <= y + 512) out.push({ dir: 'snowcave', name: 'statue_hand', x: px - 22 - x, y: py - 22 - y })
+  }
+  return out
 }
 
 /**

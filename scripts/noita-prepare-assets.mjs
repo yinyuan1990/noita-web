@@ -179,6 +179,15 @@ for (const b of SCENE_BIOMES) {
   if (n) console.log(`scenes/${b}: ${n}`)
 }
 console.log(`scenes/general: ${copyDir(`${UNPACKED}/biome_impl`, `${OUT}/scenes/general`)}`)
+// 天空神殿 / 瞭望塔(static_tile):*_fg.png 当 wang 层进 wang/static_tile/,其余(bg 蒙版 / 提示背景 / 路牌)当布景进 scenes/static_tile/
+fs.mkdirSync(`${OUT}/wang/static_tile`, { recursive: true })
+fs.mkdirSync(`${OUT}/scenes/static_tile`, { recursive: true })
+let nSt = 0
+for (const f of fs.readdirSync(`${UNPACKED}/biome_impl/static_tile/temples-assets`)) {
+  if (!f.endsWith('.png')) continue
+  fs.copyFileSync(`${UNPACKED}/biome_impl/static_tile/temples-assets/${f}`, `${OUT}/${f.endsWith('_fg.png') ? 'wang' : 'scenes'}/static_tile/${f}`); nSt++
+}
+console.log(`static_tile: ${nSt}`)
 // spliced/skull_in_desert 是唯一不走 _*.bat 切片、直接放子目录整图的(_pixel_scenes.xml → skull_in_desert/1.png @ 7100,-100)
 for (const [src, dst] of [['skull_in_desert/1.png', 'skull_in_desert.png'], ['skull_in_desert/1_visual.png', 'skull_in_desert_visual.png']]) {
   if (fs.existsSync(`${UNPACKED}/biome_impl/spliced/${src}`)) fs.copyFileSync(`${UNPACKED}/biome_impl/spliced/${src}`, `${OUT}/scenes/spliced/${dst}`)
@@ -213,9 +222,13 @@ const spriteInfo = (xmlPath) => {
   return { image: path.basename(sp.filename || ''), offX: +(sp.offset_x || 0), offY: +(sp.offset_y || 0), fw: +(ra.frame_width || 0), fh: +(ra.frame_height || 0), frames: +(ra.frame_count || 1) }
 }
 const biomesOut = {}
-for (const f of fs.readdirSync(`${UNPACKED}/biome`)) {
-  if (!f.endsWith('.xml')) continue
-  const s = fs.readFileSync(`${UNPACKED}/biome/${f}`, 'utf8')
+// biome/ 下含子目录(orbrooms/ tower/ mountain/)+ 天空神殿的 biome_impl/static_tile/biome_*.xml;键 = 文件名(和 core/biomes.js 的键一致)
+const biomeXmls = [...fs.readdirSync(`${UNPACKED}/biome`, { recursive: true }).map((f) => `${UNPACKED}/biome/${f}`), ...fs.readdirSync(`${UNPACKED}/biome_impl/static_tile`).map((f) => `${UNPACKED}/biome_impl/static_tile/${f}`)]
+for (const fp of biomeXmls) {
+  const f = path.basename(fp)
+  if (!f.endsWith('.xml') || !fs.statSync(fp).isFile()) continue
+  const s = fs.readFileSync(fp, 'utf8')
+  if (!/<Topology\b/.test(s)) continue
   const veg = []
   for (const m of s.matchAll(/<VegetationComponent\b([^>]*)>/g)) {
     const a = attrsOf(m[1])
