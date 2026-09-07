@@ -142,6 +142,9 @@ const player = {
 }
 // 自由模式(FREE,默认开,?free=0 关):法术全开(背包里有整个法术库、随处改法杖)、法力 / 次数无限 —— 玩家要的是玩材质效果,不是攒资源
 const FREE = Q.get('free') !== '0'
+const GOD = Q.get('god') === '1' // 测地图:不掉血、不淹死
+// ?loadout=fast:探图预设四根杖(开路 / 传送 / 黑洞 / 陨石),开局直接替换掉背包里的法杖(存档里的也替),数值见 FAST_LOADOUT
+const LOADOUT = Q.get('loadout') || ''
 const flags = { editAnywhere: FREE, wandSlots: FREE ? 8 : 4 } // 特权开的开关 / 倍率(Perks.js EFFECTS 写,各处读);自由模式 8 根杖 / 每杖 20 格
 const bubbles = [] // 水下呼吸气泡(particles/gas_bubble:向上加速 -200、最快 90,出水面即破)
 // 碰撞盒采样点:两侧竖线各取 4 个高度(含顶/底);顶 / 底两行整行采样 —— 只测两个角的话,树尖 / 一根细枝正好落在两角之间会穿下去(用户:站树顶往下陷)
@@ -841,6 +844,7 @@ function ignitePlayer() {
 function damagePlayer(dmg, ix = 0, iy = 0, src = '') {
   const noIframe = src === 'black_hole' || src === 'electricity' // 黑洞是每帧按概率的持续伤害;电击(湿身)原版也没有无敌帧 —— 都不吃 0.5s 无敌
   if ((player.iframe > 0 && !noIframe) || dmg <= 0) return
+  if (GOD) return // ?god=1:测地图用,不掉血
   // 特权免伤:PROTECTION_MELEE / PROTECTION_EXPLOSION / PROTECTION_FIRE / PROTECTION_RADIOACTIVITY
   if ((flags.protMelee && src === 'melee') || (flags.protExplosion && src === 'explosion') || (flags.protFire && src === 'fire') || (flags.protRadioactive && /radioactive/.test(src))) return
   dmg *= effectMul.dmgIn // 喝了无敌药 0 / 虚弱药 ×2
@@ -1001,6 +1005,25 @@ function loadGame() {
 }
 const loaded = loadGame()
 if (loaded) setTimeout(() => toast(`继续上次:深度 ${Math.max(0, player.y | 0)} · 金 ${player.gold} · ${player.wands.length} 根法杖(重开一局请死亡后选"重开")`, 6), 900)
+// ── 探图预设 ?loadout=fast:四根杖替掉背包(存档带回来的也替),法力无限(自由模式)──
+//   1 开路:挖掘爆破 ×3 一发三连(每发 r 挖石 durability≤10,钢 / 神殿砖挖不动)延迟 2 帧 → 按住就是一条隧道
+//   2 传送:传送魔弹(打到哪人到哪,过大坑 / 上山)  3 黑洞:巨大黑洞(r64,什么都吃,神殿砖 / 钢也吃)  4 陨石(r45 炸开一片)
+const FAST_LOADOUT = [
+  { name: '开路', cards: ['POWERDIGGER', 'POWERDIGGER', 'POWERDIGGER'], actionsPerRound: 3, fireRateWait: 2, reloadTime: 0, spread: 4 },
+  { name: '传送', cards: ['TELEPORT_PROJECTILE'], actionsPerRound: 1, fireRateWait: 8, reloadTime: 0, spread: 0 },
+  { name: '黑洞', cards: ['BLACK_HOLE_BIG'], actionsPerRound: 1, fireRateWait: 30, reloadTime: 20, spread: 0 },
+  { name: '陨石', cards: ['METEOR'], actionsPerRound: 1, fireRateWait: 20, reloadTime: 10, spread: 0 },
+]
+if (LOADOUT === 'fast') {
+  player.wands = FAST_LOADOUT.map((L) => {
+    const w = wands.make('starting_wand', 227, -120)
+    Object.assign(w, { name: L.name, cards: L.cards.slice(), actionsPerRound: L.actionsPerRound, fireRateWait: L.fireRateWait, reloadTime: L.reloadTime, spread: L.spread, shuffle: false, manaMax: 9999, manaCharge: 9999, mana: 9999, deckCapacity: Math.max(w.deckCapacity, 8), uses: {} })
+    w.deck = w.cards.slice(); w.reloadT = 0
+    return w
+  })
+  payload = 0
+  setTimeout(() => toast('探图预设:1 开路(挖掘爆破 ×3) 2 传送魔弹 3 巨大黑洞 4 陨石' + (GOD ? ' · 无敌' : ''), 8), 1200)
+}
 function clearSave() { try { localStorage.removeItem(SAVE_KEY) } catch { /* */ } lastSave = '' }
 let saveT = 0
 window.addEventListener('pagehide', () => saveGame('pagehide'))
@@ -1708,7 +1731,7 @@ function step(dt) {
   // 憋气(DamageModel air_needed=1 / air_in_lungs_max=7 / air_lack_of_damage=0.6):头没在液体里 7 秒后开始掉血,出水很快回满;BREATH_UNDERWATER 特权免
   if (headInLiq && !flags.breathUnderwater) {
     player.air = Math.max(0, player.air - dt)
-    if (player.air <= 0) { player.hp -= 0.6 * dt; if (Math.random() < dt * 2) player.hurtFlash = 0.12; if (player.hp <= 0) { player.iframe = 0; damagePlayer(0.001, 0, 0, 'drown') } }
+    if (player.air <= 0 && !GOD) { player.hp -= 0.6 * dt; if (Math.random() < dt * 2) player.hurtFlash = 0.12; if (player.hp <= 0) { player.iframe = 0; damagePlayer(0.001, 0, 0, 'drown') } }
   } else player.air = Math.min(7, player.air + dt * 3)
   sfx.setUnderwater(headInLiq)
   const wasGround = player.onGround
