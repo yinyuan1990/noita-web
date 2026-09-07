@@ -109,6 +109,9 @@ wang 色 → 材质、布景材质层盖章。
   已填(全部):coalmine / coalmine_alt / excavationsite / fungicave / snowcave / snowcastle / rainforest / vault / crypt / liquidcave / wandcave / pyramid(外壳 pyramid_* 是 scene 群系,`STATIC_SCENE_INIT`)/
   sandcave / meat / robobase / the_end / wizardcave。布景条目可带 `dir`(pyramid / the_end 借 crypt 图、sandcave 借 snowcastle 图);`SPAWN_FUNCS` 第 6 项 `jitter` = lua 里 SetRandomSeed 后 Random(−j,j) 挪位(meat spawn_mouth)。
 - 布景条目可带 `visual` / `bgName` / `matName`(手绘层 / 背景层 / 材质图与 name 不同名时;雪城堡 paneling_wall 配 7 张背景就是靶这个),`''` 表示明确没有该层。
+- **整图房间 / 特殊群系(09-07,plan 文档 2.4 第 30 条)**:`core/staticScenes.js STATIC_SCENE_INIT` 覆盖 biome_map 上全部 init() 房间(宝珠室 / 精华室 / 密室 / 友人洞 / 机器蛋室 / 雪城堡侧洞 / 岩浆竖井 …),`core/roomMarks.js` 把任何整图 / spliced 图里的标记像素按**像素所在群系**的 lua 表变成生成点(圣山 / boss_arena / lake_statue / tree / gourd_room / watercave 随机布局都走它);
+  底的规则:`type=BIOME_WANG_TILE` + 空模板 → 空气(黑 = 不改);没 type 没模板 → `kind:'solid', fill:'bands'` 按 xml 材质表填实再由 000042 挖房间。static_tile 群系(天空神殿 ×4 / 瞭望塔)的 `*_fg.png` 直接当 wang 层(`generateStaticTileLayer`),`*_bg.png` 是背景蒙版(`chunk.bgMask`)。`SPAWN_FUNCS` 表名 `=实体` = 直放一只。
+- **Boss** `Bosses.js`(第 31 条):每只 boss 一个 controller,`*run` 生成器 `yield 帧` = lua wait,`every` = execute_every_n_frame;引擎组件 → 实体字段 `bossMove / dmgMul / projImmune / bossAnim / lasers`;`TRIGGERS` 是 dragonspot 这类 "人到半径出 boss" 的建筑。
   lua 里定义成空函数的默认色(fungicave 的 spawn_lamp 等)记在 `EMPTY_FUNCS`,只算标记不出东西。光源按群系查 `LAMP` 表(g_lamp 的空/灯权重、偏移、kind:lantern / tubelamp / torchstand / torch;`lamp2` 是 spawn_lamp2 的另一张表)。
                      `animals/<子目录>/<名>`(rainforest / vault / crypt 的强化版、lukki/ 蜘蛛)实体键带目录前缀(`entKey()`,prepare 脚本同规则),和普通版不混。lifetime=0 的 `*_static` 气(acid_gas_static)在 CellSim 里不飘不散。
 
