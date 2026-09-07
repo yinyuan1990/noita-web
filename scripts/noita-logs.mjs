@@ -23,6 +23,13 @@ if (pos.length) {
   const phys = pos.map((p) => p.phys).filter((v) => v !== undefined)
   const lod = pos.map((p) => p.lod).filter((v) => v !== undefined), lodLow = lod.filter((v) => v > 1).length
   const avg = (k) => (pos.reduce((a, p) => a + (p[k] || 0), 0) / pos.length).toFixed(1)
+  // 渲染分项 r = [世界位图+叠层, 弹丸/特效, 植被+实体+玩家, 光照合成, 最后合成]:取掉帧最厉害那几秒(fps 最低的 5 条)的平均,看渲染慢在哪
+  const withR = pos.filter((p) => Array.isArray(p.r))
+  if (withR.length) {
+    const worst = [...withR].sort((a, b) => a.fps - b.fps).slice(0, 5)
+    const rs = worst[0].r.map((_, k) => (worst.reduce((a, p) => a + p.r[k], 0) / worst.length).toFixed(1))
+    console.log(`最卡的 ${worst.length} 秒(fps ${worst.map((p) => p.fps).join('/')}):渲染分项 世界 ${rs[0]} 特效 ${rs[1]} 实体 ${rs[2]} 光照 ${rs[3]} 合成 ${rs[4]} ms · 碎屑 ${worst.map((p) => p.debris ?? '-').join('/')} 火花 ${worst.map((p) => p.sparks ?? '-').join('/')}`)
+  }
   console.log(`帧率 min ${Math.min(...fps)} avg ${(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(0)}  模拟 avg ${avg('sim')}ms${lod.length ? `(降档 ${lodLow}/${lod.length} 秒,最深 1/${Math.max(...lod)})` : ''} 逻辑 avg ${avg('logic')} 渲染 avg ${avg('render')}${phys.length ? `  物理 avg ${(phys.reduce((a, b) => a + b, 0) / phys.length).toFixed(1)} max ${Math.max(...phys)}ms` : ''}  轨迹 (${pos[0].x},${pos[0].y}) → (${pos[pos.length - 1].x},${pos[pos.length - 1].y})`)
 }
 const show = process.argv[3] === 'all' ? events : events.filter((e) => ['stuck', 'report', 'error', 'open'].includes(e.e))

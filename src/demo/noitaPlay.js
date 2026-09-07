@@ -251,6 +251,19 @@ lighting.sky = new Skylight((wx, wy) => {
 })
 const glowPts = [] // 本帧发光格 [x,y,glow,color,...](视口坐标)
 const glowCells = new Map() // 发光格按 8×8 聚类(render 里复用)
+// CSS 颜色('#rgb' / '#rrggbb' / 'rgb(a)(...)')→ [r,g,b],带缓存;火花直接写像素时用
+const cssCache = new Map()
+function cssRgb(c) {
+  let v = cssCache.get(c)
+  if (v !== undefined) return v
+  v = null
+  let m
+  if ((m = /^#([0-9a-f]{3})$/i.exec(c))) v = [parseInt(m[1][0] + m[1][0], 16), parseInt(m[1][1] + m[1][1], 16), parseInt(m[1][2] + m[1][2], 16)]
+  else if ((m = /^#([0-9a-f]{6})/i.exec(c))) v = [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)]
+  else if ((m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(c))) v = [+m[1], +m[2], +m[3]]
+  cssCache.set(c, v)
+  return v
+}
 let fireCells = 0
 // 液体折射(post_final.frag ENABLE_REFRACTION):有 WebGL 就在放大那一步按屏幕分辩率做(render/Refraction.js,原式 + 亚像素采样,和原版一样);
 // 没有 WebGL 退回世界分辨率的整像素版:wobX/wobY = 本帧每列的 dx / 每行的 dy,wobOx/wobOy = 本帧视口左上世界坐标
@@ -1552,7 +1565,7 @@ $('btnReport').addEventListener('click', async (e) => {
   const cw = curWand()
   oplog.ev('report', {
     x: player.x | 0, y: player.y | 0, box: sampleAround(player.x, player.y, 8, 12), note: 'manual',
-    fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
+    fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
     ents: entities.list.length, bodies: entities.bodies.length, proj: projectiles.list.length, debris: debris.length, chunks: streamer.entries.size,
     wand: cw ? { name: cw.name, cards: cw.cards, potion: cw.potion ? cw.potion.mat : undefined } : null, touch: IS_TOUCH ? 1 : 0,
   })
@@ -1592,7 +1605,7 @@ function step(dt) {
   const inState = dir + (wantUp ? 'U' : '') + (wantFire ? 'F' : '')
   if (inState !== lastInState) { lastInState = inState; oplog.ev('input', { dir, up: wantUp ? 1 : 0, fire: wantFire ? 1 : 0, x: player.x | 0, y: player.y | 0, joy: touch.joy ? [+touch.mx.toFixed(2), +touch.my.toFixed(2)] : undefined }) }
   posLogT += dt
-  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length }) }
+  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length }) }
 
   // ── 身体:Noita CharacterPlatforming 模型 ──
   const f60 = dt * 60 // 以帧为单位的参数换算
@@ -1867,7 +1880,12 @@ function drawStatusIcons(ctx, ox, oy) {
   })
 }
 
+// 渲染分项(平滑 ms):[世界位图 + 材质叠层, 弹丸 / 特效, 植被 + 实体 + 玩家, 光照合成, 最后合成(乘光 / 天空 / 折射放大)] —— 手机上报里看渲染到底慢在哪
+const rPhase = new Float32Array(5)
+const rMark = (k, t) => { const n = performance.now(); rPhase[k] = rPhase[k] * 0.9 + (n - t) * 0.1; return n }
+const rPhaseArr = () => Array.from(rPhase, (v) => +v.toFixed(1))
 function render() {
+  let tp = performance.now()
   const shk = shakeT > 0 ? shakeT * 18 : 0
   const ox = Math.round(cam.x - VW / 2 + (Math.random() - 0.5) * shk), oy = Math.round(cam.y - VH / 2 + (Math.random() - 0.5) * shk)
   // 天空:Noita 原版视差背景(weather_gfx/parallax_* 蒙版 + 昼夜色板),原作只在相机深度 < 512 时画;
@@ -1941,14 +1959,31 @@ function render() {
         }
       }
     }
+    // 碎屑(1px 真材质色)/ 火花直接写进叠层像素:之前每粒一次 fillStyle + fillRect,陨石坑 3000 粒松土 + 600 火花一帧近 4000 次 canvas 调用,Safari 上这就是十几 ms
+    for (const p of debris) {
+      const i = Math.round(p.x - ox), j = Math.round(p.y - oy)
+      if (i < 0 || j < 0 || i >= VW || j >= VH) continue
+      const o = (j * VW + i) * 4, c = p.col
+      d[o] = (c >> 16) & 255; d[o + 1] = (c >> 8) & 255; d[o + 2] = c & 255; d[o + 3] = 255
+    }
+    for (const p of sparks) {
+      const i = Math.round(p.x - ox), j = Math.round(p.y - oy)
+      if (i < 0 || j < 0 || i >= VW || j >= VH) continue
+      const rgb = cssRgb(p.c)
+      if (!rgb) continue
+      const o = (j * VW + i) * 4, al = p.noFade ? 1 : Math.min(1, p.life * 3), a0 = d[o + 3] / 255
+      // alpha-over 到已有像素上(火花半透明地盖在液体 / 沙上)
+      const outA = al + a0 * (1 - al)
+      if (outA <= 0) continue
+      d[o] = (rgb[0] * al + d[o] * a0 * (1 - al)) / outA; d[o + 1] = (rgb[1] * al + d[o + 1] * a0 * (1 - al)) / outA; d[o + 2] = (rgb[2] * al + d[o + 2] * a0 * (1 - al)) / outA; d[o + 3] = outA * 255
+    }
     overlayCv.getContext('2d').putImageData(img, 0, 0)
     vctx.drawImage(overlayCv, 0, 0)
   }
-  // 碎屑:1px 真材质色
-  for (const p of debris) { const c = p.col; vctx.fillStyle = `rgb(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255})`; vctx.fillRect(Math.round(p.x - ox), Math.round(p.y - oy), 1, 1) }
+  tp = rMark(0, tp)
   projectiles.render(vctx, ox, oy)
-  for (const p of sparks) { vctx.fillStyle = p.c; vctx.globalAlpha = p.noFade ? 1 : Math.min(1, p.life * 3); vctx.fillRect(Math.round(p.x - ox), Math.round(p.y - oy), 1, 1) }
   vctx.globalAlpha = 1
+  tp = rMark(1, tp)
   // 灯:wang 标记 spawn_lamp/candles/torch 掷出来的光源,画个小灯笼/蜡烛
   const lamps = []
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
@@ -1982,6 +2017,7 @@ function render() {
   const pw = liquidWobble(player.x, player.y - 4)
   drawPlayer(vctx, ox - (pw ? pw[0] : 0), oy - (pw ? pw[1] : 0))
   if (player.hurtFlash > 0) { vctx.fillStyle = `rgba(255,0,0,${(player.hurtFlash * 1.2).toFixed(2)})`; vctx.fillRect(0, 0, VW, VH) }
+  tp = rMark(2, tp)
   // 光照(反 post_final.frag,见 render/Lighting.js):tex_lights = 所有 LightComponent 按 64×64 光罩蒙版加起来 → ×0.8 → ^1.5 → 加天光(天光从地表一格格渗下来)
   // → ^(1/2.2) → 乘雾(没探索过的全黑,探索过没光的留 ≈0.29 暖灰)→ multiply 到前景。没有"环境光"这回事:地下亮不亮只看有没有灯 / 探索过没有
   lighting.begin(VW, VH)
@@ -2010,6 +2046,7 @@ function render() {
   for (const p of temple.portals) if (p.on && Math.abs(p.x - cam.x) < VW && Math.abs(p.y - cam.y) < VH) { light(p.x - ox, p.y - oy - 16, 510, '64,100,255', 1); light(p.x - ox, p.y - oy - 16, 128, '64,100,255', 1.5) }
   const skyRgb = sky.color(0, false)
   const lightCv = lighting.compose({ ox, oy, skyColor: [skyRgb[0] / 255, skyRgb[1] / 255, skyRgb[2] / 255], nightVision: hasEffect('NIGHTVISION') ? 1 : 0 })
+  tp = rMark(3, tp)
   // multiply 会把透明处也涂成光色 → 先留一份前景 alpha,乘完 destination-in 抠回来;然后把天空 / 黑底垫到透明处
   const fm = fgMaskCv.getContext('2d'); fm.clearRect(0, 0, VW, VH); fm.drawImage(view, 0, 0)
   vctx.globalCompositeOperation = 'multiply'
@@ -2026,6 +2063,7 @@ function render() {
   // 放大到屏幕:有 WebGL 走液体折射 shader(post_final.frag 原式,屏幕分辩率亚像素采样),否则直接贴
   if (refr && simBound) gctx.drawImage(refr.render(view, liqMask, VW, VH, performance.now() / 1000, cam.x, cam.y), 0, 0)
   else gctx.drawImage(view, 0, 0, game.width, game.height)
+  rMark(4, tp)
   // 瞄准点
   if (touch.aim) {
     // 瞄准摇杆指示:原点小环 + 方向点(限制在 40px 内)
@@ -2117,8 +2155,8 @@ function loop(now) {
   $('air').firstElementChild.style.width = (player.air / 7 * 100) + '%'
   $('air').firstElementChild.style.background = player.air <= 0 ? '#e0484f' : '#d8f0ff'
   // 手机端整块面板藏着(挡视野),只在顶上留一行 fps / 模拟 / 物理毫秒,用户反馈掉帧时能直接说出数字
-  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)} · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
-  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)} 渲染 ${renderMs.toFixed(1)} · 醒 ${sim.activeBlocks} 块${sim.lod > 1 ? ` 降档 1/${sim.lod}` : ''} 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
+  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
+  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)} 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 醒 ${sim.activeBlocks} 块${sim.lod > 1 ? ` 降档 1/${sim.lod}` : ''} 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)

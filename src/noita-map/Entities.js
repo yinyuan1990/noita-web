@@ -2667,8 +2667,10 @@ export class Entities {
       ctx.strokeStyle = '#ffc0e8'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(e.x - ox, e.y - oy); ctx.lineTo(x1 - ox, y1 - oy); ctx.stroke()
       ctx.restore()
     }
+    const W = ctx.canvas.width, H = ctx.canvas.height
     for (const e of this.list) {
       if (e.dead) continue
+      if (e.x < ox - 80 || e.x > ox + W + 80 || e.y < oy - 80 || e.y > oy + H + 80) continue // 屏幕外的不画(窗口里两三百只怪,每只 save/translate/drawImage 在 Safari 上不便宜);80px 留给腿 / 触手
       // 法杖幽灵:只画手里那根法杖,杖尖朝着人(幽灵本体原作也是看不见的)
       if (e.held) {
         const wi = this._img(e.held.image)
