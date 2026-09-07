@@ -12,7 +12,7 @@ import { PlayerSprite } from '../noita-map/PlayerSprite.js'
 import { ParallaxSky } from '../noita-map/Sky.js'
 import { Entities } from '../noita-map/Entities.js'
 import { Ragdoll } from '../noita-map/Ragdoll.js'
-import { LiquidRefraction } from '../noita-map/render/Refraction.js'
+import { GLComposite } from '../noita-map/render/GLComposite.js'
 import { Lighting, Skylight } from '../noita-map/render/Lighting.js'
 import { Vegetation } from '../noita-map/Vegetation.js'
 import { WandSystem, FREE_CAPACITY } from '../noita-map/Wands.js'
@@ -237,7 +237,12 @@ holdBtn('btnBag', () => editor.toggle())
 $('acts').addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true })
 
 // ── 相机 / 画布 ──
-const game = $('game'), gctx = game.getContext('2d')
+// #game = WebGL 合成画布(前景 × 光 + 天空 + 折射 + 放大一次 draw 出屏,render/GLComposite.js);拿不到 WebGL 时退回 2D 画布老路径(gctx 画到 #game 上)
+// #ui = 瞄准圈 / 指引箭头那几笔矢量,单独一层 2D 画布叠在上面
+const game = $('game'), ui = $('ui')
+const glc = Q.get('gl') === '0' ? null : (() => { try { const c = new GLComposite(game); return c.ok ? c : null } catch (e) { console.warn('GLComposite', e); return null } })() // ?gl=0 强制走 2D 老路径(对比 / 兜底)
+const gctx = glc ? ui.getContext('2d') : game.getContext('2d')
+let uiDirty = false // 这帧 #ui 上画过东西(下一帧要 clearRect)
 const view = document.createElement('canvas'), vctx = view.getContext('2d') // 世界像素分辨率的中间画布
 const cam = { x: player.x, y: player.y }
 let VW = VIEW_W, VH = 240, SCALE = 1
@@ -246,6 +251,7 @@ let addImg = null, addCv = document.createElement('canvas') // additive 精灵�
 const skyKey = { ox: NaN, oy: NaN, tb: 0 } // 上次画天空(skyCv)时的相机位置 / 100ms 时间桶,没变就复用
 // 光照(render/Lighting.js:原版 post_final.frag 的合成 + 光罩蒙版 + 雾(FogOfWarRadius 256)+ 天光(RENDER_SKYLIGHT_*));1/4 分辩率光图
 const lighting = new Lighting(4)
+lighting.gpu = !!glc // 光图不过画布,compose 完直接拿 ImageData 上传纹理
 lighting.sky = new Skylight((wx, wy) => {
   const e = streamer.get(Math.floor(wx / CHUNK) + WCX, Math.floor(wy / CHUNK) + WCY)
   if (!e?.mat) return 1
@@ -270,9 +276,9 @@ function cssRgb(c) {
   return v
 }
 let fireCells = 0
-// 液体折射(post_final.frag ENABLE_REFRACTION):有 WebGL 就在放大那一步按屏幕分辩率做(render/Refraction.js,原式 + 亚像素采样,和原版一样);
+// 液体折射(post_final.frag ENABLE_REFRACTION):有 WebGL 就在合成 / 放大那一步按屏幕分辩率做(GLComposite,原式 + 亚像素采样,和原版一样);
 // 没有 WebGL 退回世界分辨率的整像素版:wobX/wobY = 本帧每列的 dx / 每行的 dy,wobOx/wobOy = 本帧视口左上世界坐标
-const refr = (() => { try { const r = new LiquidRefraction(); return r.ok ? r : null } catch (e) { console.warn('refraction shader', e); return null } })()
+const refr = glc
 let liqMask = new Uint8Array(1) // VW×VH 液体掩码(给 shader)
 let wobX = new Int8Array(1), wobY = new Int8Array(1), wobOx = 0, wobOy = 0
 /** 世界点 (wx,wy) 落在液体格里 → 这一格的折射偏移 [dx,dy](采样到的那格也得是液体),否则 null。弹丸 / 人 / 怪在水里画的时候用(只在没 WebGL 的退路里) */
@@ -289,6 +295,7 @@ function liquidWobble(wx, wy) {
 }
 function resize() {
   game.width = innerWidth; game.height = innerHeight
+  ui.width = innerWidth; ui.height = innerHeight
   SCALE = innerWidth / VIEW_W
   VW = VIEW_W; VH = Math.ceil(innerHeight / SCALE)
   view.width = VW; view.height = VH
@@ -1417,6 +1424,7 @@ function drawQuest() {
   const inside = sx > m && sx < W - m && sy > m && sy < H - mb
   if (!inside) { const k = Math.min((W / 2 - m) / Math.max(1, Math.abs(dx)), (dy > 0 ? H / 2 - mb : H / 2 - m) / Math.max(1, Math.abs(dy))); sx = W / 2 + dx * k; sy = H / 2 + dy * k }
   const a = Math.atan2(dy, dx), pulse = 0.6 + 0.4 * Math.sin(performance.now() / 250)
+  uiDirty = true
   gctx.save(); gctx.translate(sx, sy); gctx.rotate(a)
   gctx.fillStyle = `rgba(255,220,120,${pulse.toFixed(2)})`; gctx.strokeStyle = 'rgba(0,0,0,0.7)'; gctx.lineWidth = 2
   gctx.beginPath(); gctx.moveTo(12, 0); gctx.lineTo(-8, -8); gctx.lineTo(-4, 0); gctx.lineTo(-8, 8); gctx.closePath(); gctx.fill(); gctx.stroke()
@@ -1910,7 +1918,7 @@ $('fpsMini').addEventListener('click', () => { gpuSync = !gpuSync; oplog.ev('gpu
 const rSync = new Float32Array(6)
 let syncFrame = false, frameN = 0
 const rMark = (k, t, c = vctx) => {
-  if (gpuSync || syncFrame) c.getImageData(0, 0, 1, 1)
+  if (gpuSync || syncFrame) { if (c === glc) glc.sync(); else c.getImageData(0, 0, 1, 1) }
   const n = performance.now()
   if (syncFrame) rSync[k] = rSync[k] * 0.5 + (n - t) * 0.5; else rPhase[k] = rPhase[k] * 0.9 + (n - t) * 0.1
   return n
@@ -2097,30 +2105,38 @@ function render() {
   const skyRgb = sky.color(0, false)
   const lightCv = lighting.compose({ ox, oy, skyColor: [skyRgb[0] / 255, skyRgb[1] / 255, skyRgb[2] / 255], nightVision: hasEffect('NIGHTVISION') ? 1 : 0 })
   tp = rMark(3, tp)
-  // multiply 会把透明处也涂成光色 → 先留一份前景 alpha,乘完 destination-in 抠回来;然后把天空 / 黑底垫到透明处
-  const fm = fgMaskCv.getContext('2d'); fm.clearRect(0, 0, VW, VH); fm.drawImage(view, 0, 0)
-  vctx.globalCompositeOperation = 'multiply'
-  vctx.imageSmoothingEnabled = true
-  vctx.drawImage(lightCv, 0, 0, VW, VH)
-  vctx.imageSmoothingEnabled = false
-  vctx.globalCompositeOperation = 'destination-in'
-  vctx.drawImage(fgMaskCv, 0, 0)
-  vctx.globalCompositeOperation = 'destination-over'
+  // 天空(6 层视差 × 2~3 张平铺 + 全屏渐变)只在相机深度 < 512 时有,且只在相机动了或过了 100ms 才重画,其余帧复用 skyCv
+  let skyDirty = false
   if (cam.y < 512) {
-    // 天空(6 层视差 × 2~3 张平铺 + 全屏渐变)只在相机动了或过了 100ms 才重画,其余帧复用 skyCv
     const tb = (performance.now() / 100) | 0
-    if (skyKey.ox !== ox || skyKey.oy !== oy || skyKey.tb !== tb) { skyKey.ox = ox; skyKey.oy = oy; skyKey.tb = tb; const sc = skyCv.getContext('2d'); sc.clearRect(0, 0, VW, VH); sky.draw(sc, ox + VW / 2, oy + VH / 2, VW, VH) }
-    vctx.drawImage(skyCv, 0, 0)
+    if (skyKey.ox !== ox || skyKey.oy !== oy || skyKey.tb !== tb) { skyKey.ox = ox; skyKey.oy = oy; skyKey.tb = tb; skyDirty = true; const sc = skyCv.getContext('2d'); sc.clearRect(0, 0, VW, VH); sky.draw(sc, ox + VW / 2, oy + VH / 2, VW, VH) }
   }
-  vctx.fillStyle = '#06070a'; vctx.fillRect(0, 0, VW, VH)
-  vctx.globalCompositeOperation = 'source-over'
-  gctx.imageSmoothingEnabled = false
-  tp = rMark(4, tp)
-  // 放大到屏幕:视口里有液体且有 WebGL 才走折射 shader(post_final.frag 原式,屏幕分辩率亚像素采样),否则直接贴
-  if (refr && simBound && liqCount > 0) gctx.drawImage(refr.render(view, liqMask, VW, VH, performance.now() / 1000, cam.x, cam.y), 0, 0)
-  else gctx.drawImage(view, 0, 0, game.width, game.height)
-  rMark(5, tp, gctx)
+  if (glc) {
+    // WebGL 合成:前景 × 光 → 垫天空 / 黑底 → 液体折射 → 放大出屏,一次 draw(乘光 / 抠 alpha / 垫底 / 放大这几步 2D 画布整屏光栅全省了)
+    tp = rMark(4, tp)
+    glc.render({ view, light: lighting.img, sky: cam.y < 512 ? skyCv : null, skyDirty, mask: liqMask, liquid: simBound && liqCount > 0, vw: VW, vh: VH, time: performance.now() / 1000, camX: cam.x, camY: cam.y })
+    if (uiDirty) { gctx.clearRect(0, 0, ui.width, ui.height); uiDirty = false }
+    rMark(5, tp, glc) // 这项 = 上传前景 / 光图纹理 + 一次 draw(同步计时时 readPixels 1 像素等 GPU 画完)
+  } else {
+    // 没 WebGL 的退路(老路径):multiply 会把透明处也涂成光色 → 先留一份前景 alpha,乘完 destination-in 抠回来;然后把天空 / 黑底垫到透明处
+    const fm = fgMaskCv.getContext('2d'); fm.clearRect(0, 0, VW, VH); fm.drawImage(view, 0, 0)
+    vctx.globalCompositeOperation = 'multiply'
+    vctx.imageSmoothingEnabled = true
+    vctx.drawImage(lightCv, 0, 0, VW, VH)
+    vctx.imageSmoothingEnabled = false
+    vctx.globalCompositeOperation = 'destination-in'
+    vctx.drawImage(fgMaskCv, 0, 0)
+    vctx.globalCompositeOperation = 'destination-over'
+    if (cam.y < 512) vctx.drawImage(skyCv, 0, 0)
+    vctx.fillStyle = '#06070a'; vctx.fillRect(0, 0, VW, VH)
+    vctx.globalCompositeOperation = 'source-over'
+    gctx.imageSmoothingEnabled = false
+    tp = rMark(4, tp)
+    gctx.drawImage(view, 0, 0, game.width, game.height)
+    rMark(5, tp, gctx)
+  }
   // 瞄准点
+  if (touch.aim || !IS_TOUCH) uiDirty = true
   if (touch.aim) {
     // 瞄准摇杆指示:原点小环 + 方向点(限制在 40px 内)
     const d = Math.hypot(touch.aim.dx, touch.aim.dy), r = Math.min(d, 40)

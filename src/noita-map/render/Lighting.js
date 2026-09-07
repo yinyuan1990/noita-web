@@ -216,7 +216,7 @@ export class Lighting {
         d[o + 3] = 255
       }
     }
-    c.putImageData(img, 0, 0)
+    if (!this.gpu) c.putImageData(img, 0, 0) // gpu 模式(GLComposite)直接拿 this.img 上传纹理,不过画布
     return this.cv
   }
 }

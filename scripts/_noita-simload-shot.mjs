@@ -56,7 +56,8 @@ const r = await page.evaluate(async () => {
     const fps = +((frames - f0) / ((performance.now() - t0) / 1000)).toFixed(0)
     const panel = document.getElementById('panel').textContent.split('\n')
     const simMs = +(/模拟 ([\d.]+)ms/.exec(panel[1])?.[1] || 0), renderMs = +(/渲染 ([\d.]+)/.exec(panel[1])?.[1] || 0), logicMs = +(/逻辑 ([\d.]+)/.exec(panel[1])?.[1] || 0)
-    rows.push({ t: (s + 1) * 2, fps, simMs, lod: sim.lod, logicMs, renderMs, active: sim.activeBlocks, stepped: sim.stepped, awake: np.physics.stats.awake, proj: np.projectiles.list.length, ...histo() })
+    const l = /逻辑 [\d.]+\[([^\]]*)\]/.exec(panel[1])?.[1], r = /渲染 [\d.]+\[([^\]]*)\]/.exec(panel[1])?.[1] // 逻辑分项 [弹丸/实体/物理/其他] · 渲染分项 6 段
+    rows.push({ t: (s + 1) * 2, fps, simMs, lod: sim.lod, logicMs, l, renderMs, r, active: sim.activeBlocks, stepped: sim.stepped, awake: np.physics.stats.awake, proj: np.projectiles.list.length, sfx: np.projectiles.sfx.length, debris: np.debris.length, ents: np.entities.list.length, ...histo() })
   }
   return rows
 })

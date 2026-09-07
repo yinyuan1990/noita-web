@@ -10,7 +10,8 @@
       * { box-sizing: border-box; margin: 0; padding: 0; }
       html, body { width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; -webkit-user-select: none; user-select: none; }
       body { font-family: "Noto Serif SC", Georgia, serif; color: #e8eef4; }
-      #game { position: fixed; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+      #game, #ui { position: fixed; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+      #ui { pointer-events: none; } /* 瞄准圈 / 指引箭头:#game 是 WebGL 合成画布,这些矢量小图另画一层 */
       #hud {
         position: fixed; left: max(8px, env(safe-area-inset-left)); top: 6px; font-size: 11px; line-height: 1.5;
         color: rgba(220, 230, 240, 0.85); text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre;
@@ -140,6 +141,7 @@
   </head>
   <body>
     <canvas id="game"></canvas>
+    <canvas id="ui"></canvas>
     <div id="hud"></div>
     <div class="bar" id="hp"><i style="width:100%"></i></div>
     <div class="bar" id="fuel"><i style="width:100%"></i></div>
