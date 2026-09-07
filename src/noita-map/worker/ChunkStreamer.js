@@ -32,6 +32,8 @@ export class ChunkStreamer {
     this.maxRepaintPerFrame = o.maxRepaintPerFrame ?? Infinity // 每帧最多换几张重画好的位图(Infinity = 到了就换);新位图第一次画要上传 1MB 纹理,手机上一帧换好几张就是尖峰
     // resident:区块位图落到主线程常驻 canvas(GPU 上一直有),重画只把脏的 32×32 块 putImageData 进去,不再整张 1MB 换;e.bitmap 就是那个 canvas
     this.resident = !!o.resident
+    // gl:位图交给 WebGL 当纹理(GLComposite.chunk 第一次画时上传 ImageBitmap),重画的裸像素按脏块切成小块挂在 e.glPatches,由它 texSubImage2D 补上;不建常驻 canvas
+    this.gl = !!o.gl
     this.cvPool = []
     this.entries = new Map()   // key → {cx,cy,bitmap,mat,scenes,biome,dirty,t,ready,sdirty}
     this.inFlight = new Map()  // key → promise
@@ -163,6 +165,7 @@ export class ChunkStreamer {
 
   /** 把 Worker 重画的裸像素按脏块(16×16 个 32px 块的位图;null = 整张)putImageData 进常驻 canvas;同一行连着的脏块合成一条 */
   _patch(e, pixels, blocks) {
+    if (this.gl) return this._glPatch(e, pixels, blocks)
     if (!e.bitmap || !e.bitmap.getContext) e.bitmap = this._toCanvas(null)
     const c = e.bitmap.getContext('2d'), img = new ImageData(pixels, CHUNK, CHUNK)
     if (!blocks) { c.putImageData(img, 0, 0); this.stats.patchPx += CHUNK * CHUNK; return }
@@ -173,6 +176,24 @@ export class ChunkStreamer {
         while (bx1 + 1 < 16 && blocks[by * 16 + bx1 + 1]) bx1++
         c.putImageData(img, 0, 0, bx * 32, by * 32, (bx1 - bx + 1) * 32, 32)
         this.stats.patchPx += (bx1 - bx + 1) * 32 * 32
+        bx = bx1
+      }
+    }
+  }
+
+  /** gl 模式:脏块(同一行连着的并成一条)的像素切出来紧凑排好,挂到 e.glPatches,GLComposite.chunk 下次画时 texSubImage2D(WebGL1 没有 UNPACK_ROW_LENGTH,得自己切) */
+  _glPatch(e, pixels, blocks) {
+    const list = (e.glPatches ||= [])
+    if (!blocks) { list.length = 0; list.push({ x: 0, y: 0, w: CHUNK, h: CHUNK, data: new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength) }); this.stats.patchPx += CHUNK * CHUNK; return }
+    for (let by = 0; by < 16; by++) {
+      for (let bx = 0; bx < 16; bx++) {
+        if (!blocks[by * 16 + bx]) continue
+        let bx1 = bx
+        while (bx1 + 1 < 16 && blocks[by * 16 + bx1 + 1]) bx1++
+        const w = (bx1 - bx + 1) * 32, data = new Uint8Array(w * 32 * 4)
+        for (let r = 0; r < 32; r++) { const so = ((by * 32 + r) * CHUNK + bx * 32) * 4; data.set(pixels.subarray(so, so + w * 4), r * w * 4) }
+        list.push({ x: bx * 32, y: by * 32, w, h: 32, data })
+        this.stats.patchPx += w * 32
         bx = bx1
       }
     }
@@ -228,7 +249,7 @@ export class ChunkStreamer {
   _free(b) {
     if (!b) return
     if (b.getContext) { if (this.cvPool.length < 8) this.cvPool.push(b) }
-    else b.close?.()
+    else b.close?.() // ImageBitmap 关掉;gl 模式的 UPLOADED 标记没有 close,纹理由 onEvict 里的 GLComposite.freeChunk 删
   }
 
   /**
@@ -251,6 +272,7 @@ export class ChunkStreamer {
     }
     // 重画:把改过的材质交给 Worker(复制一份,原件留在主线程)
     await Promise.all([...touched.values()].map(async (e) => {
+      if (this.resident || this.gl) { e.sdirty = null; return this.repaint(e.cx, e.cy) } // 常驻 canvas / GL 纹理:整张按补丁走
       const r2 = await this.client.requestChunk(e.cx, e.cy, { wantMat: false, mat: e.mat.slice(), veg: ChunkStreamer.vegOf(e) })
       if (this.entries.get(e.key) === e) { e.bitmap?.close?.(); e.bitmap = r2.bitmap }
     }))
@@ -269,7 +291,7 @@ export class ChunkStreamer {
     // 这次要补的脏块:拿走当前的一份,期间新脏的记到新数组里(下次重画补);从没标过脏(null)= 整张补
     const blocks = e.sdirty; e.sdirty = null
     try {
-      const r = await this.client.requestChunk(cx, cy, { wantMat: false, raw: this.resident, mat: e.mat.slice(), veg: ChunkStreamer.vegOf(e) })
+      const r = await this.client.requestChunk(cx, cy, { wantMat: false, raw: this.resident || this.gl, mat: e.mat.slice(), veg: ChunkStreamer.vegOf(e) })
       if (this.entries.get(e.key) !== e || !(r.bitmap || r.pixels)) { r.bitmap?.close?.(); return }
       if (r.pixels && !(this.maxRepaintPerFrame < Infinity)) { this._patch(e, r.pixels, blocks); this.stats.repainted++; return }
       if (r.bitmap && !(this.maxRepaintPerFrame < Infinity)) { e.bitmap?.close?.(); e.bitmap = r.bitmap; this.stats.repainted++; return }

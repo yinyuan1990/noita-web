@@ -29,6 +29,10 @@ const SEED = parseInt(Q.get('seed') || '1674172626', 10) >>> 0
 const VIEW_W = 427 // Noita 一屏世界像素宽;高按屏幕比例派生
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
 if (IS_TOUCH) document.body.classList.add('touch')
+// #game = WebGL 合成画布(区块纹理 + 材质叠层 + 顶层 × 光 + 天空 + 折射 + 放大,一次 draw 出屏,render/GLComposite.js);拿不到 WebGL 时退回 2D 画布老路径(gctx 画到 #game 上)
+// #ui = 瞄准圈 / 指引箭头那几笔矢量,单独一层 2D 画布叠在上面。?gl=0 强制走 2D 老路径(对比 / 兜底)
+const game = $('game'), ui = $('ui')
+const glc = Q.get('gl') === '0' ? null : (() => { try { const c = new GLComposite(game); return c.ok ? c : null } catch (e) { console.warn('GLComposite', e); return null } })()
 
 // ── 地图 ──
 const assets = await new NoitaAssets({ base: RES }).init()
@@ -42,7 +46,8 @@ let store = null
 try { store = await new ChunkStore().open(); const n = await store.ensureRev(SEED, WORLD_REV); if (n) console.info(`[world] 生成版本变了,作废旧区块 ${n} 块`) } catch (e) { void e }
 // 手机上每帧只接 1 张新区块位图:512×512 位图第一次 drawImage 要传 1MB 纹理到 GPU,iPhone 上一帧塞两三张就是 10ms+ 的"合成"尖峰(日志里快速移动 / 爆炸重画时掉到 27fps 的那种)
 // resident:区块位图落进常驻 canvas,重画只 putImageData 脏的 32×32 块(火烧 / 爆炸每次重画整张 1MB 位图重传,就是上报里"贴屏"那项 10~17ms 的来源)
-const streamer = new ChunkStreamer(client, { store, cache: 40, ahead: 2, behind: 1, side: 1, maxInFlight: 2, maxAcceptPerFrame: IS_TOUCH ? 1 : 2, maxRepaintPerFrame: 1, resident: true })
+// gl:位图直接当 WebGL 纹理(第一次画时上传 ImageBitmap,重画 texSubImage2D 脏块),不再建常驻 canvas
+const streamer = new ChunkStreamer(client, { store, cache: 40, ahead: 2, behind: 1, side: 1, maxInFlight: 2, maxAcceptPerFrame: IS_TOUCH ? 1 : 2, maxRepaintPerFrame: 1, resident: !glc, gl: !!glc })
 streamer.seed = SEED
 document.addEventListener('visibilitychange', () => { if (document.hidden) streamer.flush() })
 window.addEventListener('pagehide', () => streamer.flush())
@@ -56,6 +61,7 @@ const sim = new CellSim(mats, reactions, {
   onStaticChanged: (cx, cy) => { const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + REPAINT_MS) },
 })
 let simBound = false
+if (glc) glc.setPalette(mats, sim.kind, sim.glow, sim.M_FIRE) // 材质叠层的调色板(色 / alpha / 种类 / 发光 / 是否火)
 // ── Box2D 世界(planck,第 ① 步:地形碰撞;`?phys=0` 关;`?physTest=1` 出生点上方丢几个测试箱子看落地)──
 const physics = Q.get('phys') !== '0' ? new Physics(sim, { mats }) : null // 重力用 Physics 默认(exe 反出的 60 px/s² = 10 m/s²)
 const PHYS_TEST = Q.get('physTest') === '1'
@@ -237,10 +243,6 @@ holdBtn('btnBag', () => editor.toggle())
 $('acts').addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true })
 
 // ── 相机 / 画布 ──
-// #game = WebGL 合成画布(前景 × 光 + 天空 + 折射 + 放大一次 draw 出屏,render/GLComposite.js);拿不到 WebGL 时退回 2D 画布老路径(gctx 画到 #game 上)
-// #ui = 瞄准圈 / 指引箭头那几笔矢量,单独一层 2D 画布叠在上面
-const game = $('game'), ui = $('ui')
-const glc = Q.get('gl') === '0' ? null : (() => { try { const c = new GLComposite(game); return c.ok ? c : null } catch (e) { console.warn('GLComposite', e); return null } })() // ?gl=0 强制走 2D 老路径(对比 / 兜底)
 const gctx = glc ? ui.getContext('2d') : game.getContext('2d')
 let uiDirty = false // 这帧 #ui 上画过东西(下一帧要 clearRect)
 const view = document.createElement('canvas'), vctx = view.getContext('2d') // 世界像素分辨率的中间画布
@@ -248,6 +250,9 @@ const cam = { x: player.x, y: player.y }
 let VW = VIEW_W, VH = 240, SCALE = 1
 let overlay = null, overlayCv = document.createElement('canvas'), fgMaskCv = document.createElement('canvas'), skyCv = document.createElement('canvas')
 let addImg = null, addCv = document.createElement('canvas') // additive 精灵的加色层(ProjectileSystem.flushAdd 写进来,一次 lighter 贴上)
+// GL 路径:视口的材质 id / 燃烧标记(VW×VH 字节表,每帧上传给 shader 查调色板)+ 视口覆盖的 2×3 区块 entry
+let matBuf = new Uint16Array(1), auxBuf = new Uint8Array(1) // 材质 id 是 16 位(400 多种材质)
+const glChunks = glc ? new Array(6).fill(null) : null
 const skyKey = { ox: NaN, oy: NaN, tb: 0 } // 上次画天空(skyCv)时的相机位置 / 100ms 时间桶,没变就复用
 // 光照(render/Lighting.js:原版 post_final.frag 的合成 + 光罩蒙版 + 雾(FogOfWarRadius 256)+ 天光(RENDER_SKYLIGHT_*));1/4 分辩率光图
 const lighting = new Lighting(4)
@@ -304,6 +309,7 @@ function resize() {
   overlay = new ImageData(VW, VH)
   addImg = new ImageData(VW, VH); addCv.width = VW; addCv.height = VH
   wobX = new Int8Array(VW); wobY = new Int8Array(VH); liqMask = new Uint8Array(VW * VH)
+  matBuf = new Uint16Array(VW * VH); auxBuf = new Uint8Array(VW * VH)
   if (refr) refr.resize(game.width, game.height)
 }
 window.addEventListener('resize', resize); resize()
@@ -518,7 +524,7 @@ entities = await new Entities({
 // 区块被 LRU 卸载 → 收掉里面的怪;回来时 spawnChunk 按生成表重刷(原版卸载区块也不保留活物)
 // 实心植被(树 / 大蘑菇):像素在材质里,这里只管 SimplePhysics 整株下落
 const veg = new Vegetation({ sim, mats, streamer, decodePng: decodePngBrowser, res: RES })
-streamer.onEvict = (entry) => { entities.unloadChunk(entry); veg.unloadChunk(entry) }
+streamer.onEvict = (entry) => { entities.unloadChunk(entry); veg.unloadChunk(entry); glc?.freeChunk(entry) }
 const temple = {} // 特权 / 传送门在下面挂上
 // ── 特权(perk.lua):牌堆 SetRandomSeed(1,2) 全世界一份,每座圣山按 TEMPLE_NEXT_PERK_INDEX 顺着发 3 个,拿一个其余消失 ──
 const perks = await new PerkSystem({ res: RES, seed: SEED }).init()
@@ -1942,16 +1948,46 @@ function render() {
   const cx0 = Math.floor(ox / CHUNK) + WCX, cx1 = Math.floor((ox + VW) / CHUNK) + WCX
   const cy0 = Math.floor(oy / CHUNK) + WCY, cy1 = Math.floor((oy + VH) / CHUNK) + WCY
   let missing = 0
+  // GL:视口最多跨 2 列 × 3 行区块,entry 交给 GLComposite 当纹理;2D 老路径:drawImage 到 view
+  if (glChunks) glChunks.fill(null)
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
     const e = streamer.get(cx, cy)
     if (!e || !e.bitmap) { missing++; continue }
-    vctx.drawImage(e.bitmap, (cx - WCX) * CHUNK - ox, (cy - WCY) * CHUNK - oy)
+    if (glChunks) { const gi = (cy - cy0) * 2 + (cx - cx0); if (gi < 6) glChunks[gi] = e }
+    else vctx.drawImage(e.bitmap, (cx - WCX) * CHUNK - ox, (cy - WCY) * CHUNK - oy)
   }
   // 动态材质叠层:液体(按 materials.xml 的 alpha 半透)/ 沙 / 气 / 火(闪烁)/ 正在燃烧的材质发红
   glowPts.length = 0
   fireCells = 0
-  let liqCount = 0 // 视口里的液体格数:0 就不走 WebGL 折射那步(texImage2D 读 2D 画布要等 GPU 把整帧的活干完,iPhone 上这一步就是"合成"里的大头)
-  if (simBound) {
+  let liqCount = 0 // 视口里的液体格数:0 就不走折射采样
+  if (simBound && glc) {
+    // GL 路径:只把视口的材质 id / 燃烧标记按行拷进两张 VW×VH 的字节表(shader 查调色板算色),JS 里顺便数液体 / 火 / 采发光点(老循环里的三个副产物)
+    const img = overlay, d = img.data
+    d.fill(0)
+    projectiles.beginBlit(d, VW, VH, ox, oy)
+    const KD = sim.kind, COL = mats.color, GLOW = sim.glow, fireM = sim.M_FIRE, MB = matBuf, AB = auxBuf
+    MB.fill(0); AB.fill(0)
+    for (let j = 0; j < VH; j++) {
+      const wy = oy + j, rowBase = (wy & 511) * CHUNK, cy = (wy >> 9) + WCY
+      for (let sx = ox; sx < ox + VW; sx = ((sx >> 9) + 1) << 9) {
+        const e = streamer.get((sx >> 9) + WCX, cy)
+        const i0 = sx - ox, iEnd = Math.min(VW, (((sx >> 9) + 1) << 9) - ox)
+        if (!e?.mat) continue
+        const l0 = rowBase + (sx & 511)
+        MB.set(e.mat.subarray(l0, l0 + iEnd - i0), j * VW + i0)
+        if (e.aux) AB.set(e.aux.subarray(l0, l0 + iEnd - i0), j * VW + i0)
+      }
+      // 统计这一行(和老循环同一套采样规则,光照结果不变)
+      for (let i = 0, o = j * VW; i < VW; i++, o++) {
+        const m = MB[o]
+        if (m === 0) continue
+        const k = KD[m]
+        if (k === 3) liqCount++
+        else if (m === fireM) fireCells++
+        if (GLOW[m] && glowPts.length < 1600 && ((ox + i + wy * 3) % 5) === 0) glowPts.push(i, j, GLOW[m], COL[m])
+      }
+    }
+  } else if (simBound) {
     const img = overlay
     const d = img.data
     d.fill(0)
@@ -2008,6 +2044,9 @@ function render() {
         }
       }
     }
+  }
+  if (simBound) {
+    const img = overlay, d = img.data
     // 碎屑(1px 真材质色)/ 火花直接写进叠层像素:之前每粒一次 fillStyle + fillRect,陨石坑 3000 粒松土 + 600 火花一帧近 4000 次 canvas 调用,Safari 上这就是十几 ms
     for (const p of debris) {
       const i = Math.round(p.x - ox), j = Math.round(p.y - oy)
@@ -2114,7 +2153,7 @@ function render() {
   if (glc) {
     // WebGL 合成:前景 × 光 → 垫天空 / 黑底 → 液体折射 → 放大出屏,一次 draw(乘光 / 抠 alpha / 垫底 / 放大这几步 2D 画布整屏光栅全省了)
     tp = rMark(4, tp)
-    glc.render({ view, light: lighting.img, sky: cam.y < 512 ? skyCv : null, skyDirty, mask: liqMask, liquid: simBound && liqCount > 0, vw: VW, vh: VH, time: performance.now() / 1000, camX: cam.x, camY: cam.y })
+    glc.render({ top: view, mat: matBuf, aux: auxBuf, chunks: glChunks, corgX: (cx0 - WCX) * CHUNK, corgY: (cy0 - WCY) * CHUNK, light: lighting.img, sky: cam.y < 512 ? skyCv : null, skyDirty, liquid: simBound && liqCount > 0, vw: VW, vh: VH, ox, oy, time: performance.now() / 1000, camX: cam.x, camY: cam.y })
     if (uiDirty) { gctx.clearRect(0, 0, ui.width, ui.height); uiDirty = false }
     rMark(5, tp, glc) // 这项 = 上传前景 / 光图纹理 + 一次 draw(同步计时时 readPixels 1 像素等 GPU 画完)
   } else {
@@ -2235,4 +2274,4 @@ function loop(now) {
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, physics, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, physics, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded, glc, matBuf: () => matBuf, view }
