@@ -27,6 +27,10 @@
       #bossbar b { display: block; font-size: 11px; color: #fff4d6; letter-spacing: 1px; margin-bottom: 3px; }
       #bossbar div { height: 7px; background: #3a2320; border: 1px solid #794738; }
       #bossbar i { display: block; height: 100%; background: #a64638; }
+      /* 书的正文(BookComponent:原版拿在手里显示的一段文字):居中一块半透明石板,几秒后淡出 */
+      #book { position: fixed; left: 50%; top: 30%; transform: translateX(-50%); max-width: min(520px, 86vw); padding: 10px 16px; background: rgba(20,14,10,0.86); border: 1px solid rgba(220,200,150,0.5); color: #e8dcc0; font-size: 11px; line-height: 1.5; white-space: pre-wrap; text-align: center; pointer-events: none; opacity: 0; transition: opacity 0.4s; z-index: 20; }
+      #book.on { opacity: 1; transition: opacity 0.1s; }
+      #book b { display: block; font-size: 13px; color: #fff4d6; margin-bottom: 6px; letter-spacing: 1px; }
       /* 状态区(原版 HUD:血条 / 悬浮条下面一列 status_indicators 图标,旁边一条剩余量 + 数字:沾污 % / 着火秒) */
       #status { position: fixed; left: max(8px, env(safe-area-inset-left)); top: 64px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; font-size: 10px; line-height: 12px; color: rgba(230,236,244,0.9); text-shadow: 0 1px 2px #000; }
       #status.air { top: 76px; }
@@ -155,6 +159,7 @@
     <div id="status"></div>
     <div id="important"><b></b><span></span></div>
     <div id="bossbar"><b></b><div><i style="width:100%"></i></div></div>
+    <div id="book"><b></b><span></span></div>
     <div id="death">
       <h2>你死了</h2>
       <p id="deathInfo"></p>

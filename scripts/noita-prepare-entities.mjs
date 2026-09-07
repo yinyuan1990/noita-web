@@ -85,6 +85,12 @@ const zh = new Map()
   if (fs.existsSync(csvPath)) for (const line of fs.readFileSync(csvPath, 'utf8').split(/\r?\n/).slice(1)) { const cols = line.split(','); if (cols[0]) zh.set(cols[0], { en: cols[1] || '', zh: cols[9] || '' }) }
 }
 const tr = (key) => { const k = String(key || '').replace(/^\$/, ''); const t = zh.get(k); return t ? (t.zh && /[\u4e00-\u9fff]/.test(t.zh) ? t.zh : t.en) : k }
+// 书的正文 bookdesc*(英文列,带引号 / \n,"doesn't need to be translated"):单独按带引号的 CSV 字段抠
+const BOOKDESC = new Map()
+{
+  const csvPath = 'E:/soft/xiaoshuodongtai/silu/XD220/Noita.v20250125-P2P/data/translations/common.csv'
+  if (fs.existsSync(csvPath)) for (const m of fs.readFileSync(csvPath, 'utf8').matchAll(/^(bookdesc\w*),(?:"((?:[^"]|"")*)"|([^,\n]*))/gm)) BOOKDESC.set(m[1], (m[2] ?? m[3] ?? '').replace(/""/g, '"').replace(/\\n/g, '\n'))
+}
 const PROPS = [
   'physics_box_explosive', 'physics_barrel_oil', 'physics_barrel_radioactive', 'physics_crate', 'physics/minecart', 'physics_cart', 'physics_stone_01', 'physics_stone_02', 'physics_stone_03', 'physics_stone_04', 'physics/lantern_small', 'physics_skateboard', 'physics_brewing_stand', 'physics_bottle_green', 'physics_bottle_red', 'physics_bottle_blue', 'physics_bottle_yellow', 'physics_candle_1', 'physics_candle_2', 'physics_candle_3', 'physics_mining_lamp',
   // 挖掘场(吊桶 physics_bucket 挂钉子上摆、吊罐 suspended_* 拴链子到顶:RigidBody.ropes;多体机械 excavationsite_machine_3b/3c 走 Box2D 多体:机身 + 带电机的轮)
@@ -253,7 +259,7 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     // 蛋:碎了 config_explosion.load_this_entity 放 projectiles/egg_*.xml,那个弹 19 帧后跑 egg_hatch.lua,按它的 entity_list 表出怪(除 worms 都 CHARM 友好、hp ×4、不掉金)
     if (/^egg_/.test(key)) { const pf = e.subs.config_explosion?.load_this_entity; const px = pf ? readFile(pf) || '' : ''; const lm = /name="entity_list"[\s\S]*?value_string="(\w+)"/.exec(px); d.egg = { list: lm ? lm[1] : 'monsters' } }
     if (vsv('potion_material')) d.potionMat = vsv('potion_material').value_string // potion_beer / potion_milk:固定内容的药水
-    if (first(e, 'BookComponent')) d.book = true
+    if (first(e, 'BookComponent')) { d.book = true; const k = String(first(e, 'UIInfoComponent')?.name || '').replace(/^\$/, '').replace('booktitle', 'bookdesc'); if (BOOKDESC.has(k)) d.bookText = BOOKDESC.get(k) }
     if (key === 'greed_curse') d.curse = 'greed'
     // 精灵:挑 enemies_gfx / props_gfx 下的主图(跳过 ui / 特效贴图)
     // 精灵:先挑非 emissive 的(僵尸的发光副精灵要跳过);全是 emissive 的(幽灵 / 骷髅虫本体就是发光的)再退回用 emissive

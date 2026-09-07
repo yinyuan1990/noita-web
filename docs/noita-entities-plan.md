@@ -978,6 +978,15 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       画法:wizardcave_gate_ornaments.png 是 image_animation_file 的"时间图"(绿通道 = 出粒帧、红通道高的像素才是图案),预处理成红色图案 lighter 叠画 + 往外飘的红火花 + LightComponent r200 红光。蛋从巨树 g_egg(0.4 egg_worm / 0.02 egg_purple)拿。
     - **Sauvojen tuntija(boss_pit)出生**:查遍数据 —— 唯一入口是 monster_powder_test 材质爆炸(materials.xml ExplosionConfig load_this_entity boss_pit_spawner),而这种材质在全部 biome_impl / wang_tiles 的图和所有 lua / xml 里都没用过,exe 里 "boss_pit" 字符串也只在怪物名单里;
       原版这只 boss 就是没有世界生成入口的(wiki 也说它没有正常出生点)。照原版不出;控制器留着,以后有材质爆炸再接。
+34. **传送门 / 书正文 / 精华效果 / 贪婪诅咒(09-07 晚)✅ 已上线**:
+    - **传送门**:noitaPlay `TELEPORTS` 抽全部 buildings/teleport_*.xml + mystery_teleport(_back) 的 TeleportComponent(`target_x/y_is_absolute_position` 缺省 0 = 相对自己:teleroom_1~6 / lavalake / sandroom / smokecave 是相对),`liq` = MaterialAreaChecker 的 aabb(enabled_by_liquid:下面眼睛里要有传送液,圣山漏斗 (±2, 136..140)、沙漏 (±16, 110..115)、立方体 / 雪窟密室 (±2, 98..102)),
+      `gate` = teleroom.lua 的 miniboss_fish flag(杀了 Syväolento 才通电,它死时放 teleport_teleroom 通往传送室);`temple.spawnPortal(x, y, name)` 复用圣山那套画法 / 触发 / 熄灭提示。Entities 把 `teleport_* / mystery_teleport*` 路由到 spawnSpecial。本局 flag 走 `hooks.runFlag` → `player.runFlags`(存档)。
+    - **书**:`d.bookText` = translations 的 bookdesc*(英文原文,带引号 / \n 的 CSV 字段单独抠),读书弹 `#book` 石板面板(标题 + 正文,按字数 6~14s)。
+    - **精华**(推翻上一条的猜测,照 scripts/essences/*.lua):挂在玩家身上定时从玩家位置放弹(mWhoShot = 玩家,打不到自己):laser 每 120 帧 8 向 laser_bullet(速 300、伤 0.51、r6 爆)· water 每 100 帧 1 发 water_bullet 随机方向 · air 每 40 帧 16 向 air_bullet(0.23)· fire 每 120 帧原地 fire_explosion(r80、伤 1.75、起火 —— 会把自己脚下炸出坑)· alcohol GameEffect DRUNK 永久。四种弹进 projectiles.json(e_essence_*)。
+    - **贪婪诅咒**(greed_curse_pickup.lua + greed.xml):拿了 → 头顶 66px 出 teleport_start(回起点 937,10)传送门;check_biome.lua 每 60 帧:不在圣山 → 诅咒生效;effect_curse_radioactive.lua 每 150 帧放 convert_radioactive_with_delay(358 帧后 r70:[solid] → rock_static_cursed_green、[liquid] → cursed_liquid,绿火花预警);
+      进比拿它时更深(chunk 行 > 拿时 且 行内 y > 150)的圣山 → 解除。`player.curse {depth, t, pend[]}`,存档带 depth。自由模式 `editAnywhere` 不算圣山(用群系判)。
+    - 探针 `_noita-essence-shot.mjs`:出生点挂五种精华 + 诅咒跑 8s(弹 / 转换 / 无报错)+ 读一本书截图。
+    - 没做:乐器演奏(flute / kantele 是有音符卡的"法杖",现在是任务物)、Kolmisilmä 的 sampo / 结局、天空 boss 幻影、heart_better / heart_evil。
 
 ## 2.5 接手指南(新会话从这里开始)
 

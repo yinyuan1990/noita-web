@@ -491,18 +491,22 @@ entities = await new Entities({
         printImportant('魔球!', `第 ${player.orbs} 颗真知之球 · 得到法术「${sp?.name || b.d.orb.card}」`); oplog.ev('orb', { id: b.d.orb.id, n: player.orbs }); return
       }
       // 书(BookComponent):原版拿在手里读;这里走过去就"读"一遍标题,石板留在原地
-      if (b.d.book) { b.dead = false; b.pickCool = 3; printImportant(b.d.label || b.name, '(石板上刻着古老的文字)'); sfx.play('magic', { vol: 0.3, rate: 1.1, minGap: 500 }); oplog.ev('book', { id: b.name }); return }
+      if (b.d.book) { b.dead = false; b.pickCool = 3; showBook(b.d.label || b.name, b.d.bookText || '(石板上刻着古老的文字)'); sfx.play('magic', { vol: 0.3, rate: 1.1, minGap: 500 }); oplog.ev('book', { id: b.name }); return }
       // 精华(essence_pickup.lua):永久效果 —— fire 火免疫 + 身边不停冒火;water 永远湿 + 滴水;alcohol 永远醉;air 悬浮不耗蓝;laser(朝看的方向射激光)没做
       if (b.d.essence) {
         player.essences = player.essences || {}; player.essences[b.d.essence] = true
-        if (b.d.essence === 'fire') flags.protFire = true
-        const NAMES = { fire: '火之精髓', water: '水之精髓', alcohol: '酒之精髓', air: '风之精髓', laser: '光之精髓' }
-        printImportant(NAMES[b.d.essence] || b.d.label, b.d.essence === 'laser' ? '(效果还没做)' : '它与你融为一体'); sfx.play('magic', { vol: 0.8, rate: 0.6 }); oplog.ev('essence', { id: b.d.essence }); return
+        const DESC = { fire: '每两秒在你身边炸出一团火', water: '不时朝随机方向喷出一股水', alcohol: '永远醉着', air: '不断向四周吹出气弹', laser: '每两秒向八方射出激光' }
+        printImportant(b.d.label, DESC[b.d.essence] || '它与你融为一体'); sfx.play('magic', { vol: 0.8, rate: 0.6 }); oplog.ev('essence', { id: b.d.essence }); return
       }
       // 蛋 / 胡瓜:可扔的物品进物品格(开火 = 扔,蛋碎了孵怪)
       if (b.d.egg || b.name === 'gourd') { if (player.items.length >= (flags.itemSlots || 4)) { b.dead = false; b.pickCool = 1; return } player.items.push({ throw: b.name, name: b.d.label || b.name }); sfx.play('magic', { vol: 0.4, rate: 1.3 }); oplog.ev('pick_item', { id: b.name }); return }
-      // 永恒财富(greed_curse):诅咒 —— 这里只记标记(金块变蛇那套没做)
-      if (b.d.curse) { flags.greedCurse = true; printImportant(b.d.label, '一股贪婪的气息缠上了你(效果还没做)'); sfx.play('magic', { vol: 0.6, rate: 0.5 }); return }
+      // 永恒财富(greed_curse_pickup.lua):挂上 greed.xml 诅咒(check_biome.lua 每 60 帧:不在圣山 → 生效;effect_curse_radioactive.lua 每 150 帧放 convert_radioactive_with_delay:358 帧后把身边 r70 的 [solid] 变 rock_static_cursed_green、[liquid] 变 cursed_liquid),
+      // 到比拿它时更深的圣山里就解除;头顶 66px 出一扇回起点的传送门(teleport_start)
+      if (b.d.curse) {
+        player.curse = { depth: Math.floor(b.y / 512), t: 0, pend: [] }
+        temple.spawnPortal?.(b.x, b.y - 66, 'teleport_start')
+        printImportant('诅咒!', '贪婪的诅咒缠上了你:周围的石头会变成诅咒石、液体变成诅咒液,进更深一层的圣山才能洗掉'); sfx.play('magic', { vol: 0.6, rate: 0.5 }); oplog.ev('greed_curse', {}); return
+      }
       // 任务物(钥匙 / 音乐石 / 法杖石 / 太阳种子 / 邪眼 / 长笛 / 康特勒琴):收进任务栏,邪眼让 Unohdettu 可打
       if (QUEST_ITEMS.has(b.name)) {
         player.quest = player.quest || []; player.quest.push(b.name)
@@ -538,6 +542,8 @@ entities = await new Entities({
       player.gold += Math.round((b.gold || 0) * (flags.goldMul || 1)); sfx.play('magic', { vol: 0.35, rate: 1.6 + Math.random() * 0.3, minGap: 60 }); oplog.ev('gold', { v: b.gold, total: player.gold })
       if (b.gold) { goldBurst(b.x, b.y, b.gold); tut.show('gold') }
     },
+    // GameAddFlagRun(本局 flag):杀了 Syväolento → 传送室六扇门通电;存档里带
+    runFlag: (k) => { flags[k] = true; player.runFlags = player.runFlags || {}; player.runFlags[k] = true },
     // 煤矿祭坛的法杖(wand_001~017 固定数值 + level_1_wand.lua 掷卡 / wand_level_01 随机)→ 造好放在祭坛上
     spawnWand: (key, x, y) => { const w = wands.make(key, x, y); if (w) entities.spawnWandItem(w.def.sprite, x, y - 2, w) },
     // 法杖幽灵(wand_ghost.lua):出生捡一根 wand_level_03 拿着;死了掉出来
@@ -556,6 +562,7 @@ entities = await new Entities({
         if (w) entities.spawnWandItem(w.def.sprite, s.x, s.y - 2, w, { cost: it.cost, sale: it.sale, area: area() })
       } else if (s.entity === 'perks') { temple.spawnPerks?.(s.x, s.y); temple.guardPos?.(s.x + 30, s.y - 30) }
       else if (s.entity === 'portal') temple.spawnPortal?.(s.x, s.y)
+      else if (TELEPORTS[s.entity]) temple.spawnPortal?.(s.x, s.y, s.entity) // 房间里的传送门(teleport_*.xml / mystery_teleport)
       else if (s.entity === 'shop_area') temple.shopArea?.(s.x, s.y)
       else if (s.entity === 'areacheck') temple.areaCheck?.(s.x, s.y)
       else if (s.entity === 'workshop_exit') temple.exit?.(s.x, s.y)
@@ -739,7 +746,33 @@ function updateCollapse(dt) {
 //   灭 / 亮:LightComponent (64,100,255) r255 + r64,spark_purple 粒子环 r15(115 颗 / 12 帧,velocity_always_away_from_center 11)。
 //   这就是原版进圣山的正规路:从上一层掉进漏斗,碰到传送门 → 落到圣山左侧入口洞。(圣山砖不可挖,漏斗底下 190px 是实心的)
 temple.portals = []
-temple.spawnPortal = (x, y) => temple.portals.push({ x, y, on: true, t: Math.random(), cd: 0 })
+/**
+ * 全部 buildings/teleport_*.xml 的 TeleportComponent(target_x/y_is_absolute_position 缺省 0 = 相对自己):
+ *   ax / ay = 绝对;liq = MaterialAreaCheckerComponent 的 aabb(下面"眼睛"里要有传送液才通电,enabled_by_liquid);gate = 还要满足的 flag(teleroom.lua:杀了 Syväolento);
+ *   msg = UIInfoComponent name 的翻译。圣山漏斗底的 teleport_liquid_powered 就是默认那条
+ */
+const TELEPORTS = {
+  teleport_liquid_powered: { tx: -677, ty: 280, ax: 1, ay: 0, liq: [-2, 2, 136, 140], msg: '进入圣山:这里安全。货架碰一下 = 买 · 祭坛 3 选 1 天赋 · 改法杖 · 出口在右侧竖井', tut: 'temple' },
+  teleport: { tx: -677, ty: 280, ax: 1, ay: 0, msg: '更深处' }, teleport_boss_arena: { tx: 1891, ty: 280, ax: 1, ay: 0, msg: '更深处' },
+  teleport_ending: { tx: 1891, ty: 280, ax: 1, ay: 0, liq: [-2, 2, 136, 140], msg: '终局' },
+  teleport_bunker: { tx: -12400, ty: 391, ax: 1, ay: 1, msg: '世界' }, teleport_bunker2: { tx: -12800, ty: 615, ax: 1, ay: 1, msg: '世界' }, teleport_bunker_back: { tx: -12557, ty: 190, ax: 1, ay: 1, msg: '世界' },
+  teleport_desert: { tx: 7522, ty: -133, ax: 1, ay: 1, msg: '沙漠' }, teleport_lake: { tx: -13421, ty: 180, ax: 1, ay: 1, msg: '湖' },
+  teleport_ending_victory: { tx: 6220, ty: 15175, ax: 1, ay: 1, msg: '胜利' }, teleport_end_wall: { tx: 0, ty: -32, ax: 1, ay: 1, msg: '尽头之墙' },
+  teleport_excavationsite_cube_return: { tx: 190, ty: 3080, ax: 1, ay: 1, liq: [-2, 2, 98, 102], msg: '返回' },
+  teleport_hourglass: { tx: -3838, ty: 5420, ax: 1, ay: 1, liq: [-16, 16, 110, 115], msg: '更深处(沙漏室)' }, teleport_hourglass_return: { tx: 190, ty: 5231, ax: 1, ay: 1, msg: '返回' },
+  teleport_lavalake: { tx: -1875, ty: 0, ax: 0, ay: 0, msg: '返回' }, teleport_sandroom: { tx: -460, ty: 150, ax: 0, ay: 0, msg: '返回' }, teleport_smokecave: { tx: 1320, ty: -190, ax: 0, ay: 0, msg: '返回' },
+  teleport_meditation_cube: { tx: -4345, ty: 2365, ax: 1, ay: 1, msg: '立方体室' }, teleport_meditation_cube_return: { tx: 190, ty: 1525, ax: 1, ay: 1, msg: '返回' },
+  teleport_robot_egg_return: { tx: 190, ty: 6650, ax: 1, ay: 1, msg: '奇异而稳定的传送门' },
+  teleport_snowcave_buried_eye: { tx: 3895, ty: 4510, ax: 1, ay: 1, liq: [-2, 2, 98, 102], msg: '雪窟密室' }, teleport_snowcave_buried_eye_return: { tx: 190, ty: 3080, ax: 1, ay: 1, liq: [-2, 2, 98, 102], msg: '返回' },
+  teleport_start: { tx: 937, ty: 10, ax: 1, ay: 1, msg: '回到起点' }, teleport_teleroom: { tx: 3836, ty: 7518, ax: 1, ay: 1, msg: '传送室' },
+  teleport_teleroom_1: { tx: -12800, ty: 7008, gate: 'minibossFish' }, teleport_teleroom_2: { tx: -17920, ty: -7408, gate: 'minibossFish' }, teleport_teleroom_3: { tx: -13624, ty: -13824, gate: 'minibossFish' },
+  teleport_teleroom_4: { tx: -4396, ty: 8504, gate: 'minibossFish' }, teleport_teleroom_5: { tx: 10240, ty: 0, gate: 'minibossFish' }, teleport_teleroom_6: { tx: 7480, ty: -12288, gate: 'minibossFish' },
+  mystery_teleport: { tx: 9740, ty: 9150, ax: 1, ay: 1, msg: '神秘传送' }, mystery_teleport_back: { tx: 764, ty: -814, ax: 1, ay: 1, msg: '神秘传送(回)' },
+}
+temple.spawnPortal = (x, y, name = 'teleport_liquid_powered') => {
+  const D = TELEPORTS[name] || TELEPORTS.teleport_liquid_powered
+  temple.portals.push({ x, y, name, on: !D.liq, t: Math.random(), cd: 0, tx: D.ax ? D.tx : x + D.tx, ty: D.ay ? D.ty : y + D.ty, liq: D.liq || null, gate: D.gate || null, msg: D.msg || '', tut: D.tut || null })
+}
 const TELE_LIQ = new Set(['magic_liquid_teleportation', 'magic_liquid_unstable_teleportation'].map((n) => mats.byName.get(n)).filter((v) => v > 0))
 function updatePortals(dt) {
   for (const p of temple.portals) {
@@ -747,24 +780,26 @@ function updatePortals(dt) {
     p.t -= dt
     if (p.t <= 0) {
       p.t = 1
-      let n = 0, unloaded = 0
-      for (let y = p.y + 136; y <= p.y + 140; y++) for (let x = p.x - 2; x <= p.x + 2; x++) { const m = matAt(x, y); if (m < 0) unloaded++; else if (TELE_LIQ.has(m)) n++ }
-      if (!unloaded) { const was = p.on; p.on = n > 0; if (was && !p.on) toast('传送门熄灭了:下面眼睛里的传送液没了', 5) }
+      if (p.liq) {
+        let n = 0, unloaded = 0
+        for (let y = p.y + p.liq[2]; y <= p.y + p.liq[3]; y++) for (let x = p.x + p.liq[0]; x <= p.x + p.liq[1]; x++) { const m = matAt(x, y); if (m < 0) unloaded++; else if (TELE_LIQ.has(m)) n++ }
+        if (!unloaded) { const was = p.on; p.on = n > 0; if (was && !p.on) toast('传送门熄灭了:下面眼睛里的传送液没了', 5) }
+      } else if (p.gate) p.on = !!flags[p.gate]
     }
     p.cd = Math.max(0, p.cd - dt)
     if (!p.on || player.dead || p.cd > 0) continue
     // Hitbox ±15 与玩家 Hitbox(x −3..3, y −12..4)相交即触发
     if (player.x + 3 >= p.x - 15 && player.x - 3 <= p.x + 15 && player.y + 4 >= p.y - 15 && player.y - 12 <= p.y + 15) {
-      const tx = -677, ty = p.y + 280
+      const tx = p.tx, ty = p.ty
       for (let k = 0; k < 40 && sparks.length < 600; k++) { const a = Math.random() * 6.283; sparks.push({ x: player.x, y: player.y - 4, vx: Math.cos(a) * 120, vy: Math.sin(a) * 120, c: '#b080ff', life: 0.5 }) }
       player.x = tx; player.y = ty; player.vx = 0; player.vy = 0; player.iframe = 1
       cam.x = tx; cam.y = ty
       p.cd = 2
       sfx.play('magic', { vol: 0.9, rate: 0.6 })
       shakeT = Math.max(shakeT, 0.2)
-      toast('进入圣山:这里安全。货架碰一下 = 买 · 祭坛 3 选 1 天赋 · 改法杖 · 出口在右侧竖井', 8)
-      oplog.ev('portal', { from: [p.x | 0, p.y | 0], to: [tx | 0, ty | 0] })
-      tut.show('temple')
+      if (p.msg) toast(p.msg, 8)
+      oplog.ev('portal', { from: [p.x | 0, p.y | 0], to: [tx | 0, ty | 0], name: p.name })
+      if (p.tut) tut.show(p.tut)
     }
   }
 }
@@ -816,6 +851,9 @@ function printImportant(title, desc = '') {
   const el = $('important'); el.firstElementChild.textContent = title; el.lastElementChild.textContent = desc
   el.classList.add('on'); importantT = 3.5
 }
+/** 书(BookComponent):标题 + 正文(translations bookdesc*,原文英文)显示 8s */
+let bookT = 0
+function showBook(title, text) { const el = $('book'); el.firstElementChild.textContent = title; el.lastElementChild.textContent = text; el.classList.add('on'); bookT = Math.max(6, Math.min(14, 3 + text.length / 25)) }
 // ── 闪光精灵粒子(particles/shine_08.xml 5×5×6 帧 0.09s 循环;shine_06.xml 13×13×8 帧 0.08s):金块的 SpriteParticleEmitter 用它 ──
 const SHINE = { '08': { fw: 5, fh: 5, frames: 6, wait: 0.09, off: 2.5 }, '06': { fw: 13, fh: 13, frames: 8, wait: 0.08, off: 6.5 } }
 for (const k of Object.keys(SHINE)) decodePngBrowser(`${RES}/proj/particles_shine_${k}.png`).then((im) => { SHINE[k].img = im }).catch(() => {})
@@ -988,7 +1026,7 @@ function saveGame(why = 'tick') {
     player: { x: player.x, y: player.y, hp: player.hp, maxHp: player.maxHp, gold: player.gold, kills: player.kills },
     perks: player.perks, perkState: { nextIndex: perks.nextIndex, picked: perks.picked, rerollCount: perks.rerollCount || 0, rerollIndex: perks.rerollIndex ?? null },
     wands: player.wands.map(serWand), items: player.items.map((i) => ({ potion: i.potion, throw: i.throw, name: i.name })), spells: player.spells, payload,
-    orbs: player.orbs || 0, essences: player.essences || {}, quest: player.quest || [],
+    orbs: player.orbs || 0, essences: player.essences || {}, quest: player.quest || [], runFlags: player.runFlags || {}, curse: player.curse ? { depth: player.curse.depth } : null,
     guard: { angered: guard.angered, deaths: guard.deaths }, collapsed: [...collapsed],
     fog: lighting.fog.serialize(),
   }
@@ -1022,7 +1060,8 @@ function loadGame() {
   if (ws.length) player.wands = ws
   player.items = (s.items || []).filter((i) => i?.potion || i?.throw).map((i) => ({ potion: i.potion, throw: i.throw, name: i.name }))
   player.orbs = s.orbs || 0; player.essences = s.essences || {}; player.quest = s.quest || []
-  if (player.essences.fire) flags.protFire = true
+  player.runFlags = s.runFlags || {}; Object.assign(flags, player.runFlags)
+  player.curse = s.curse ? { depth: s.curse.depth, t: 150, pend: [] } : null
   if (player.quest.includes('evil_eye')) entities.hasEvilEye = true
   player.spells = [...(s.spells || [])]
   const died = !(s.player.hp > 0) // 死在那儿没点"回出生点"就关了页:回出生点满血继续(和按钮一样保留东西)
@@ -1177,14 +1216,44 @@ function drink() {
 }
 /** 效果每帧:回血 / 中毒 / 传送 / 回法力;倒计时 */
 function tickEffects(dt) {
-  // 精华(essence_*.xml 的永久 GameEffect):water 永远 WET + 脚边滴水;alcohol 永远醉;air 悬浮不耗蓝;fire 身边不停冒火(自己火免疫)
+  // 精华(entities/misc/essences/*.xml 挂在玩家身上的子实体,scripts/essences/*.lua 定时从玩家位置放弹,mWhoShot = 玩家所以打不到自己):
+  //   laser 每 120 帧 8 向 laser_bullet(速 300,起始角随机)· water 每 100 帧 1 发 water_bullet 随机方向 · air 每 40 帧 16 向 air_bullet · fire 每 120 帧原地 fire_explosion(r80 起火) · alcohol GameEffect DRUNK 永久
   const ES = player.essences
   if (ES) {
-    const fx = Math.floor(player.x + (Math.random() - 0.5) * 10), fy = Math.floor(player.y + (Math.random() - 0.5) * 8)
-    if (ES.water) { effects.WET = Math.max(effects.WET || 0, 2); if (Math.random() < 0.25 && sim.get(fx, fy) === 0) sim.set(fx, fy, mats.byName.get('water') || 0, 0) }
+    const T = (player.essenceT ||= {})
+    const ring = (key, n, len) => { const th0 = (1 + Math.random() * 359) * Math.PI / 180; for (let i = 0; i < n; i++) { const th = th0 + (i * Math.PI * 2) / n; const p = projectiles.spawn(key, player.x, player.y - 4, th, { owner: 'player' }); if (p) { p.vx = Math.cos(th) * len; p.vy = Math.sin(th) * len; p.noHit = 0.1 } } }
+    for (const [id, every, fire] of [['laser', 120, () => ring('e_essence_laser_bullet', 8, 300)], ['water', 100, () => ring('e_essence_water_bullet', 1, 300)], ['air', 40, () => ring('e_essence_air_bullet', 16, 300)], ['fire', 120, () => projectiles.spawn('e_essence_fire_explosion', player.x, player.y - 4, 0, { owner: 'player' })]]) {
+      if (!ES[id]) continue
+      T[id] = (T[id] ?? every) - dt * 60
+      if (T[id] <= 0) { T[id] = every; fire() }
+    }
     if (ES.alcohol) effects.ALCOHOLIC = Math.max(effects.ALCOHOLIC || 0, 2)
-    if (ES.air) player.fuel = 100
-    if (ES.fire && Math.random() < 0.2 && sim.get(fx, fy) === 0) sim.set(fx, fy, mats.byName.get('fire') || 0, 0)
+  }
+  // 贪婪诅咒(greed.xml):圣山里停,更深一层的圣山解除;否则每 150 帧记一个 358 帧后炸开的诅咒转换(r70:[solid] → rock_static_cursed_green、[liquid] → cursed_liquid)
+  const C = player.curse
+  if (C) {
+    const depth = Math.floor(player.y / 512)
+    const holy = /^temple_(altar|wall)/.test(streamer.get(Math.floor(player.x / 512) + 35, depth + 14)?.biome || '') // BiomeMapGetName 含 "holymountain"(自由模式的 editAnywhere 不算)
+    if (holy && depth > C.depth && (player.y - depth * 512) > 150) { player.curse = null; printImportant('诅咒消散了', '众神洗去了你身上的贪婪'); oplog.ev('greed_curse_gone', {}) }
+    else {
+      if (!holy) { C.t -= dt * 60; if (C.t <= 0) { C.t = 150; C.pend.push({ x: player.x, y: player.y, t: 358 }) } }
+      for (let i = C.pend.length - 1; i >= 0; i--) {
+        const P = C.pend[i]; P.t -= dt * 60
+        if (Math.random() < 0.3 && sparks.length < 600) { const a = Math.random() * 6.283, r = Math.random() * 70; sparks.push({ x: P.x + Math.cos(a) * r, y: P.y + Math.sin(a) * r, vx: 0, vy: -10, c: '#60ff60', life: 0.3 + Math.random() * 0.6 }) }
+        if (P.t > 0) continue
+        C.pend.splice(i, 1)
+        const rockC = mats.byName.get('rock_static_cursed_green') || 0, liqC = mats.byName.get('cursed_liquid') || 0
+        for (let yy = -70; yy <= 70; yy++) for (let xx = -70; xx <= 70; xx++) {
+          if (xx * xx + yy * yy > 4900) continue
+          const cx = Math.floor(P.x + xx), cy = Math.floor(P.y + yy), m = matAt(cx, cy)
+          if (m <= 0) continue
+          const k = mats.kind[m]
+          if ((k === 'static' || k === 'solid') && rockC && m !== rockC) sim.set(cx, cy, rockC, 0)
+          else if (k === 'liquid' && liqC && m !== liqC) sim.set(cx, cy, liqC, 0)
+        }
+        shakeT = Math.max(shakeT, 0.3); sfx.play('magic', { vol: 0.5, rate: 0.4 })
+      }
+    }
   }
   for (const id in effects) {
     if (effects[id] <= 0) continue
@@ -2365,6 +2434,7 @@ function loop(now) {
   if (player.hpGrowT > 0) { player.hpGrowT -= dt; $('hp').firstElementChild.style.background = (player.hpGrowT * 8 | 0) % 2 ? '#fff0f0' : '#e0484f' } else if ($('hp').firstElementChild.style.background) $('hp').firstElementChild.style.background = ''
   if (player.manaFlashT > 0) player.manaFlashT -= dt
   if (importantT > 0) { importantT -= dt; if (importantT <= 0) $('important').classList.remove('on') }
+  if (bookT > 0) { bookT -= dt; if (bookT <= 0) $('book').classList.remove('on') }
   $('fuel').firstElementChild.style.width = player.fuel + '%'
   $('fuel').firstElementChild.style.background = player.flyExhausted ? '#e0484f' : '#7fd4ff'
   // 气条:只在憋着气时显示(原版 HUD 也是入水才出)

@@ -105,6 +105,9 @@ const BOSS_PROJ = [
   ['bosscentipede_explosion', 'data/entities/animals/boss_centipede/boss_centipede_explosion.xml'], ['bosscentipede_explosion_large', 'data/entities/animals/boss_centipede/boss_centipede_explosion_large.xml'], ['bosscentipede_melee', 'data/entities/animals/boss_centipede/melee.xml'],
   ['bosscentipede_orb_mat_blood', 'data/entities/animals/boss_centipede/orb_mat_blood.xml'], ['bosscentipede_orb_mat_lava', 'data/entities/animals/boss_centipede/orb_mat_lava.xml'], ['bosscentipede_orb_mat_oil', 'data/entities/animals/boss_centipede/orb_mat_oil.xml'], ['bosscentipede_orb_mat_radioactive', 'data/entities/animals/boss_centipede/orb_mat_radioactive.xml'],
   ['maggot_orb', 'data/entities/animals/maggot_tiny/orb.xml'],
+  // 精华的周期弹(scripts/essences/*.lua 从玩家身上放):激光 8 向 / 水 1 发 / 风 16 向 / 火原地 r80 爆
+  ['essence_laser_bullet', 'data/entities/misc/essences/laser_bullet.xml'], ['essence_water_bullet', 'data/entities/misc/essences/water_bullet.xml'],
+  ['essence_air_bullet', 'data/entities/misc/essences/air_bullet.xml'], ['essence_fire_explosion', 'data/entities/misc/essences/fire_explosion.xml'],
 ]
 
 const out = {}

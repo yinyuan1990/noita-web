@@ -604,7 +604,8 @@ CONTROLLERS.fish_giga = {
     if (v.eye === 'opened' && v.timer > 360) { v.timer = 0; const off = RI(1, 100) * 0.01 * Math.PI; for (let a = 0; a < 8; a++) { const ang = off + (TAU / 8) * a; B.shoot('e_bossfish_orb_big', e.x, e.y, Math.cos(ang) * 80, -Math.sin(ang) * 80, { shooter: e }) } }
   },
   hurt(e, B, dmg, src, proj) { const P = B.player(), a = Math.atan2(P.y - (e.y + 48), P.x - e.x); B.shoot('e_bossfish_orb_big', e.x, e.y + 48, Math.cos(a) * 80, Math.sin(a) * 80, { shooter: e }) },
-  death(e, B) { B.drop('heart_fullhp', e.x + 32, e.y); B.drop('chest_random', e.x - 32, e.y) },
+  // death.lua:全世界的水变烟(ConvertMaterialEverywhere,没做)+ heart_fullhp + 超级箱 + 通往传送室的门;miniboss_fish flag 让传送室六扇门通电(teleroom.lua)
+  death(e, B) { B.drop('heart_fullhp', e.x + 32, e.y); B.drop('chest_random', e.x - 32, e.y); B.E.hooks.spawnSpecial?.({ entity: 'teleport_teleroom', x: e.x, y: e.y }); B.E.hooks.runFlag?.('minibossFish') },
 }
 
 /**

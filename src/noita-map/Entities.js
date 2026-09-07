@@ -108,7 +108,7 @@ export class Entities {
       if (!creature && !first) continue
       if (/^(wand_|experimental_wand_)/.test(s.entity)) { this.hooks.spawnWand?.(s.entity, s.x, s.y); continue } // 法杖:交给 WandSystem 造,再当物品放回来
       // 圣山的特殊物:商店货 / 特权 / 传送门(temple_altar.lua),由 noitaPlay 按各自 lua 掷
-      if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit' || s.entity === 'spell' || s.entity === 'perk_pickup') { this.hooks.spawnSpecial?.(s); continue }
+      if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit' || s.entity === 'spell' || s.entity === 'perk_pickup' || /^(teleport_|mystery_teleport)/.test(s.entity)) { this.hooks.spawnSpecial?.(s); continue }
       // boss 生成触发器(buildings/dragonspot.xml 等 CollisionTrigger):记下来,人进半径再放
       if (TRIGGERS[s.entity]) { if (first) this.triggers.push({ ...TRIGGERS[s.entity], name: s.entity, x: s.x, y: s.y, t: 0 }); continue }
       // 巫师洞入口的门(wizardcave_gate.lua):斥弹力场 + 吃 3 个蛋开门出四只门怪
