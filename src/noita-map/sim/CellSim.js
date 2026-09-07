@@ -31,14 +31,29 @@ const N8_OFF = N8_DX.map((dx, k) => N8_DY[k] * CHUNK + dx)
 
 export class CellSim {
   /**
+   * WASM 内核(wasm/lib.rs,和下面的 JS 逐行对应):step 主循环跑 WASM,区块数据放在它的线性内存里(区块槽),JS 的 get / set / mark 在同一块内存的视图上做。
+   * 拿不到(加载失败 / ?wasm=0)返回 null → 全 JS
+   * @param {string|URL} url
+   */
+  static async loadWasm(url) {
+    try {
+      const r = await fetch(url)
+      const { instance } = await WebAssembly.instantiate(await r.arrayBuffer(), {})
+      return instance.exports
+    } catch (e) { console.warn('cellsim.wasm', e); return null }
+  }
+
+  /**
    * @param {import('../core/materials.js').MaterialTable} mats
    * @param {Array} reactions  reactions.json
    * @param {{getChunk:(cx:number,cy:number)=>{mat:Uint16Array,aux?:Uint8Array,dirty:boolean}|null, onStaticChanged?:(cx:number,cy:number)=>void}} io
+   * @param {object|null} [wasm]  CellSim.loadWasm 的返回
    */
-  constructor(mats, reactions, io) {
+  constructor(mats, reactions, io, wasm = null) {
     this.mats = mats
     this.io = io
     this.obst = null
+    this.wasm = wasm
     const L = mats.list
     const n = L.length
     this.kind = new Uint8Array(n)
@@ -72,6 +87,7 @@ export class CellSim {
     this.M_SMOKE = mats.byName.get('smoke') ?? 0
     this.M_STEAM = mats.byName.get('steam') ?? 0
     this._buildReactions(reactions)
+    if (wasm) this._initWasm()
     // 窗口 chunk 表(最多 4×4)
     this.cx0 = 0; this.cy0 = 0; this.cw = 0; this.ch = 0
     this.tbl = new Array(16).fill(null)
@@ -79,6 +95,40 @@ export class CellSim {
     this.stepped = 0
     this.activeBlocks = 0
     this.lod = 1; this.lodDwell = 0; this.stepMs = 0 // 当前降档档位(1 = 每帧全走)/ 距上次换档的帧数 / 一步耗时的平滑值
+  }
+
+  // ── WASM 内核:材质表 / 反应表写进它的内存,区块槽分配器 ──
+  _initWasm() {
+    const W = this.wasm, buf = W.memory.buffer, A = W.arena(), L = (k) => W.layout(k)
+    const u8 = (off, n) => new Uint8Array(buf, A + off, n), u16 = (off, n) => new Uint16Array(buf, A + off, n), f32 = (off, n) => new Float32Array(buf, A + off, n)
+    const n = this.kind.length
+    u8(L(10), n).set(this.kind); u8(L(11), n).set(this.burnable); u8(L(12), n).set(this.smoke); u8(L(13), n).set(this.needsO2); u8(L(14), n).set(this.spread)
+    u8(L(15), 1024).set(this.rxAny); u8(L(16), 1024).set(this.airRx); u16(L(17), n).set(this.lifetime)
+    f32(L(18), n).set(this.density); f32(L(19), n).set(this.gravity); f32(L(20), n).set(this.autoign); f32(L(21), n).set(this.fireTemp); f32(L(22), n).set(this.fireHp)
+    // 反应表:rxIdx[a*1024+b] = 链表头(1 起);rxList 每条 12 字节 {p f32, ox u16, oy u16, next u16}
+    const idx = u16(L(23), 1024 * 1024), cap = L(25), list = new DataView(buf, A + L(24), cap * 12)
+    let ni = 0
+    for (const [k, l] of this.rx) {
+      let head = 0
+      for (let q = l.length - 1; q >= 0 && ni < cap; q--) { // 倒着插,链表顺序 = 原数组顺序
+        const r = l[q], o = ni * 12
+        list.setFloat32(o, r.p, true); list.setUint16(o + 4, r.ox, true); list.setUint16(o + 6, r.oy, true); list.setUint16(o + 8, head, true)
+        head = ++ni
+      }
+      idx[k] = head
+    }
+    if (ni >= cap) console.warn('cellsim.wasm 反应表溢出', this.rxCount, cap)
+    W.set_mats(this.M_FIRE, this.M_SMOKE)
+    // 区块槽:每槽 mat u16 / aux u8 / act(块 TTL)/ tver(实心版本)/ sblk(静态变化块)/ flags([0] dirty [1] staticChanged);ChunkStreamer 收到区块时 alloc + 拷 mat
+    const base = A + L(0), stride = L(1), count = L(2), oM = L(3), oA = L(4), oAct = L(5), oT = L(6), oS = L(7), oF = L(8)
+    const free = []
+    for (let i = count - 1; i >= 0; i--) free.push(i)
+    const mk = (i) => { const b = base + i * stride; return { i, mat: new Uint16Array(buf, b + oM, N), aux: new Uint8Array(buf, b + oA, N), act: new Uint8Array(buf, b + oAct, NB), tver: new Uint16Array(buf, b + oT, NB), sblk: new Uint8Array(buf, b + oS, NB), flags: new Uint8Array(buf, b + oF, 16) } }
+    const pool = new Map()
+    this.slots = {
+      alloc: () => { const i = free.pop(); if (i === undefined) { console.warn('cellsim.wasm 区块槽用完'); return null } W.clear_slot(i); let s = pool.get(i); if (!s) { s = mk(i); pool.set(i, s) } return s },
+      free: (s) => { free.push(s.i) },
+    }
   }
 
   // ── 脏块 ──
@@ -177,12 +227,19 @@ export class CellSim {
     const ix0 = inner ? Math.floor(inner.x0 / CHUNK) + WCX : this.cx0, ix1 = inner ? Math.floor(inner.x1 / CHUNK) + WCX : cx1
     const iy0 = inner ? Math.floor(inner.y0 / CHUNK) + WCY : this.cy0, iy1 = inner ? Math.floor(inner.y1 / CHUNK) + WCY : cy1
     let ok = true
+    const W = this.wasm
     for (let j = 0; j < this.ch; j++) for (let i = 0; i < this.cw; i++) {
       const cx = this.cx0 + i, cy = this.cy0 + j
       const e = this.io.getChunk(cx, cy)
       if (e && !e.aux) e.aux = new Uint8Array(N)
       this.tbl[j * 4 + i] = e || null
+      if (W) W.set_tbl(j * 4 + i, e?.slot ? e.slot.i : -1) // 没槽的区块(槽用完)WASM 不模拟,JS 的 get / set 照常
       if (!e && cx >= ix0 && cx <= ix1 && cy >= iy0 && cy <= iy1) ok = false
+    }
+    if (W) {
+      for (let k = this.ch * 4; k < 16; k++) W.set_tbl(k, -1)
+      for (let j = 0; j < this.ch; j++) for (let i = this.cw; i < 4; i++) W.set_tbl(j * 4 + i, -1)
+      W.set_window(this.cx0 - WCX, this.cy0 - WCY, this.cw, this.ch, this.wx0, this.wy0, this.wx1, this.wy1, this.ix0, this.iy0, this.ix1, this.iy1)
     }
     return ok
   }
@@ -271,6 +328,22 @@ export class CellSim {
     const lvlIn = Math.max(this.lod, this.activeBlocks > SIM_BLOCK_BUDGET * 2 ? 2 : 1)
     const lvlOut = this.activeBlocks > SIM_BLOCK_BUDGET ? Math.min(8, Math.max(2, lvlIn * 2)) : lvlIn
     const ix0 = this.ix0, iy0 = this.iy0, ix1 = this.ix1, iy1 = this.iy1
+    if (this.wasm) {
+      // 主循环在 WASM 里(同样的规则);跑完把每个槽的 dirty / staticChanged / 静态变化块 收回到 entry 上(JS 侧的 set 也写这些字段,两边合并)
+      moved = this.wasm.step(this.frame, lvlIn, lvlOut, (Math.random() * 0x7fffffff) | 0)
+      active = this.wasm.active()
+      for (let j = 0; j < this.ch; j++) for (let i = 0; i < this.cw; i++) {
+        const e = this.tbl[j * 4 + i], s = e?.slot
+        if (!s) continue
+        const F = s.flags
+        if (F[0]) { F[0] = 0; e.dirty = true }
+        if (F[1]) {
+          F[1] = 0; e.staticChanged = true
+          const sd = e.sdirty || (e.sdirty = new Uint8Array(256)), sb = s.sblk
+          for (let b = 0; b < 256; b++) if (sb[b]) { sd[b] = 1; sb[b] = 0 }
+        }
+      }
+    } else
     for (let j = this.ch - 1; j >= 0; j--) {
       for (let by = BN - 1; by >= 0; by--) {
         for (let i = 0; i < this.cw; i++) {
@@ -334,6 +407,7 @@ export class CellSim {
    */
   setObstacle(x0, y0, x1, y1) {
     this.obst = x0 == null ? null : { x0, y0, x1, y1 }
+    if (this.wasm) this.wasm.set_obst(this.obst ? 1 : 0, x0 | 0, y0 | 0, x1 | 0, y1 | 0)
     // 玩家周围要一直醒着(踩进水洼 / 挤开液体 / 走在沙上),盒子外扩 8px
     if (this.obst) this.markRect(x0 - 8, y0 - 8, x1 + 8, y1 + 8)
   }

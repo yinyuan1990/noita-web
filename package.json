@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:noita": "node scripts/build-noita.mjs",
+    "build:wasm": "cargo build --release --target wasm32-unknown-unknown --manifest-path src/noita-map/sim/wasm/Cargo.toml --target-dir src/noita-map/sim/wasm/target && node -e \"require('fs').copyFileSync('src/noita-map/sim/wasm/target/wasm32-unknown-unknown/release/cellsim.wasm','src/noita-map/sim/cellsim.wasm')\"",
     "preview": "vite preview",
     "record:douyin": "node scripts/record-douyin.mjs"
   },

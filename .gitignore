@@ -1,4 +1,5 @@
 node_modules/
+src/noita-map/sim/wasm/target/
 dist/
 dist-noita/
 *.tar.gz

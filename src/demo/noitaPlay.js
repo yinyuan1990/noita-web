@@ -56,10 +56,13 @@ window.addEventListener('pagehide', () => streamer.flush())
 const reactions = await (await fetch(`${RES}/reactions.json`)).json()
 const repaintDue = new Map() // chunk key → 最早可重画时刻(静态变化节流:PC 150ms,手机 300ms —— 每次重画都是整张 512×512 位图重传)
 const REPAINT_MS = IS_TOUCH ? 300 : 150
+// 模拟内核:WASM(sim/wasm/lib.rs,和 CellSim.js 逐行对应,数据在它的线性内存里)—— ?wasm=0 强制 JS
+const simWasm = Q.get('wasm') === '0' ? null : await CellSim.loadWasm(new URL('../noita-map/sim/cellsim.wasm', import.meta.url))
 const sim = new CellSim(mats, reactions, {
   getChunk: (cx, cy) => streamer.get(cx, cy),
   onStaticChanged: (cx, cy) => { const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + REPAINT_MS) },
-})
+}, simWasm)
+if (sim.slots) streamer.slots = sim.slots // 区块材质进 WASM 的槽
 let simBound = false
 if (glc) glc.setPalette(mats, sim.kind, sim.glow, sim.M_FIRE) // 材质叠层的调色板(色 / alpha / 种类 / 发光 / 是否火)
 // ── Box2D 世界(planck,第 ① 步:地形碰撞;`?phys=0` 关;`?physTest=1` 出生点上方丢几个测试箱子看落地)──

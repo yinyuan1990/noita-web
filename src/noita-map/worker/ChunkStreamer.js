@@ -135,6 +135,8 @@ export class ChunkStreamer {
       const e = this.entries.get(r.key)
       if (!e) continue
       Object.assign(e, { bitmap: this.resident ? this._toCanvas(r.bitmap) : r.bitmap, mat: r.mat, scenes: r.scenes, lights: r.lights || [], decor: r.decor || [], spawns: e.spawns || r.spawns || [], biome: r.biome, ready: true, timing: r.timing, layerInfo: r.layerInfo, wait: r.wait })
+      // 模拟内核在 WASM 里跑:材质拷进它的区块槽,e.mat / aux / act / tver 都指向槽里的视图(JS 侧照常读写)
+      if (this.slots) { const s = this.slots.alloc(); if (s) { s.mat.set(r.mat); e.slot = s; e.mat = s.mat; e.aux = s.aux; e.act = s.act; e.tver = s.tver } }
       this.stats.accepted++
       // 这块的植被(树/蘑菇)伸进上一块:上一块若已画好且当时还不知道这块的地表,补画一次,别让树在缝上少半截
       if (r.spillUp) { const up = this.get(e.cx, e.cy - 1); if (up?.ready && up.mat) this.repaint(e.cx, e.cy - 1) }
@@ -239,9 +241,10 @@ export class ChunkStreamer {
       this.stats.evicted++
       this.onEvict?.(e)
       if (e.dirty && this.store) {
-        this.store.put(this.seed, e.cx, e.cy, e.mat, ChunkStreamer.vegOf(e)).then(() => { this.stats.persisted++ }).catch((err) => console.warn('store.put', err))
+        this.store.put(this.seed, e.cx, e.cy, e.mat, ChunkStreamer.vegOf(e)).then(() => { this.stats.persisted++ }).catch((err) => console.warn('store.put', err)) // put 同步就 RLE 编码完了,槽随后复用没关系
       }
       this._free(e.bitmap); e.bitmap = null
+      if (e.slot) { this.slots.free(e.slot); e.slot = null; e.mat = null }
     }
   }
 
@@ -321,7 +324,7 @@ export class ChunkStreamer {
   }
 
   clear() {
-    for (const e of this.entries.values()) this._free(e.bitmap)
+    for (const e of this.entries.values()) { this._free(e.bitmap); if (e.slot) { this.slots.free(e.slot); e.slot = null } }
     for (const r of this.repainted) r.bitmap?.close?.()
     this.entries.clear(); this.done.length = 0; this.repainted.length = 0
   }
