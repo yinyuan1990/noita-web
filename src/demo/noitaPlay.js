@@ -531,9 +531,10 @@ entities = await new Entities({
       }
       if (b.potion) { if (player.items.length >= (flags.itemSlots || 4)) { b.dead = false; b.pickCool = 1; return } player.items.push({ potion: b.potion, name: '药水·' + (mats.list[mats.byName.get(b.potion.mat)]?.name || b.potion.mat) }); sfx.play('magic', { vol: 0.4, rate: 1.3 }); oplog.ev('pick_potion', { mat: b.potion.mat }); tut.show('potion'); return }
       if (b.name === 'chest_random') { entities.openChest(b); oplog.ev('chest', { x: b.x | 0, y: b.y | 0 }); return }
-      if (b.name === 'heart') {
+      if (b.name === 'heart' || b.name === 'heart_better' || b.name === 'heart_evil') {
         // heart.lua:max_hp += 1×HEARTS_MORE_EXTRA_HP(封顶 max_hp_cap),引擎把加的量也补进 hp;heart_effect.xml 红火花描一颗心 + heart_out 动画;GamePrintImportant $log_heart
-        const add = flags.heartMul || 1, capped = !!flags.hpCap
+        // heart_better.lua / heart_evil.lua(宝珠再捡一次给的):+2×
+        const add = (flags.heartMul || 1) * (b.name === 'heart' ? 1 : 2), capped = !!flags.hpCap
         if (!capped) player.maxHp += add
         player.hp = Math.min(player.maxHp, player.hp + add); player.hpGrowT = 1.2
         sfx.play('magic', { vol: 0.6, rate: 0.9 }); heartBurst(b.x, b.y - 12)
