@@ -29,7 +29,13 @@ if (pos.length) {
     const worst = [...withR].sort((a, b) => a.fps - b.fps).slice(0, 5)
     const rs = worst[0].r.map((_, k) => (worst.reduce((a, p) => a + (p.r[k] || 0), 0) / worst.length).toFixed(1))
     const tail = rs.length >= 6 ? `乘光/天空 ${rs[4]} 折射/贴屏 ${rs[5]}` : `合成 ${rs[4]}`
-    console.log(`最卡的 ${worst.length} 秒(fps ${worst.map((p) => p.fps).join('/')}):渲染分项 世界 ${rs[0]} 特效 ${rs[1]} 实体 ${rs[2]} 光照 ${rs[3]} ${tail} ms · 碎屑 ${worst.map((p) => p.debris ?? '-').join('/')} 火花 ${worst.map((p) => p.sparks ?? '-').join('/')}`)
+    console.log(`最卡的 ${worst.length} 秒(fps ${worst.map((p) => p.fps).join('/')}):渲染分项 世界 ${rs[0]} 特效 ${rs[1]} 实体 ${rs[2]} 光照 ${rs[3]} ${tail} ms · 碎屑 ${worst.map((p) => p.debris ?? '-').join('/')} 火花 ${worst.map((p) => p.sparks ?? '-').join('/')} sfx ${worst.map((p) => p.sfx ?? '-').join('/')} 精灵 ${worst.map((p) => p.pdc ?? '-').join('/')} bmp ${worst.map((p) => p.bmp ?? '-').join('/')} rp ${worst.map((p) => p.rp ?? '-').join('/')}`)
+    // rs = 每秒 1 帧自动 GPU 同步计时的分项(每项结束 getImageData 逼 GPU 干完):这才是每段真实的账;r 里不同步时全记在最后贴屏那项
+    const withRs = worst.filter((p) => Array.isArray(p.rs))
+    if (withRs.length) { const ss = withRs[0].rs.map((_, k) => (withRs.reduce((a, p) => a + (p.rs[k] || 0), 0) / withRs.length).toFixed(1)); console.log(`  同步计时分项(真实归属):世界 ${ss[0]} 特效 ${ss[1]} 实体 ${ss[2]} 光照 ${ss[3]} 乘光/天空 ${ss[4]} 折射/贴屏 ${ss[5]} ms`) }
+    // slow = 那一秒最慢一帧 ms,long = > 50ms 的帧数:fps 是 0.5s 平均,单帧 200ms 的卡顿在 fps 里看不出来
+    const withSlow = pos.filter((p) => p.slow !== undefined)
+    if (withSlow.length) { const ws = [...withSlow].sort((a, b) => b.slow - a.slow).slice(0, 5); console.log(`  最慢单帧(ms/长帧数@时刻): ${ws.map((p) => `${p.slow}/${p.long ?? '-'}@${(p.t / 1000).toFixed(0)}s`).join(' ')} · > 100ms 的秒数 ${withSlow.filter((p) => p.slow > 100).length}/${withSlow.length}`) }
   }
   console.log(`帧率 min ${Math.min(...fps)} avg ${(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(0)}  模拟 avg ${avg('sim')}ms${lod.length ? `(降档 ${lodLow}/${lod.length} 秒,最深 1/${Math.max(...lod)})` : ''} 逻辑 avg ${avg('logic')} 渲染 avg ${avg('render')}${phys.length ? `  物理 avg ${(phys.reduce((a, b) => a + b, 0) / phys.length).toFixed(1)} max ${Math.max(...phys)}ms` : ''}  轨迹 (${pos[0].x},${pos[0].y}) → (${pos[pos.length - 1].x},${pos[pos.length - 1].y})`)
 }

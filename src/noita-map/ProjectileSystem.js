@@ -1023,6 +1023,141 @@ export class ProjectileSystem {
     }
   }
 
+  /**
+   * 精灵软光栅(手机上的正解):sfx / 弹丸 / 动画 / 插在墙上的精灵不再一张一次 drawImage(变换 + lighter),而是 JS 里最近邻采样直接写像素 ——
+   * source-over 的写进叠层 ImageData(和 blitFx 同一张,alpha-over),additive 的累加进预乘加色缓冲 this.L.add,最后调用方 flushAdd → 一次 putImageData + 一次 lighter drawImage。
+   * 一帧两三百张精灵 → 画布指令从几百条变 2 条;iOS 的 2D 画布每条指令都是 GPU 进程里 CoreGraphics 一次独立光栅(带旋转 + 混合模式的小图尤其贵),这就是"贴屏" 12~19ms 的来源。
+   * 像素结果和 drawImage(imageSmoothingEnabled=false)一致:同样是目标像素中心反变换取最近的源像素;染色 = 源色 × color(原来 multiply + destination-in 的等价)
+   * beginBlit(d, VW, VH, ox, oy):一帧开始(d = 叠层 ImageData.data);之后 blitFx / blitSprites;putImageData 叠层后 flushAdd(img) 拿加色层
+   */
+  beginBlit(d, VW, VH, ox, oy) {
+    let L = this.L
+    if (!L || L.VW !== VW || L.VH !== VH) L = this.L = { VW, VH, add: new Uint8ClampedArray(VW * VH * 4), x0: VW, y0: VH, x1: 0, y1: 0 }
+    L.d = d; L.ox = ox; L.oy = oy
+    // 上一帧加色层只清脏矩形
+    if (L.x1 > L.x0) for (let y = L.y0; y < L.y1; y++) L.add.fill(0, (y * VW + L.x0) * 4, (y * VW + L.x1) * 4)
+    L.x0 = VW; L.y0 = VH; L.x1 = 0; L.y1 = 0
+  }
+
+  /**
+   * 一帧精灵:src = 图集像素(RGBA 非预乘),sw = 图集宽,帧矩形 (fx0,fy0,fw,fh),锚点 (offX,offY) 在局部坐标里被减掉;
+   * 变换 [a b c d e f] 同 canvas setTransform(局部 → 目标);alpha = globalAlpha;cr/cg/cb = 染色 0~1;additive → 加色层
+   */
+  _blit(src, sw, fx0, fy0, fw, fh, offX, offY, a, b, c, d, e, f, alpha, cr, cg, cb, additive) {
+    const L = this.L, W = L.VW, H = L.VH
+    const det = a * d - b * c
+    if (!(Math.abs(det) > 1e-6) || alpha <= 0) return
+    // 四角 → 目标包围盒
+    const lx0 = -offX, ly0 = -offY, lx1 = fw - offX, ly1 = fh - offY
+    const px0 = a * lx0 + c * ly0 + e, py0 = b * lx0 + d * ly0 + f, px1 = a * lx1 + c * ly0 + e, py1 = b * lx1 + d * ly0 + f
+    const px2 = a * lx0 + c * ly1 + e, py2 = b * lx0 + d * ly1 + f, px3 = a * lx1 + c * ly1 + e, py3 = b * lx1 + d * ly1 + f
+    const bx0 = Math.max(0, Math.floor(Math.min(px0, px1, px2, px3))), bx1 = Math.min(W, Math.ceil(Math.max(px0, px1, px2, px3)))
+    const by0 = Math.max(0, Math.floor(Math.min(py0, py1, py2, py3))), by1 = Math.min(H, Math.ceil(Math.max(py0, py1, py2, py3)))
+    if (bx1 <= bx0 || by1 <= by0) return
+    // 逆变换:目标像素中心 → 局部坐标(x 向一步 = (ia, ib))
+    const ia = d / det, ib = -b / det, ic = -c / det, id = a / det
+    const dst = additive ? L.add : L.d
+    this.drawn++
+    if (additive) { if (bx0 < L.x0) L.x0 = bx0; if (by0 < L.y0) L.y0 = by0; if (bx1 > L.x1) L.x1 = bx1; if (by1 > L.y1) L.y1 = by1 }
+    for (let y = by0; y < by1; y++) {
+      const dy = y + 0.5 - f, dx0 = bx0 + 0.5 - e
+      let lx = ia * dx0 + ic * dy + offX, ly = ib * dx0 + id * dy + offY
+      let o = (y * W + bx0) * 4
+      for (let x = bx0; x < bx1; x++, lx += ia, ly += ib, o += 4) {
+        const u = lx | 0, v = ly | 0 // 目标包围盒里 lx,ly 都 ≥ -1 量级,负数 |0 得 0 会被下面的 lx<0 挡掉
+        if (lx < 0 || ly < 0 || u >= fw || v >= fh) continue
+        const si = ((fy0 + v) * sw + fx0 + u) * 4, sa = src[si + 3]
+        if (!sa) continue
+        const al = (sa / 255) * alpha, r = src[si] * cr, g = src[si + 1] * cg, bl = src[si + 2] * cb
+        if (additive) { dst[o] += r * al; dst[o + 1] += g * al; dst[o + 2] += bl * al; dst[o + 3] += al * 255 } // 预乘累加,Uint8Clamped 自动截 255(和 lighter 逐次截一样)
+        else {
+          const a0 = dst[o + 3] / 255, outA = al + a0 * (1 - al)
+          if (outA <= 0) continue
+          const w0 = a0 * (1 - al)
+          dst[o] = (r * al + dst[o] * w0) / outA; dst[o + 1] = (g * al + dst[o + 1] * w0) / outA; dst[o + 2] = (bl * al + dst[o + 2] * w0) / outA; dst[o + 3] = outA * 255
+        }
+      }
+    }
+  }
+
+  /** 把 render() 里精灵那几段全部软画进叠层 / 加色层;调了这个,本帧 render() 就跳过它们(只剩电弧 / 黑洞 / 流光这些少量矢量) */
+  blitSprites() {
+    const L = this.L
+    if (!L) return
+    const { ox, oy, VW, VH } = L
+    this.spritesBlitted = true
+    this.drawn = 0
+    for (const s of this.sfx) {
+      const spr = s.spr, img = s.img, fw = spr.fw || img.width, fh = spr.fh || img.height
+      const m = Math.max(fw * Math.abs(s.sx), fh * Math.abs(s.sy)) + 2
+      if (s.x - ox < -m || s.x - ox > VW + m || s.y - oy < -m || s.y - oy > VH + m || !img.data) continue
+      const frame = spr.frames > 1 ? Math.min(spr.frames - 1, Math.floor(s.age / Math.max(0.01, spr.wait))) : 0
+      const rot = s.useVelRot ? Math.atan2(s.vy, s.vx) : s.rot, cs = Math.cos(rot), sn = Math.sin(rot)
+      this._blit(img.data, img.width, (spr.posX || 0) + frame * fw, spr.posY || 0, fw, fh, spr.offX, spr.offY, cs * s.sx, sn * s.sx, -sn * s.sy, cs * s.sy, Math.round(s.x - ox), Math.round(s.y - oy),
+        Math.max(0, Math.min(1, s.col[3])), Math.min(1, s.col[0]), Math.min(1, s.col[1]), Math.min(1, s.col[2]), !!s.additive) // color > 1 画布路径是不染(原图),这里也截到 1
+    }
+    const d = L.d
+    const dot = (x, y, w, h, c) => { // 实心小方块(材质粒子弹 1px / 没精灵的 2×2 白点)
+      for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) {
+        if (i < 0 || j < 0 || i >= VW || j >= VH) continue
+        const o = (j * VW + i) * 4; d[o] = (c >> 16) & 255; d[o + 1] = (c >> 8) & 255; d[o + 2] = c & 255; d[o + 3] = 255
+      }
+    }
+    const drawSprite = (pd, x, y, rot, frame, speed = 0, anim = null) => {
+      if (x < -96 || x > VW + 96 || y < -96 || y > VH + 96) return
+      if (pd.type === 'PHYSICS' && pd.physics?.image) {
+        const img = this.images.get(pd.physics.image)
+        if (img?.data) {
+          const cs = Math.cos(rot), sn = Math.sin(rot)
+          this._blit(img.data, img.width, 0, 0, img.width, img.height, Math.floor(img.width / 2), Math.floor(img.height / 2), cs, sn, -sn, cs, Math.round(x), Math.round(y), 1, 1, 1, 1, false)
+          return
+        }
+      }
+      if (pd.type === 'MATERIAL_PARTICLE' && pd.deathMaterial) {
+        const id = this.mats.byName.get(pd.deathMaterial)
+        this.drawn++; dot(Math.round(x), Math.round(y), 1, 1, id === undefined ? 0xffffff : this.mats.color[id]); return
+      }
+      const s = pd.sprite
+      const img = s?.image ? this.images.get(s.image) : null
+      if (!img?.data) { if (!pd.areaEffect) { this.drawn++; dot(Math.round(x) - 1, Math.round(y) - 1, 2, 2, 0xffffff) } return }
+      const a = anim || s
+      const fw = a.fw || img.width, fh = a.fh || img.height
+      const sx = pd.velocitySetsScale && speed ? Math.max(1, Math.min(8, ((speed / 60) * (pd.velocitySetsScaleCoeff || 1)) / fw)) : 1
+      const cs = Math.cos(rot), sn = Math.sin(rot), t = s.tint
+      this._blit(img.data, img.width, (a.posX || 0) + frame * fw, a.posY || 0, fw, fh, s.offX, s.offY, cs * sx, sn * sx, -sn, cs, Math.round(x), Math.round(y),
+        pd.spriteAlpha ?? 1, t ? t[0] : 1, t ? t[1] : 1, t ? t[2] : 1, !!(pd.additive || pd.emissive))
+    }
+    for (const s of this.stuck) drawSprite(s.d, s.x - ox, s.y - oy, s.rot, s.frame)
+    const wob = this.hooks.wobble
+    for (const p of this.list) {
+      if (p.bhR !== undefined) continue
+      const w = wob ? wob(p.x, p.y) : null
+      drawSprite(p.d, p.x - ox + (w ? w[0] : 0), p.y - oy + (w ? w[1] : 0), p.rot, p.frame, Math.hypot(p.vx, p.vy), p.spr || null)
+    }
+    for (const a of this.anims) {
+      if (a.x - ox < -a.fw || a.x - ox > VW + a.fw || a.y - oy < -a.fh || a.y - oy > VH + a.fh || !a.img.data) continue
+      const frame = a.loop ? Math.floor(a.t / a.wait) % a.frames : Math.min(a.frames - 1, Math.floor(a.t / a.wait))
+      const cs = a.angle ? Math.cos(a.angle) : 1, sn = a.angle ? Math.sin(a.angle) : 0
+      this._blit(a.img.data, a.img.width, (a.posX || 0) + frame * a.fw, a.posY || 0, a.fw, a.fh, a.offX, a.offY, cs, sn, -sn, cs, Math.round(a.x - ox), Math.round(a.y - oy), 1, 1, 1, 1, !!a.additive)
+    }
+  }
+
+  /** 加色层 → img(ImageData,非预乘)的脏矩形;返回 [x, y, w, h] 或 null(本帧没有 additive 精灵)。调用方 putImageData 这块再 lighter drawImage */
+  flushAdd(img) {
+    const L = this.L
+    if (!L || L.x1 <= L.x0 || L.y1 <= L.y0) return null
+    const W = L.VW, add = L.add, out = img.data
+    for (let y = L.y0; y < L.y1; y++) {
+      for (let o = (y * W + L.x0) * 4, oe = (y * W + L.x1) * 4; o < oe; o += 4) {
+        const al = add[o + 3]
+        if (!al) { out[o + 3] = 0; continue }
+        const k = 255 / al // 预乘 → 非预乘;浏览器 putImageData 再乘回去 = 累加出来的预乘色(al 截到 255 时 k=1,原样)
+        out[o] = add[o] * k; out[o + 1] = add[o + 1] * k; out[o + 2] = add[o + 2] * k; out[o + 3] = al
+      }
+    }
+    return [L.x0, L.y0, L.x1 - L.x0, L.y1 - L.y0]
+  }
+
   /** 画:精灵(朝速度方向,additive)、化妆粒子、爆炸帧 */
   render(ctx, ox, oy) {
     ctx.imageSmoothingEnabled = false
@@ -1050,9 +1185,11 @@ export class ProjectileSystem {
       ctx.globalAlpha = 1
     }
     this.fxBlitted = false
+    const soft = this.spritesBlitted // 精灵已经软画进叠层(blitSprites):下面 sfx / 插着的 / 弹丸 / 动画四段都跳过
+    this.spritesBlitted = false
     // 贴图粒子(烟团/光斑):按 color 染色 + alpha,帧按寿命推进;屏幕外的不画(拉帕往上打的弹带的烟大半在屏外,每张都是 save/rotate/scale/drawImage 一次提交)
-    this.drawn = 0
-    for (const s of this.sfx) {
+    if (!soft) this.drawn = 0
+    if (!soft) for (const s of this.sfx) {
       const spr = s.spr, fw = spr.fw || s.img.width, fh = spr.fh || s.img.height
       const m = Math.max(fw * Math.abs(s.sx), fh * Math.abs(s.sy)) + 2
       if (s.x - ox < -m || s.x - ox > VW + m || s.y - oy < -m || s.y - oy > VH + m) continue
@@ -1108,7 +1245,7 @@ export class ProjectileSystem {
       if (s.tint) ctx.drawImage(this._tint(img, { image: s.image, posX: a.posX, posY: a.posY }, frame, fw, fh, s.tint), -s.offX, -s.offY)
       else ctx.drawImage(img.image, (a.posX || 0) + frame * fw, a.posY || 0, fw, fh, -s.offX, -s.offY, fw, fh)
     }
-    for (const s of this.stuck) drawSprite(s.d, s.x - ox, s.y - oy, s.rot, s.frame)
+    if (!soft) for (const s of this.stuck) drawSprite(s.d, s.x - ox, s.y - oy, s.rot, s.frame)
     resetXf(); setOp('source-over'); setAlpha(1)
     // 带电的格子(电流走过的液体 / 金属):亮蓝白闪;电流头带一团蓝光(electricity.xml LightComponent r60 rgb 0/40/80)
     if (this.elec.size) {
@@ -1177,12 +1314,12 @@ export class ProjectileSystem {
     ctx.restore()
     // 液体折射(post_final.frag ENABLE_REFRACTION):落在液体格里的弹,采样坐标跟着液体一起晃 → hooks.wobble 给出这一格的 (dx,dy)
     const wob = this.hooks.wobble
-    for (const p of this.list) {
+    if (!soft) for (const p of this.list) {
       if (p.bhR !== undefined) continue // 黑洞本体上面画过了
       const w = wob ? wob(p.x, p.y) : null
       drawSprite(p.d, p.x - ox + (w ? w[0] : 0), p.y - oy + (w ? w[1] : 0), p.rot, p.frame, Math.hypot(p.vx, p.vy), p.spr || null)
     }
-    for (const a of this.anims) {
+    if (!soft) for (const a of this.anims) {
       if (a.x - ox < -a.fw || a.x - ox > VW + a.fw || a.y - oy < -a.fh || a.y - oy > VH + a.fh) continue
       this.drawn++
       const frame = a.loop ? Math.floor(a.t / a.wait) % a.frames : Math.min(a.frames - 1, Math.floor(a.t / a.wait))
