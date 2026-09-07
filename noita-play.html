@@ -21,6 +21,12 @@
       #hp { top: 44px; } #hp i { background: #e0484f; }
       #fuel { top: 54px; } #fuel i { background: #7fd4ff; }
       #air { top: 64px; display: none; } #air i { background: #d8f0ff; }
+      /* boss 血条(BossHealthBarComponent gui):屏幕顶部居中,名字在上;颜色照 ui_gfx/hud/colors_bar_bg(#794738)/ colors_health_bar_damage(#a64638) */
+      #bossbar { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); width: 220px; pointer-events: none; display: none; text-align: center; text-shadow: 0 1px 3px #000; }
+      #bossbar.on { display: block; }
+      #bossbar b { display: block; font-size: 11px; color: #fff4d6; letter-spacing: 1px; margin-bottom: 3px; }
+      #bossbar div { height: 7px; background: #3a2320; border: 1px solid #794738; }
+      #bossbar i { display: block; height: 100%; background: #a64638; }
       /* 状态区(原版 HUD:血条 / 悬浮条下面一列 status_indicators 图标,旁边一条剩余量 + 数字:沾污 % / 着火秒) */
       #status { position: fixed; left: max(8px, env(safe-area-inset-left)); top: 64px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; font-size: 10px; line-height: 12px; color: rgba(230,236,244,0.9); text-shadow: 0 1px 2px #000; }
       #status.air { top: 76px; }
@@ -148,6 +154,7 @@
     <div class="bar" id="air"><i style="width:100%"></i></div>
     <div id="status"></div>
     <div id="important"><b></b><span></span></div>
+    <div id="bossbar"><b></b><div><i style="width:100%"></i></div></div>
     <div id="death">
       <h2>你死了</h2>
       <p id="deathInfo"></p>

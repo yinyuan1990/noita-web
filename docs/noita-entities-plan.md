@@ -970,7 +970,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
       **书**(rock_box2d_hard 石板刚体)走过去"读"一遍标题留在原地;**精华** 永久效果:water 永远 WET + 脚边滴水、alcohol 永远醉、air 悬浮不耗蓝、fire 火免疫 + 身边冒火(laser 没做);**蛋 / 胡瓜** 进物品格(开火 = 扔),蛋碎 → `Entities._hatch` 照 egg_hatch.lua(SetRandomSeed(x−437, y+235),每项 Random(1,8)=8 才前进;worms 表出真虫,其余 CHARM 友好 + hp×4 + 不掉金);
       **potion_beer / milk** 固定内容的药水;**greed_curse** 只记标记;**任务物**(key / musicstone / wandstone / sunseed / evil_eye / flute / kantele)进 `player.quest`,evil_eye 让 Unohdettu 可打(`entities.hasEvilEye`)。存档带 orbs / essences / quest / 可扔物品。
     - 固定法杖 wand_good_1~3(精华室塔顶)/ experimental_wand_1~4(枪室 / 肉室 boss 掉):xml 只是壳,数值在 lua 的 gun.* 表(区间 Random、gun.actions 抽 action_count 张、AddGunActionPermanent 常驻卡)→ prepare-wands 抽成 `luaGun`,`Wands.make` 用 SetRandomSeed(x,y) 掷。Entities 的法杖路由正则放宽到 `experimental_wand_`。
-    - 没做:precious 的 orb 光 / 音;书的正文;essence_laser;greed 诅咒效果;乐器演奏;评 heart_better / heart_evil 的效果(捡了按普通心)。
+    - 没做:宝珠的光 / 音;书的正文;essence_laser;greed 诅咒效果;乐器演奏;heart_better / heart_evil 的效果(捡了按普通心)。
+33. **boss 血条 + 门怪开门(09-07 晚)✅ 已上线**:
+    - `#bossbar`(noita-play.html):BossHealthBarComponent gui —— 最近一只活 boss(含虫形的 Suomuhauki / Tapion vasalli)在 gui_max_distance_visible 内(默认 600,boss_sky 350)时屏幕顶部居中画名字(translations 中文:三眼赛旦 / 科尔密斯尔玛 …)+ 血条,配色照 ui_gfx/hud/colors_bar_bg(#794738)/ colors_health_bar_damage(#a64638)。
+    - **wizardcave_gate.lua**(`Entities.gates`,巫师洞入口 wizardcave_gate @ (x, y+55)):人在 300 内才跑;中心绕 (x+10, y−20) 转 sin/cos(t×0.02)×20;90 内非刚体弹被推开(v −= 50×(1−d/90) 朝中心分量、vy ×0.85、截 ±100),刚体 ×1.5×质量;
+      70 内没被拿着的蛋(`b.d.egg`)吃掉计数,满 3 → wizardcave_gate_monster_spawner:CellEater r140 清场 + 220 帧后四只门怪 a(0,0) b(−52,−8) c(52,−8) d(−8,−60),门消失。
+      画法:wizardcave_gate_ornaments.png 是 image_animation_file 的"时间图"(绿通道 = 出粒帧、红通道高的像素才是图案),预处理成红色图案 lighter 叠画 + 往外飘的红火花 + LightComponent r200 红光。蛋从巨树 g_egg(0.4 egg_worm / 0.02 egg_purple)拿。
+    - **Sauvojen tuntija(boss_pit)出生**:查遍数据 —— 唯一入口是 monster_powder_test 材质爆炸(materials.xml ExplosionConfig load_this_entity boss_pit_spawner),而这种材质在全部 biome_impl / wang_tiles 的图和所有 lua / xml 里都没用过,exe 里 "boss_pit" 字符串也只在怪物名单里;
+      原版这只 boss 就是没有世界生成入口的(wiki 也说它没有正常出生点)。照原版不出;控制器留着,以后有材质爆炸再接。
 
 ## 2.5 接手指南(新会话从这里开始)
 

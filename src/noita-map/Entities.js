@@ -57,6 +57,7 @@ export class Entities {
     this.stats = { spawned: 0, skipped: {}, killed: 0, bodies: 0, broken: 0 }
     this.bosses = new Bosses(this) // boss 的 lua 时间线 / 回调(Bosses.js)
     this.triggers = []             // 生成触发器(dragonspot / maggotspot / ghost_spawn_check …):人到半径内 → 放 boss
+    this.gates = []                // 巫师洞入口的门(wizardcave_gate.lua)
     this.helplessKills = 0         // GlobalsGetValue("HELPLESS_KILLS"):杀过多少无害动物(湖心岛 Sielu 用)
     this.time = 0
     this._solid = this._solid.bind(this)
@@ -110,6 +111,8 @@ export class Entities {
       if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit' || s.entity === 'spell' || s.entity === 'perk_pickup') { this.hooks.spawnSpecial?.(s); continue }
       // boss 生成触发器(buildings/dragonspot.xml 等 CollisionTrigger):记下来,人进半径再放
       if (TRIGGERS[s.entity]) { if (first) this.triggers.push({ ...TRIGGERS[s.entity], name: s.entity, x: s.x, y: s.y, t: 0 }); continue }
+      // 巫师洞入口的门(wizardcave_gate.lua):斥弹力场 + 吃 3 个蛋开门出四只门怪
+      if (s.entity === 'wizardcave_gate') { if (first) this.gates.push({ x: s.x, y: s.y, eggs: 0, t: 0, open: 0 }); continue }
       if (!d) { this.stats.skipped[s.entity] = (this.stats.skipped[s.entity] || 0) + 1; continue }
       if (d.kind === 'prop' && d.shape?.image) {
         // 像素刚体:形状图到了再建(见 update 里的 pendingProps)
@@ -1207,6 +1210,52 @@ export class Entities {
     return e
   }
 
+  /**
+   * wizardcave_gate.lua(每帧,人在 300 内才跑):中心绕 (x+10, y−20) 转 sin/cos(t×0.02)×20;90 内非刚体弹 v −= 50×(1−d/90) 朝中心的分量(= 推开),vy ×0.85,截 ±100;刚体受力 ×1.5×质量推开;
+   * 70 内没被拿着的 egg_item 吃掉 → egg_count,满 3 → wizardcave_gate_monster_spawner:CellEater r140 清场 + 220~235 帧后四只门怪 a(0,0) b(−52,−8) c(52,−8) d(−8,−60),门消失
+   */
+  _updateGates(dt) {
+    const pl = this.player
+    for (let i = this.gates.length - 1; i >= 0; i--) {
+      const G = this.gates[i]
+      if (G.open) {
+        G.open -= dt * 60
+        if (G.open <= 0) {
+          for (const [n, ox, oy] of [['a', 0, 0], ['b', -52, -8], ['c', 52, -8], ['d', -8, -60]]) { const m = this.spawnCreature('gate_monster_' + n, G.x + ox, G.y + oy); if (m) { m.state = 'chase'; m.stateT = 5 } }
+          this.hooks.sfx?.('explosion', { vol: 0.8, rate: 0.5, minGap: 100 })
+          this.gates.splice(i, 1)
+        } else if (Math.random() < 0.3) { const a = Math.random() * Math.PI * 2, r = Math.random() * 150; this.hooks.spark?.(G.x + Math.cos(a) * r, G.y + Math.sin(a) * r, 0, 0, '#ff5050', 0.6) }
+        continue
+      }
+      if (Math.hypot(pl.x - G.x, pl.y - G.y) > 300) continue
+      G.t += dt * 60
+      const t = G.t * 0.02, cx = G.x + Math.sin(t) * 20 + 10, cy = G.y + Math.cos(t) * 20 - 20
+      const R = 90, f60 = dt * 60
+      for (const p of this.projectiles?.list || []) {
+        if (p.dead || p.d.type === 'PHYSICS') continue
+        const d = Math.hypot(cx - p.x, cy - p.y); if (d >= R || d < 1) continue
+        const k = 50 * ((R - d) / R) * f60
+        p.vx -= ((cx - p.x) / d) * k; p.vy -= ((cy - p.y) / d) * k; p.vy *= Math.pow(0.85, f60)
+        p.vx = Math.max(-100, Math.min(100, p.vx)); p.vy = Math.max(-100, Math.min(100, p.vy))
+      }
+      for (const b of this.bodies) {
+        if (b.dead || b.isStatic || b.nailed) continue
+        const d = Math.hypot(cx - b.x, cy - b.y); if (d >= R * 0.5 || d < 1) continue
+        // 蛋:吃掉计数
+        if (b.isItem && b.d.egg && d < 70) {
+          b.dead = true; G.eggs++
+          for (let k = 0; k < 16; k++) this.hooks.spark?.(b.x, b.y, (Math.random() - 0.5) * 80, (Math.random() - 0.5) * 80, '#c080ff', 0.5)
+          this.hooks.sfx?.('magic', { vol: 0.7, rate: 0.8, minGap: 100 })
+          if (G.eggs >= 3) { G.open = 220; this._eatCells(G.x, G.y, 140); this.hooks.shake?.(0.6) }
+          continue
+        }
+        const k = 50 * ((R - d) / R) * 1.5 * dt * 6
+        if (b.asleep) b.wake?.(this.sim)
+        b.vx -= ((cx - b.x) / d) * k; b.vy -= ((cy - b.y) / d) * k; b.restT = 0; this.physics?.pushToPhysics(b)
+      }
+    }
+  }
+
   /** 生成触发器:人到半径内 → 放 boss(dragonspot / maggotspot / ghost_spawn_check / boss_limbs_trigger / boss_spirit_spawner) */
   _updateTriggers(dt) {
     const pl = this.player
@@ -1448,6 +1497,7 @@ export class Entities {
     this._updateBodies(dt, x0, y0, x1, y1)
     this._rebuildBodyGrid()
     if (this.triggers.length) this._updateTriggers(dt)
+    if (this.gates.length) this._updateGates(dt)
     const pl = this.player
     for (let i = this.worms.length - 1; i >= 0; i--) {
       const w = this.worms[i]
@@ -2732,6 +2782,7 @@ export class Entities {
     // 怪身上的 LightComponent(lukki r32 / 矿工头灯 r50 / giantshooter r80 绿光 / 火法师 r100):只给玩家周围一屏内的
     const pl = this.player
     for (const e of this.list) if (!e.dead && e.d.light && Math.abs(e.x - pl.x) < 400 && Math.abs(e.y - pl.y) < 260) cb(e.x - ox, e.y - oy, e.d.light.radius, `${e.d.light.r ?? 255},${e.d.light.g ?? 178},${e.d.light.b ?? 118}`, 1)
+    for (const G of this.gates) if (!G.open && Math.abs(G.x - pl.x) < 500 && Math.abs(G.y - pl.y) < 360) cb(G.x - ox, G.y - oy, 200, '255,25,20', 1) // wizardcave_gate LightComponent r200 红光
   }
 
   render(ctx, ox, oy) {
@@ -2776,6 +2827,20 @@ export class Entities {
     const W = ctx.canvas.width, H = ctx.canvas.height
     // boss 的 LaserEmitterComponent 光束(boss_robot 三门 / boss_ghost 四门)
     for (const e of this.list) if (!e.dead && e.lasers && e.boss) this.bosses.render(ctx, e, ox, oy)
+    // 巫师洞入口的门:wizardcave_gate_ornaments.png 的图案 + 往外飘的红火花(原版是两个 image_animation 粒子发射器按图撒 spark_red)
+    for (const G of this.gates) {
+      if (G.open) continue
+      // image_animation_file 的图不是贴图,是"时间图":每个像素的位置出一粒 spark_red,绿通道 = 出粒的相位 → 这里预处理成一张红色图案(alpha 按绿值错开呼吸)
+      const img = this._img('particles_image_emitters_wizardcave_gate_ornaments.png')
+      if (img?.data && !this._gateCv) {
+        const cv = new OffscreenCanvas(img.width, img.height), c = cv.getContext('2d'), id = c.createImageData(img.width, img.height)
+        // 绿通道是时间(哪一帧出粒),红通道高的才是图案线条本身
+        for (let i = 0; i < img.width * img.height; i++) { const o = i * 4; if (!img.data[o + 3] || img.data[o] < 64) continue; id.data[o] = 255; id.data[o + 1] = 70; id.data[o + 2] = 60; id.data[o + 3] = 140 + (img.data[o + 1] % 7) * 16 }
+        c.putImageData(id, 0, 0); tagPixels(cv, id); this._gateCv = cv
+      }
+      if (this._gateCv) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.55 + 0.25 * Math.sin(this.time * 2.5); ctx.drawImage(this._gateCv, Math.round(G.x - 5 - this._gateCv.width / 2 - ox), Math.round(G.y + 5 - this._gateCv.height / 2 - oy)); ctx.restore(); ctx.globalAlpha = 1 }
+      if (Math.random() < 0.5) { const a = Math.random() * Math.PI * 2, r = Math.random() * 30; this.hooks.spark?.(G.x - 5 + Math.cos(a) * r, G.y + 5 + Math.sin(a) * r, Math.cos(a) * 25, Math.sin(a) * 25, '#ff4040', 2 + Math.random() * 3) }
+    }
     for (const e of this.list) {
       if (e.dead) continue
       if (e.x < ox - 80 || e.x > ox + W + 80 || e.y < oy - 80 || e.y > oy + H + 80) continue // 屏幕外的不画(窗口里两三百只怪,每只 save/translate/drawImage 在 Safari 上不便宜);80px 留给腿 / 触手

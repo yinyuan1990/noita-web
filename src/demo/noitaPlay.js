@@ -2352,6 +2352,15 @@ function loop(now) {
   const perkLine = player.perks.length ? '  特权 ' + player.perks.map((id) => perks.perk(id)?.name || id).join('·') : ''
   $('hud').textContent = `(${player.x | 0}, ${player.y | 0})  深度 ${Math.max(0, player.y | 0)}  HP ${Math.ceil(player.hp * 25)}/${Math.round(player.maxHp * 25)}  金 ${player.gold}${player.spells.length ? '  散卡 ' + player.spells.length : ''}${status ? '  [' + status + ']' : ''}${atTemple ? '  [圣山:I / 编辑法杖]' : ''}${perkLine}\n${wandLine}  怪 ${entities.list.length} 道具 ${entities.bodies.length}`
   $('hp').firstElementChild.style.width = (player.hp / player.maxHp * 100) + '%'
+  // boss 血条(BossHealthBarComponent:gui_max_distance_visible 默认 600,boss_sky 350):最近的一只活 boss,名字 + 血量
+  {
+    let best = null, bd = Infinity
+    for (const e of entities.list) if (e.boss && !e.dead) { const d = Math.hypot(e.x - player.x, e.y - player.y); if (d < (e.name === 'boss_sky' ? 350 : 600) && d < bd) { bd = d; best = e } }
+    for (const w of entities.worms) if (w.d?.boss && !w.dead) { const d = Math.hypot(w.x - player.x, w.y - player.y); if (d < 600 && d < bd) { bd = d; best = w } }
+    const bb = $('bossbar')
+    if (best) { bb.classList.add('on'); bb.firstElementChild.textContent = best.d.label || best.name; bb.lastElementChild.firstElementChild.style.width = Math.max(0, Math.min(100, (best.hp / (best.maxHp || best.d.damage?.hp || 1)) * 100)) + '%' }
+    else bb.classList.remove('on')
+  }
   // 捡心 / 回满:血条闪白(原版 max_hp_old / mLastMaxHpChangeFrame 让血条动一下);法术刷新:法杖法力条闪
   if (player.hpGrowT > 0) { player.hpGrowT -= dt; $('hp').firstElementChild.style.background = (player.hpGrowT * 8 | 0) % 2 ? '#fff0f0' : '#e0484f' } else if ($('hp').firstElementChild.style.background) $('hp').firstElementChild.style.background = ''
   if (player.manaFlashT > 0) player.manaFlashT -= dt

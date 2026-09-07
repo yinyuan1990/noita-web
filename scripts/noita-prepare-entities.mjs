@@ -500,6 +500,8 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     out[key] = d
   }
 }
+// 巫师洞入口的门(wizardcave_gate.xml):两个 image_animation_file 粒子发射器按这张图的像素撒红火花 —— Entities 直接把图画出来再撒火花
+copyGfx('data/particles/image_emitters/wizardcave_gate_ornaments.png')
 // PixelSpriteComponent 的像素贴图 props(煤矿木架 / 丛林树 / 金库机器):World 当背景贴图放,图拷到 scenes/props/(Worker 走 assets.loadScene)
 fs.mkdirSync(`${OUT}/scenes/props`, { recursive: true })
 let nps = 0
