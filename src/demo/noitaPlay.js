@@ -41,7 +41,8 @@ const WORLD_REV = 2
 let store = null
 try { store = await new ChunkStore().open(); const n = await store.ensureRev(SEED, WORLD_REV); if (n) console.info(`[world] 生成版本变了,作废旧区块 ${n} 块`) } catch (e) { void e }
 // 手机上每帧只接 1 张新区块位图:512×512 位图第一次 drawImage 要传 1MB 纹理到 GPU,iPhone 上一帧塞两三张就是 10ms+ 的"合成"尖峰(日志里快速移动 / 爆炸重画时掉到 27fps 的那种)
-const streamer = new ChunkStreamer(client, { store, cache: 40, ahead: 2, behind: 1, side: 1, maxInFlight: 2, maxAcceptPerFrame: IS_TOUCH ? 1 : 2, maxRepaintPerFrame: 1 })
+// resident:区块位图落进常驻 canvas,重画只 putImageData 脏的 32×32 块(火烧 / 爆炸每次重画整张 1MB 位图重传,就是上报里"贴屏"那项 10~17ms 的来源)
+const streamer = new ChunkStreamer(client, { store, cache: 40, ahead: 2, behind: 1, side: 1, maxInFlight: 2, maxAcceptPerFrame: IS_TOUCH ? 1 : 2, maxRepaintPerFrame: 1, resident: true })
 streamer.seed = SEED
 document.addEventListener('visibilitychange', () => { if (document.hidden) streamer.flush() })
 window.addEventListener('pagehide', () => streamer.flush())
@@ -66,7 +67,7 @@ const LOG_URL = Q.get('log') === '0' ? '' : (location.hostname === 'localhost' |
 const oplog = new OpLog({ url: LOG_URL, meta: { seed: SEED, build: import.meta.env.MODE } })
 const sfx = new Sfx(RES)
 sfx.load(['impact', 'fire', 'wind', 'clash', 'electric', 'water', 'magic', 'explosion'])
-let stuckT = 0, stuckLogged = false, footT = 0, lastInState = '', posLogT = 0, posBmp = 0, spraying = false, hopT = 0
+let stuckT = 0, stuckLogged = false, footT = 0, lastInState = '', posLogT = 0, posBmp = { a: 0, r: 0, p: 0 }, spraying = false, hopT = 0
 /** 玩家周围材质快照(卡住时上传):'#'实心 '~'液体 ':'沙 '.'空 '?'未加载,一行一串 */
 function sampleAround(wx, wy, rx, ry) {
   const rows = []
@@ -585,7 +586,9 @@ function setCell(x, y, m) {
   if (simBound && sim.get(x, y) >= 0) { sim.set(x, y, m, 0); return true }
   const cx = Math.floor(x / CHUNK) + WCX, cy = Math.floor(y / CHUNK) + WCY, e = streamer.get(cx, cy)
   if (!e?.mat) return false
-  e.mat[((y - (cy - WCY) * CHUNK) * CHUNK) + (x - (cx - WCX) * CHUNK)] = m
+  const lx = x - (cx - WCX) * CHUNK, ly = y - (cy - WCY) * CHUNK
+  e.mat[ly * CHUNK + lx] = m
+  ChunkStreamer.markDirty(e, lx, ly)
   const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + REPAINT_MS)
   return true
 }
@@ -1568,7 +1571,7 @@ $('btnReport').addEventListener('click', async (e) => {
   const cw = curWand()
   oplog.ev('report', {
     x: player.x | 0, y: player.y | 0, box: sampleAround(player.x, player.y, 8, 12), note: 'manual',
-    fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
+    fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), sync: gpuSync ? 1 : 0, bmp: streamer.stats, simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
     ents: entities.list.length, bodies: entities.bodies.length, proj: projectiles.list.length, debris: debris.length, chunks: streamer.entries.size,
     wand: cw ? { name: cw.name, cards: cw.cards, potion: cw.potion ? cw.potion.mat : undefined } : null, touch: IS_TOUCH ? 1 : 0,
   })
@@ -1610,9 +1613,9 @@ function step(dt) {
   posLogT += dt
   if (posLogT >= 1) {
     posLogT = 0
-    const bmp = streamer.stats.accepted + streamer.stats.repainted // 这一秒换了几张区块位图(新区块 + 重画),每张第一次画都是 1MB 纹理上传
-    oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), bmp: bmp - posBmp, simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length })
-    posBmp = bmp
+    const st = streamer.stats // bmp = 这一秒新接了几张区块位图(每张 1MB 上传);rp = 重画补了几次;kpx = 补了多少千像素
+    oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), sync: gpuSync ? 1 : undefined, bmp: st.accepted - posBmp.a, rp: st.repainted - posBmp.r, kpx: ((st.patchPx - posBmp.p) / 1000) | 0, simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length })
+    posBmp = { a: st.accepted, r: st.repainted, p: st.patchPx }
   }
 
   // ── 身体:Noita CharacterPlatforming 模型 ──
@@ -1890,7 +1893,10 @@ function drawStatusIcons(ctx, ox, oy) {
 
 // 渲染分项(平滑 ms):[世界位图 + 材质叠层, 弹丸 / 特效, 植被 + 实体 + 玩家, 光照合成, 乘光 + 天空, 折射 / 放大贴到屏幕] —— 手机上报里看渲染到底慢在哪
 const rPhase = new Float32Array(6)
-const rMark = (k, t) => { const n = performance.now(); rPhase[k] = rPhase[k] * 0.9 + (n - t) * 0.1; return n }
+// 同步计时(手机点右上角 fps 那行切换):每个分项结束先 getImageData 1 像素逼 GPU 把队列干完,分项时间才是真的 —— iOS 的 2D 画布是排队执行,不同步的话全部账都记在最后贴屏那一项上
+let gpuSync = false
+$('fpsMini').addEventListener('click', () => { gpuSync = !gpuSync; oplog.ev('gpusync', { on: gpuSync ? 1 : 0 }) })
+const rMark = (k, t, c = vctx) => { if (gpuSync) c.getImageData(0, 0, 1, 1); const n = performance.now(); rPhase[k] = rPhase[k] * 0.9 + (n - t) * 0.1; return n }
 const rPhaseArr = () => Array.from(rPhase, (v) => +v.toFixed(1))
 function render() {
   let tp = performance.now()
@@ -2078,7 +2084,7 @@ function render() {
   // 放大到屏幕:视口里有液体且有 WebGL 才走折射 shader(post_final.frag 原式,屏幕分辩率亚像素采样),否则直接贴
   if (refr && simBound && liqCount > 0) gctx.drawImage(refr.render(view, liqMask, VW, VH, performance.now() / 1000, cam.x, cam.y), 0, 0)
   else gctx.drawImage(view, 0, 0, game.width, game.height)
-  rMark(5, tp)
+  rMark(5, tp, gctx)
   // 瞄准点
   if (touch.aim) {
     // 瞄准摇杆指示:原点小环 + 方向点(限制在 40px 内)
@@ -2170,7 +2176,7 @@ function loop(now) {
   $('air').firstElementChild.style.width = (player.air / 7 * 100) + '%'
   $('air').firstElementChild.style.background = player.air <= 0 ? '#e0484f' : '#d8f0ff'
   // 手机端整块面板藏着(挡视野),只在顶上留一行 fps / 模拟 / 物理毫秒,用户反馈掉帧时能直接说出数字
-  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
+  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${gpuSync ? '[同步] ' : ''}${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
   $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)} 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 醒 ${sim.activeBlocks} 块${sim.lod > 1 ? ` 降档 1/${sim.lod}` : ''} 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
   requestAnimationFrame(loop)
 }

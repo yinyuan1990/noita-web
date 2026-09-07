@@ -205,7 +205,10 @@ export class CellSim {
     const li = (wy & 511) * CHUNK + (wx & 511)
     const old = e.mat[li]
     if (old === m && e.aux[li] === a) return true
-    if (this.kind[old] === K_STATIC || this.kind[m] === K_STATIC) e.staticChanged = true
+    if (this.kind[old] === K_STATIC || this.kind[m] === K_STATIC) {
+      e.staticChanged = true
+      ;(e.sdirty || (e.sdirty = new Uint8Array(256)))[((wy & 511) >> 5) * 16 + ((wx & 511) >> 5)] = 1 // 脏 32×32 块:重画只补这些块(ChunkStreamer._patch)
+    }
     e.mat[li] = m; e.aux[li] = a; e.dirty = true
     this.mark(wx, wy)
     if ((this.kind[old] > 0 && this.kind[old] <= K_SAND) !== (this.kind[m] > 0 && this.kind[m] <= K_SAND)) this._bumpTver(e, wx, wy)

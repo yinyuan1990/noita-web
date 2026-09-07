@@ -887,6 +887,9 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         断法:iPhone 的 2D 画布是 GPU 排队执行,前面 `drawImage(区块位图)` 的 1MB 纹理上传全都欠着,到"合成"里 WebGL `texImage2D(view)` 读 2D 画布这个同步点一起结账 —— 一帧新接 2 张区块 + 几张重画就是 10ms+。
         修法:`ChunkStreamer` 手机每帧只接 1 张新区块位图(`maxAcceptPerFrame`),重画好的位图排队每帧最多换 1 张(`maxRepaintPerFrame`,同块旧的顶掉),静态变化重画节流手机 300ms;视口里没液体格(`liqCount`)就不走 WebGL 折射直接 drawImage;天空 6 层视差只在相机动了或过 100ms 才重画 skyCv。
         分项拆成 6 项(乘光+天空 / 折射+贴屏 分开),pos 事件加 `bmp`(这一秒换了几张区块位图)—— 下一份上报能直接对上"换位图的秒 = 掉帧的秒"。
+        ⑤(第四份上报 10:02)6 项分开后:**乘光+天空 0.0,"折射/贴屏" 10~17ms**,且尖峰秒 bmp 8~15 / 有爆炸重画;站着不动 bmp 6(火在屏外烧、重画的块没被画 → 不上传)只 3.5ms。坐实是位图上传在贴屏那个同步点结账。
+        修法:`ChunkStreamer({ resident: true })` —— 区块位图落进主线程**常驻 canvas**(池复用),新块 drawImage 一次;重画时 Worker 返回裸像素(`raw` → `pixels`),主线程只对脏的 32×32 块 `putImageData`(同一行连着的并成一条)。脏块由 `CellSim.set` 静态变化时标在 `e.sdirty`(Uint8Array 256),`setCell` 窗口外路径用 `ChunkStreamer.markDirty`;从没标过(null,如 spillUp 补树)= 整张补。探针:对地开火 4s 重画 58 次只补了 97 万像素(整张换是 1520 万),常驻 canvas 与整张重画逐像素比差 69 像素(在途)。
+        诊断:手机点右上角 fps 那行切换 **[同步] 计时**(每分项后 `getImageData` 1 像素逼 GPU 结账,分项时间才是真的),pos / report 带 `sync`;pos 另带 `rp`(重画次数)/ `kpx`(补了多少千像素)。
         还差:Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、PhysicsBridge+0x48 帧戳门、沙阻力 / splash 那条、飞刀插墙。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);

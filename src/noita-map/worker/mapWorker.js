@@ -41,19 +41,22 @@ self.onmessage = async (e) => {
       }
       const t2 = performance.now()
       await painter.prepare(chunk)
-      let bitmap = null
+      let bitmap = null, pixels = null
       if (HAS_OC && m.wantBitmap !== false) {
         painter.paint(chunk, oc)
-        bitmap = oc.transferToImageBitmap()
+        // raw:要裸像素(主线程按脏块 putImageData 进常驻画布,不整张换位图);否则整张 ImageBitmap
+        if (m.raw) pixels = oc.getContext('2d').getImageData(0, 0, oc.width, oc.height).data
+        else bitmap = oc.transferToImageBitmap()
       }
       const t3 = performance.now()
       const mat = m.wantMat ? chunk.mat.slice() : null
       const transfer = []
       if (mat) transfer.push(mat.buffer)
       if (bitmap) transfer.push(bitmap)
+      if (pixels) transfer.push(pixels.buffer)
       self.postMessage({
         type: 'chunk', id, cx, cy, biome: chunk.biome, kind: chunk.kind,
-        scenes: chunk.scenes, lights: chunk.lights || [], decor: chunk.decor || [], spawns: chunk.spawns || [], spillUp: !!chunk.spillUp, mat, bitmap,
+        scenes: chunk.scenes, lights: chunk.lights || [], decor: chunk.decor || [], spawns: chunk.spawns || [], spillUp: !!chunk.spillUp, mat, bitmap, pixels,
         timing: { prepare: t1 - t0, gen: t2 - t1, paint: t3 - t2 },
         layerInfo: chunk.layer ? { biome: chunk.layer.biome, mapW: chunk.layer.mapW, mapH: chunk.layer.mapH, rerolls: chunk.layer.rerolls, scenes: chunk.layer.scenes.length, genMs: chunk.layer.genMs } : null,
       }, transfer)

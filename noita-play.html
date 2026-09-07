@@ -134,7 +134,7 @@
       body.touch #panel { display: none; } /* 上报日志按钮手机上也留着:用户遇到卡顿点一下,带性能快照 + 当前法杖 */
       /* 手机端只留一行 fps(整块面板挡视野);顶部居中,血条在左、按钮在右 */
       /* 靠右上角(居中会被顶部的目标提示 / 圣山横幅盖住看不见),在工具按钮那一排上面 */
-      #fpsMini { display: none; position: fixed; top: max(4px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); font-size: 10px; color: rgba(200,214,226,0.75); text-shadow: 0 0 3px #000; pointer-events: none; white-space: nowrap; text-align: right; }
+      #fpsMini { display: none; position: fixed; top: max(4px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); font-size: 10px; color: rgba(200,214,226,0.75); text-shadow: 0 0 3px #000; pointer-events: auto; white-space: nowrap; text-align: right; }
       body.touch #fpsMini { display: block; }
     </style>
   </head>

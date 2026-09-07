@@ -49,12 +49,12 @@ export class WorldClient {
   }
 
   /**
-   * @param {{wantMat?:boolean, wantBitmap?:boolean, mat?:Uint16Array}} [o]  mat = 存档里的材质(改过的区块),给了就不用生成的
-   * @returns {Promise<{cx,cy,biome,scenes,mat:Uint16Array|null,bitmap:ImageBitmap|null,timing,layerInfo}>}
+   * @param {{wantMat?:boolean, wantBitmap?:boolean, raw?:boolean, mat?:Uint16Array}} [o]  mat = 存档里的材质(改过的区块),给了就不用生成的;raw = 要裸像素(pixels)而不是 ImageBitmap
+   * @returns {Promise<{cx,cy,biome,scenes,mat:Uint16Array|null,bitmap:ImageBitmap|null,pixels:Uint8ClampedArray|null,timing,layerInfo}>}
    */
-  requestChunk(cx, cy, { wantMat = true, wantBitmap = true, mat = null, veg = null } = {}) {
+  requestChunk(cx, cy, { wantMat = true, wantBitmap = true, raw = false, mat = null, veg = null } = {}) {
     const w = this.workers[this.rr++ % this.workers.length]
-    return this._call(w, { cmd: 'chunk', cx, cy, wantMat, wantBitmap, mat, veg }, mat ? [mat.buffer] : []) // veg = 植被落点(重画 / 读档时带回去,别重算)
+    return this._call(w, { cmd: 'chunk', cx, cy, wantMat, wantBitmap, raw, mat, veg }, mat ? [mat.buffer] : []) // veg = 植被落点(重画 / 读档时带回去,别重算)
   }
 
   _call(w, msg, transfer = []) {
