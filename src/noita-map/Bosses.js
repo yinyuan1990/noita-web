@@ -349,11 +349,14 @@ CONTROLLERS.boss_centipede = {
     e.hp = e.maxHp = 46 + Math.pow(2, orb + 1.3) + orb * 15.5
     e.boss.vars.orb = orb
     e.flySpeed = 14 * 4.5; e.boss.vars.speed0 = e.flySpeed; e.boss.vars.aggro = false; e.boss.vars.subphase = 0; e.boss.vars.repeats = 0; e.boss.vars.shield = false
-    B.move(e, 'follow')
+    // 开打之前(boss_centipede_before_fight.lua):不动、PROTECTION_ALL(打不动),腿随机摆;sampo_pickup.lua 拿起三宝 → FINAL_BOSS_ACTIVE → 换 update.lua
+    B.move(e, 'hold'); e.dmgMul = 0
     e.boss.vars.ref = { x: e.x, y: e.y }
   },
   *run(e, B) {
     const v = e.boss.vars
+    while (!B.E.finalBossActive) yield 10
+    e.dmgMul = 1; B.move(e, 'follow')
     const R = 60
     const setShield = (on) => { if (v.shield !== on) { v.shield = on; B.fx(e.x, e.y, 20, on ? '#ff80c0' : '#ff40a0', 120, 0.4) } }
     const openEye = function* () { if (v.eye) return; B.anim(e, 'open', 'opened'); v.eye = true; yield 55 }
@@ -444,7 +447,8 @@ CONTROLLERS.boss_centipede = {
       if (!conv) { p.shooter = e; p.owner = 'enemy'; p.noHit = 0; B.fx(p.x, p.y, 2, '#ff80c0', 20, 0.3) }
     }
   },
-  death(e, B) { for (let i = 0; i < 40; i++) B.particle('slime_green', e.x + RI(-10, 10), e.y + RI(-10, 10), 1, 0, -20); B.E.hooks.shake?.(1) },
+  // check_death 的死亡段:40 帧抖屏 + 绿浆,参考点 (ref.x, ref.y+50) 出 teleport_ending_victory_delay(通往胜利室 6220,15175);FINAL_BOSS_ACTIVE 归 0
+  death(e, B) { for (let i = 0; i < 40; i++) B.particle('slime_green', e.x + RI(-10, 10), e.y + RI(-10, 10), 1, 0, -20); B.E.hooks.shake?.(1); B.E.finalBossActive = false; const r = e.boss.vars.ref; B.E.hooks.spawnSpecial?.({ entity: 'teleport_ending_victory', x: r.x, y: r.y + 50 }); B.E.hooks.runFlag?.('bossCentipedeDead') },
 }
 
 /**

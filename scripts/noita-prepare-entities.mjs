@@ -77,7 +77,8 @@ const ITEMS = ['goldnugget_10', 'goldnugget_50', 'goldnugget_200', 'goldnugget_1
   ...['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', 'barren', 'bunker', 'corpse', 'diamond', 'essences', 'hint', 'mestari', 'moon', 'music_a', 'music_b', 'music_c', 'robot', 'tree', 'all_spells'].map((n) => `../books/book_${n}`), // 书(石板刚体 rock_box2d_hard)
   'essence_air', 'essence_alcohol', 'essence_fire', 'essence_laser', 'essence_water', // 精华(碰到就吃,永久效果)
   'egg_worm', 'egg_purple', 'egg_fire', 'egg_hollow', 'egg_monster', 'egg_red', 'egg_slime', 'egg_spiders', // 蛋(bone_box2d 刚体,摔碎出东西)
-  'gourd', 'greed_curse', 'musicstone', 'potion_beer', 'potion_milk', 'sun/sunseed', 'evil_eye', 'wandstone', '../flute', '../kantele', '../../animals/boss_alchemist/key']
+  'gourd', 'greed_curse', 'musicstone', 'potion_beer', 'potion_milk', 'sun/sunseed', 'evil_eye', 'wandstone', '../flute', '../kantele', '../../animals/boss_alchemist/key',
+  '../../animals/boss_centipede/sampo'] // 三宝(拿起来 Kolmisilmä 开打;带到结局点变一切为金)
 // 翻译 $key → 中文(缺就英文):books 的 $booktitleNN、$item_orb 等
 const zh = new Map()
 {

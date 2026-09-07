@@ -143,7 +143,7 @@ const player = {
 // 自由模式(FREE,默认开,?free=0 关):法术全开(背包里有整个法术库、随处改法杖)、法力 / 次数无限 —— 玩家要的是玩材质效果,不是攒资源
 const FREE = Q.get('free') !== '0'
 const GOD = Q.get('god') === '1' // 测地图:不掉血、不淹死
-const QUEST_ITEMS = new Set(['key', 'musicstone', 'wandstone', 'sunseed', 'evil_eye', 'flute', 'kantele']) // 捡进任务栏的东西(原版是拿在手里的道具 / 乐器)
+const QUEST_ITEMS = new Set(['key', 'musicstone', 'wandstone', 'sunseed', 'evil_eye', 'flute', 'kantele', 'sampo']) // 捡进任务栏的东西(原版是拿在手里的道具 / 乐器 / 三宝)
 // ?loadout=fast:探图预设四根杖(开路 / 传送 / 黑洞 / 陨石),开局直接替换掉背包里的法杖(存档里的也替),数值见 FAST_LOADOUT
 const LOADOUT = Q.get('loadout') || ''
 const flags = { editAnywhere: FREE, wandSlots: FREE ? 8 : 4 } // 特权开的开关 / 倍率(Perks.js EFFECTS 写,各处读);自由模式 8 根杖 / 每杖 20 格
@@ -511,6 +511,8 @@ entities = await new Entities({
       if (QUEST_ITEMS.has(b.name)) {
         player.quest = player.quest || []; player.quest.push(b.name)
         if (b.name === 'evil_eye') entities.hasEvilEye = true
+        // sampo_pickup.lua:FINAL_BOSS_ACTIVE = 1,Kolmisilmä 从 before_fight 切到 update.lua 开打
+        if (b.name === 'sampo') { entities.finalBossActive = true; printImportant('三宝到手', '带着它去结局点 —— 但先过了它'); sfx.play('magic', { vol: 1, rate: 0.4 }); shakeT = Math.max(shakeT, 0.8); oplog.ev('sampo', {}); return }
         printImportant(`捡到 ${b.d.label || b.name}`, b.name === 'evil_eye' ? '带着它,被遗忘者(Unohdettu)才打得到' : ''); sfx.play('magic', { vol: 0.5, rate: 1 }); oplog.ev('pick_quest', { id: b.name }); return
       }
       if (b.name === 'perk_reroll') {
@@ -563,6 +565,7 @@ entities = await new Entities({
       } else if (s.entity === 'perks') { temple.spawnPerks?.(s.x, s.y); temple.guardPos?.(s.x + 30, s.y - 30) }
       else if (s.entity === 'portal') temple.spawnPortal?.(s.x, s.y)
       else if (TELEPORTS[s.entity]) temple.spawnPortal?.(s.x, s.y, s.entity) // 房间里的传送门(teleport_*.xml / mystery_teleport)
+      else if (/^ending_sampo_spot/.test(s.entity)) endSpots.push({ x: s.x, y: s.y, kind: s.entity }) // 结局点(胜利室祭坛 / 山顶浮岛):带着三宝到 32px 内 → sampo_start_ending_sequence
       else if (s.entity === 'shop_area') temple.shopArea?.(s.x, s.y)
       else if (s.entity === 'areacheck') temple.areaCheck?.(s.x, s.y)
       else if (s.entity === 'workshop_exit') temple.exit?.(s.x, s.y)
@@ -746,6 +749,8 @@ function updateCollapse(dt) {
 //   灭 / 亮:LightComponent (64,100,255) r255 + r64,spark_purple 粒子环 r15(115 颗 / 12 帧,velocity_always_away_from_center 11)。
 //   这就是原版进圣山的正规路:从上一层掉进漏斗,碰到传送门 → 落到圣山左侧入口洞。(圣山砖不可挖,漏斗底下 190px 是实心的)
 temple.portals = []
+const endSpots = [] // 结局点(ending_sampo_spot_*)
+window.__endSpots = endSpots
 /**
  * 全部 buildings/teleport_*.xml 的 TeleportComponent(target_x/y_is_absolute_position 缺省 0 = 相对自己):
  *   ax / ay = 绝对;liq = MaterialAreaCheckerComponent 的 aabb(下面"眼睛"里要有传送液才通电,enabled_by_liquid);gate = 还要满足的 flag(teleroom.lua:杀了 Syväolento);
@@ -1228,6 +1233,29 @@ function tickEffects(dt) {
       if (T[id] <= 0) { T[id] = every; fire() }
     }
     if (ES.alcohol) effects.ALCOHOLIC = Math.max(effects.ALCOHOLIC || 0, 2)
+  }
+  // 结局(sampo_start_ending_sequence.lua):带着三宝到结局点 32px 内 → midas(一切变金:midas.xml 逐圈把周围材质换成 gold)+ ending_game_completed
+  if (!player.ending && player.quest?.includes('sampo')) {
+    for (const S of endSpots) if (Math.abs(player.x - S.x) + Math.abs(player.y - S.y) < 32) {
+      player.ending = { x: S.x, y: S.y, r: 0 }
+      player.quest.splice(player.quest.indexOf('sampo'), 1)
+      entities.hooks.runFlag?.('ending_game_completed')
+      printImportant('三宝归位!', S.kind.includes('mountain') ? '山巅之上 —— 世界化为黄金' : '地底深处 —— 世界化为黄金')
+      sfx.play('magic', { vol: 1, rate: 0.35 }); shakeT = Math.max(shakeT, 1.5); oplog.ev('ending', { kind: S.kind })
+      break
+    }
+  }
+  if (player.ending) {
+    const E = player.ending, goldId = mats.byName.get('gold') || 0
+    if (E.r < 420 && goldId) {
+      const r0 = E.r, r1 = Math.min(420, E.r + 5); E.r = r1
+      for (let yy = -r1; yy <= r1; yy++) for (let xx = -r1; xx <= r1; xx++) {
+        const d2 = xx * xx + yy * yy; if (d2 > r1 * r1 || d2 < r0 * r0) continue
+        const cx = Math.floor(E.x + xx), cy = Math.floor(E.y + yy), m = matAt(cx, cy)
+        if (m > 0 && m !== goldId) sim.set(cx, cy, goldId, 0)
+      }
+      if (sparks.length < 600) for (let k = 0; k < 6; k++) { const a = Math.random() * 6.283; sparks.push({ x: E.x + Math.cos(a) * r1, y: E.y + Math.sin(a) * r1, vx: 0, vy: -20, c: '#ffe080', life: 0.5 }) }
+    }
   }
   // 贪婪诅咒(greed.xml):圣山里停,更深一层的圣山解除;否则每 150 帧记一个 358 帧后炸开的诅咒转换(r70:[solid] → rock_static_cursed_green、[liquid] → cursed_liquid)
   const C = player.curse

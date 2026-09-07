@@ -986,7 +986,11 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     - **贪婪诅咒**(greed_curse_pickup.lua + greed.xml):拿了 → 头顶 66px 出 teleport_start(回起点 937,10)传送门;check_biome.lua 每 60 帧:不在圣山 → 诅咒生效;effect_curse_radioactive.lua 每 150 帧放 convert_radioactive_with_delay(358 帧后 r70:[solid] → rock_static_cursed_green、[liquid] → cursed_liquid,绿火花预警);
       进比拿它时更深(chunk 行 > 拿时 且 行内 y > 150)的圣山 → 解除。`player.curse {depth, t, pend[]}`,存档带 depth。自由模式 `editAnywhere` 不算圣山(用群系判)。
     - 探针 `_noita-essence-shot.mjs`:出生点挂五种精华 + 诅咒跑 8s(弹 / 转换 / 无报错)+ 读一本书截图。
-    - 没做:乐器演奏(flute / kantele 是有音符卡的"法杖",现在是任务物)、Kolmisilmä 的 sampo / 结局、天空 boss 幻影、heart_better / heart_evil。
+    - 没做:乐器演奏(flute / kantele 是有音符卡的"法杖",现在是任务物)、天空 boss 幻影、heart_better / heart_evil。
+35. **三宝与结局(09-07 晚)✅ 已上线**:`sampo` 进物品表(entities/animals/boss_centipede/sampo.xml,任务物);Kolmisilmä 开打前照 boss_centipede_before_fight.lua:不动 + PROTECTION_ALL(`dmgMul 0`,run 生成器在 `E.finalBossActive` 前空转);
+    sampo_pickup.lua:捡起三宝 → FINAL_BOSS_ACTIVE → 换 update.lua 时间线(dmgMul 1、FollowPlayer)。check_death 死亡段:参考点 (ref.x, ref.y+50) 出 teleport_ending_victory(→ 胜利室 6220,15175)+ 本局 flag bossCentipedeDead。
+    结局(sampo_start_ending_sequence.lua):带着三宝到 ending_sampo_spot_underground(胜利室祭坛)/ ending_sampo_spot_mountain(山顶浮岛)32px 内 → midas:以结局点为心每帧外扩 5px 到 r420 把所有非空气材质换成 gold + 金色火花,ending_game_completed flag;三宝消耗。
+    探针 `_noita-ending-shot.mjs`(传到实验室 → 拿三宝 → boss 变可打 → 打死出传送门 → 传到胜利室结局点看变金)。没做:midas 的 sand / chunks / walls 三种细分、34 颗宝珠的放射金结局、山顶那条的 "above" 文案。
 
 ## 2.5 接手指南(新会话从这里开始)
 
