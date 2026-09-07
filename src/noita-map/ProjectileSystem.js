@@ -1021,6 +1021,7 @@ export class ProjectileSystem {
    */
   blitFx(d, ox, oy, VW, VH) {
     this.fxBlitted = true
+    const pm = !!this.L?.pm
     for (const f of this.fx) {
       if (f.att) continue // 被吸的流光压在黑洞的雾和环上面画(render 里)
       const al = f.fade ? Math.max(0, Math.min(1, f.life / f.max)) : 1
@@ -1031,7 +1032,9 @@ export class ProjectileSystem {
       for (let k = 0; k <= n; k++) {
         const i = Math.round(f.x - ox - nx * k), j = Math.round(f.y - oy - ny * k)
         if (i < 0 || j < 0 || i >= VW || j >= VH) continue
-        const o = (j * VW + i) * 4, a0 = d[o + 3] / 255, outA = al + a0 * (1 - al)
+        const o = (j * VW + i) * 4
+        if (pm) { const w0 = 1 - al; d[o] = r * al + d[o] * w0; d[o + 1] = g * al + d[o + 1] * w0; d[o + 2] = b * al + d[o + 2] * w0; d[o + 3] = al * 255 + d[o + 3] * w0; continue }
+        const a0 = d[o + 3] / 255, outA = al + a0 * (1 - al)
         if (outA <= 0) continue
         const w0 = a0 * (1 - al)
         d[o] = (r * al + d[o] * w0) / outA; d[o + 1] = (g * al + d[o + 1] * w0) / outA; d[o + 2] = (b * al + d[o + 2] * w0) / outA; d[o + 3] = outA * 255
@@ -1046,10 +1049,11 @@ export class ProjectileSystem {
    * 像素结果和 drawImage(imageSmoothingEnabled=false)一致:同样是目标像素中心反变换取最近的源像素;染色 = 源色 × color(原来 multiply + destination-in 的等价)
    * beginBlit(d, VW, VH, ox, oy):一帧开始(d = 叠层 ImageData.data);之后 blitFx / blitSprites;putImageData 叠层后 flushAdd(img) 拿加色层
    */
-  beginBlit(d, VW, VH, ox, oy) {
+  beginBlit(d, VW, VH, ox, oy, pm = false) {
     let L = this.L
     if (!L || L.VW !== VW || L.VH !== VH) L = this.L = { VW, VH, add: new Uint8ClampedArray(VW * VH * 4), x0: VW, y0: VH, x1: 0, y1: 0 }
     L.d = d; L.ox = ox; L.oy = oy
+    L.pm = pm // pm:叠层按预乘写(GL 路径直接当纹理,不过 putImageData):over = src·a + dst·(1−a),省掉每像素一次除法
     // 上一帧加色层只清脏矩形
     if (L.x1 > L.x0) for (let y = L.y0; y < L.y1; y++) L.add.fill(0, (y * VW + L.x0) * 4, (y * VW + L.x1) * 4)
     L.x0 = VW; L.y0 = VH; L.x1 = 0; L.y1 = 0
@@ -1072,7 +1076,7 @@ export class ProjectileSystem {
     if (bx1 <= bx0 || by1 <= by0) return
     // 逆变换:目标像素中心 → 局部坐标(x 向一步 = (ia, ib))
     const ia = d / det, ib = -b / det, ic = -c / det, id = a / det
-    const dst = additive ? L.add : L.d
+    const dst = additive ? L.add : L.d, pm = L.pm
     this.drawn++
     if (additive) { if (bx0 < L.x0) L.x0 = bx0; if (by0 < L.y0) L.y0 = by0; if (bx1 > L.x1) L.x1 = bx1; if (by1 > L.y1) L.y1 = by1 }
     for (let y = by0; y < by1; y++) {
@@ -1086,6 +1090,7 @@ export class ProjectileSystem {
         if (!sa) continue
         const al = (sa / 255) * alpha, r = src[si] * cr, g = src[si + 1] * cg, bl = src[si + 2] * cb
         if (additive) { dst[o] += r * al; dst[o + 1] += g * al; dst[o + 2] += bl * al; dst[o + 3] += al * 255 } // 预乘累加,Uint8Clamped 自动截 255(和 lighter 逐次截一样)
+        else if (pm) { const w0 = 1 - al; dst[o] = r * al + dst[o] * w0; dst[o + 1] = g * al + dst[o + 1] * w0; dst[o + 2] = bl * al + dst[o + 2] * w0; dst[o + 3] = al * 255 + dst[o + 3] * w0 }
         else {
           const a0 = dst[o + 3] / 255, outA = al + a0 * (1 - al)
           if (outA <= 0) continue
@@ -1162,6 +1167,7 @@ export class ProjectileSystem {
   flushAdd(img) {
     const L = this.L
     if (!L || L.x1 <= L.x0 || L.y1 <= L.y0) return null
+    if (!img) return [L.x0, L.y0, L.x1 - L.x0, L.y1 - L.y0] // GL 路径:预乘缓冲 L.add 直接当纹理,只要脏矩形
     const W = L.VW, add = L.add, out = img.data
     for (let y = L.y0; y < L.y1; y++) {
       for (let o = (y * W + L.x0) * 4, oe = (y * W + L.x1) * 4; o < oe; o += 4) {

@@ -86,9 +86,73 @@ export const BIOMES = {
   // roadblock.xml:_EMPTY_ wang + coarse_map_not_terrain,roadblock.png 全透明只有一个生成点(10 只 acidshooter 的天空陷阱)→ 空气。
   // 之前没登记 → 走默认 solid,丘陵左上方(cx33,cy11)天上悬着一块 512 的岩石正方形
   roadblock: { color: 0xf0d517, kind: 'air', name: '路障(空)' },
-  // 沙漠地表的静态图块(scale / watchtower):地表群系打底,整图另由 init 放;没图之前至少别在天上悬岩石块
+  // 沙漠地表的静态图块 scale:地表群系打底,整图另由 init 放
   scale: { color: 0xeba500, kind: 'surface', name: '天平' },
-  watchtower: { color: 0xb70000, kind: 'surface', name: '瞭望塔' },
+
+  // ── 2026-09-07 全境补齐(之前没登记的 55 个色都走默认 solid = 一块 512 的岩石)──
+  // sky_light_injector.xml:_EMPTY_ + coarse_map_inject_light,天上散着 29 格 —— 纯空气(之前是悬在天上的岩石方块)
+  sky_light_injector: { color: 0xfe0000, kind: 'air', name: '天光注入点' },
+  // 塔顶两侧的 hills 色(3d3e40,_biomes_all 里指到 hills.xml):y≈4096 的地下,地表算法给的就是实心 → 直接实心
+  hills_tower: { color: 0x3d3e40, kind: 'solid', name: '塔顶丘陵' },
+  // 单 chunk 的 init() 整图房间(biome xml 是 _EMPTY_ wang / 无 type,形状全由 LoadPixelScene 给,底是空气);STATIC_SCENE_INIT 放图,STATIC_ROOM_MARKS 扫标记放实体
+  orbroom_02: { color: 0xffd102, kind: 'scene', bg: 'background_crypt.png', name: '宝珠室 02' },
+  orbroom_04: { color: 0xffd104, kind: 'scene', bg: 'background_cave_09.png', name: '宝珠室 04' },
+  orbroom_05: { color: 0xffd105, kind: 'scene', bg: 'background_wandcave.png', name: '宝珠室 05' },
+  orbroom_06: { color: 0xffd106, kind: 'scene', bg: 'background_cave_07.png', name: '宝珠室 06' },
+  orbroom_07: { color: 0xffd107, kind: 'scene', bg: 'background_cave_04_alt.png', name: '宝珠室 07' },
+  orbroom_08: { color: 0xffd108, kind: 'scene', bg: 'background_the_end.png', name: '宝珠室 08' },
+  orbroom_09: { color: 0xffd109, kind: 'scene', bg: 'background_cave_04_alt.png', name: '宝珠室 09' },
+  orbroom_10: { color: 0xffd110, kind: 'scene', bg: 'background_crypt.png', name: '宝珠室 10' },
+  essenceroom: { color: 0x157cb0, kind: 'scene', bg: 'background_crypt.png', name: '精华室·激光' },
+  essenceroom_hell: { color: 0x157cb5, kind: 'scene', bg: 'background_crypt.png', name: '精华室·水' },
+  essenceroom_alc: { color: 0x157cb6, kind: 'scene', bg: 'background_crypt.png', name: '精华室·酒' },
+  essenceroom_air: { color: 0x157cb8, kind: 'scene', bg: 'background_crypt.png', name: '精华室·气' },
+  mystery_teleport: { color: 0x157cb7, kind: 'scene', bg: 'background_crypt.png', name: '神秘传送室' },
+  rock_room: { color: 0x326655, kind: 'scene', bg: 'background_rainforest_dark.png', name: '石室' },
+  gun_room: { color: 0x39a760, kind: 'scene', bg: 'background_crypt.png', name: '枪室' },
+  moon_room: { color: 0x567cb0, kind: 'scene', bg: 'background_rainforest_dark.png', name: '月室' },
+  song_room: { color: 0x9d99d1, kind: 'scene', bg: 'background_crypt.png', name: '歌室' },
+  ocarina: { color: 0x57cace, kind: 'scene', bg: 'background_crypt.png', name: '陶笛室' },
+  alchemist_secret: { color: 0x57dace, kind: 'scene', bg: 'background_crypt.png', name: '炼金密室' },
+  secret_lab: { color: 0xbaa345, kind: 'scene', bg: 'background_snowcave.png', name: '秘密实验室(Ylialkemisti)' },
+  mestari_secret: { color: 0x1f3b62, kind: 'scene', bg: 'background_wizardcave.png', name: '大师密室(Mestarien mestari)' },
+  ghost_secret: { color: 0x1f3b64, kind: 'scene', bg: 'background_cave_04_alt.png', name: '幽灵密室(Unohdettu)' },
+  meatroom: { color: 0x796620, kind: 'scene', bg: 'background_the_end.png', name: '肉室(Kolmisilmän silmä)' },
+  roboroom: { color: 0x9d893d, kind: 'scene', bg: 'background_robobase.png', name: '机器人室(Mestarien mestari)' },
+  robot_egg: { color: 0x9e4302, kind: 'scene', bg: 'background_cave_01.png', name: '机器蛋室' },
+  funroom: { color: 0x0a95a4, kind: 'scene', bg: 'background_crypt.png', name: '游乐室' },
+  null_room: { color: 0xe17e32, kind: 'scene', bg: 'background_crypt.png', name: '虚无室' },
+  teleroom: { color: 0x5f8fab, kind: 'scene', bg: 'background_cave_02.png', name: '传送室' },
+  friend_1: { color: 0x6db55a, kind: 'scene', bg: 'background_cave_02.png', name: '友人洞 1' },
+  friend_2: { color: 0x6db55b, kind: 'scene', bg: 'background_cave_02.png', name: '友人洞 2' },
+  friend_3: { color: 0x6db55c, kind: 'scene', bg: 'background_cave_02.png', name: '友人洞 3' },
+  friend_4: { color: 0x6db55d, kind: 'scene', bg: 'background_cave_02.png', name: '友人洞 4' },
+  friend_5: { color: 0x6db55e, kind: 'scene', bg: 'background_cave_02.png', name: '友人洞 5' },
+  friend_6: { color: 0x6db55f, kind: 'scene', bg: 'background_cave_02.png', name: '友人洞 6' },
+  snowcave_secret_chamber: { color: 0x18a0d6, kind: 'scene', bg: 'background_snowcave.png', name: '雪窟密室' },
+  snowcastle_hourglass_chamber: { color: 0x18d6d6, kind: 'scene', bg: 'background_cave_04_alt3.png', name: '沙漏室' },
+  excavationsite_cube_chamber: { color: 0x24888a, kind: 'scene', bg: 'background_cave_04_alt3.png', name: '立方体室' },
+  snowcastle_cavern: { color: 0x775ddb, kind: 'scene', bg: 'background_cave_02.png', name: '雪城堡侧洞' },
+  wizardcave_entrance: { color: 0x804169, kind: 'scene', bg: 'background_crypt.png', name: '巫师洞入口(门怪)' },
+  bridge: { color: 0xad8111, kind: 'scene', bg: 'background_snowcave.png', name: '吊桥' },
+  // 圣山右室·雪城堡变体(altar_right_snowcastle.png,标记同 temple_altar_right)
+  temple_altar_right_snowcastle: { color: 0x93cb5a, kind: 'scene', name: '圣山·右(雪城堡)' },
+  // 全靠 spliced 整图给形状的(gourd_room.png 1536² / watercave.png 512×1139 已在 SPLICED_SCENES):底空气,标记在 spliced 图里(SPLICED_MARKS)
+  gourd_room: { color: 0x2e99d1, kind: 'air', bg: 'background_crypt.png', name: '葫芦室' },
+  // coarse_map_force_terrain="1" + _EMPTY_ 砖:整块先按材质带填实(lavalake 材质表 = rock_hard),再由 init() 整图 / spliced 图挖出房间
+  watercave: { color: 0x3046c1, kind: 'solid', fill: 'rock_hard', bg: 'background_cave_04_alt.png', name: '水洞' },
+  snowcave_tunnel: { color: 0x7be311, kind: 'solid', fill: 'rock_hard', bg: 'background_snowcave.png', name: '雪窟隧道' },
+  lavalake_pit: { color: 0x3d5a4f, kind: 'solid', fill: 'rock_hard', bg: 'background_cave_04_alt.png', name: '岩浆湖竖井' },
+  lavalake_racing: { color: 0x4118d6, kind: 'solid', fill: 'rock_hard', bg: 'background_cave_04_alt.png', name: '岩浆赛道' },
+  dragoncave: { color: 0x364d24, kind: 'solid', fill: 'rock_hard', bg: 'background_cave_02.png', name: '龙穴(Suomuhauki)' },
+  boss_victoryroom: { color: 0x50eed7, kind: 'solid', fill: 'rock_hard', bg: 'background_cave_02.png', name: '胜利室' },
+  solid_wall_tower_10: { color: 0x3d3e41, kind: 'scene', bg: 'background_crypt.png', name: '塔顶(精华室)' },
+  // 天空神殿 ×4 + 沙漠瞭望塔(biome_impl/static_tile/biome_*.xml static_tile="1"):wang 模板 *_fg.png 就是那片区域的 wang 层(不拼砖,1px = 10 世界像素,黑 = 空 / 白 = 材质带 / 彩色 = temples_common.lua 标记)
+  biome_boss_sky: { color: 0xff00fc, kind: 'wang', wang: 'static_tile/boss_fg.png', staticTile: true, bg: 'background_crypt.png', name: '天空神殿·Boss(Kolmisilmän sydän)' },
+  biome_barren: { color: 0xff00fb, kind: 'wang', wang: 'static_tile/barren_fg.png', staticTile: true, bg: 'background_wandcave.png', name: '天空神殿·荒芜' },
+  biome_darkness: { color: 0xff00fd, kind: 'wang', wang: 'static_tile/darkness_fg.png', staticTile: true, bg: 'background_crypt.png', name: '天空神殿·黑暗' },
+  biome_potion_mimics: { color: 0xff00fe, kind: 'wang', wang: 'static_tile/potion_mimics_fg.png', staticTile: true, bg: 'background_wandcave.png', name: '天空神殿·药水拟态' },
+  watchtower: { color: 0xb70000, kind: 'wang', wang: 'static_tile/watchtower_fg.png', staticTile: true, bg: null, name: '瞭望塔' },
 }
 
 export const BIOME_BY_COLOR = new Map(Object.entries(BIOMES).map(([n, b]) => [b.color, n]))

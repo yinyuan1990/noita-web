@@ -52,7 +52,24 @@ const ANIMALS = [
   'wizard_homing', 'barfer',
   // 雕像陷阱活化出来的会飞雕像(statue_trap.lua → animals/statue.xml,键 statue_animal)
   'statue',
+  // 菌林巨蘑菇(fungiforest.lua)/ 瞭望塔蝎子(temples_common.lua spawn_scorpion)/ 天空神殿药水拟态 / 友人洞(friend_N.lua:Toveri + 终极杀手)
+  'fungus_giga', 'scorpion_watchtower', 'mimic_potion', 'chest_mimic', 'friend', 'ultimate_killer',
+  // 门怪(wizardcave_gate_monster_spawner.xml,四只 PhysicsAI 石像,巫师洞入口三蛋祭门)
+  'boss_gate/gate_monster_a', 'boss_gate/gate_monster_b', 'boss_gate/gate_monster_c', 'boss_gate/gate_monster_d',
+  // ── Boss(docs/noita-bosses.md)——键在 BOSS_KEYS 里缩短 ──
+  'boss_dragon', 'maggot_tiny/maggot_tiny', 'boss_meat/boss_meat', 'boss_robot/boss_robot', 'boss_pit/boss_pit', 'boss_ghost/boss_ghost', 'boss_wizard/boss_wizard', 'boss_alchemist/boss_alchemist',
+  'boss_spirit/islandspirit', 'boss_spirit/wisp', 'boss_fish/fish_giga', 'boss_sky/boss_sky', 'boss_limbs/boss_limbs', 'boss_limbs/slimeshooter_boss_limbs', 'boss_centipede/boss_centipede', 'boss_centipede/boss_centipede_minion',
+  'boss_wizard/wizard_orb_blood', 'boss_wizard/wizard_orb_death', 'ethereal_being',
 ]
+/** animals 子目录里的 boss 主体用短键(scenes.js / Bosses.js 按这个名字找) */
+const BOSS_KEYS = {
+  'maggot_tiny/maggot_tiny': 'maggot_tiny', 'boss_meat/boss_meat': 'boss_meat', 'boss_robot/boss_robot': 'boss_robot', 'boss_pit/boss_pit': 'boss_pit', 'boss_ghost/boss_ghost': 'boss_ghost',
+  'boss_wizard/boss_wizard': 'boss_wizard', 'boss_alchemist/boss_alchemist': 'boss_alchemist', 'boss_spirit/islandspirit': 'islandspirit', 'boss_spirit/wisp': 'wisp', 'boss_fish/fish_giga': 'fish_giga',
+  'boss_sky/boss_sky': 'boss_sky', 'boss_limbs/boss_limbs': 'boss_limbs', 'boss_limbs/slimeshooter_boss_limbs': 'slimeshooter_boss_limbs', 'boss_centipede/boss_centipede': 'boss_centipede',
+  'boss_centipede/boss_centipede_minion': 'boss_centipede_minion', 'boss_wizard/wizard_orb_blood': 'wizard_orb_blood', 'boss_wizard/wizard_orb_death': 'wizard_orb_death',
+  'boss_gate/gate_monster_a': 'gate_monster_a', 'boss_gate/gate_monster_b': 'gate_monster_b', 'boss_gate/gate_monster_c': 'gate_monster_c', 'boss_gate/gate_monster_d': 'gate_monster_d',
+}
+const BOSS_SET = new Set(['boss_dragon', 'maggot_tiny', 'boss_meat', 'boss_robot', 'boss_pit', 'boss_ghost', 'boss_wizard', 'boss_alchemist', 'islandspirit', 'fish_giga', 'boss_sky', 'boss_limbs', 'boss_centipede', 'friend', 'gate_monster_a', 'gate_monster_b', 'gate_monster_c', 'gate_monster_d'])
 const ITEMS = ['goldnugget_10', 'goldnugget_50', 'goldnugget_200', 'goldnugget_1000', 'heart', 'potion', 'chest_random', 'spell_refresh', 'heart_fullhp_temple', 'perk_reroll', 'utility_box']
 const PROPS = [
   'physics_box_explosive', 'physics_barrel_oil', 'physics_barrel_radioactive', 'physics_crate', 'physics/minecart', 'physics_cart', 'physics_stone_01', 'physics_stone_02', 'physics_stone_03', 'physics_stone_04', 'physics/lantern_small', 'physics_skateboard', 'physics_brewing_stand', 'physics_bottle_green', 'physics_bottle_red', 'physics_bottle_blue', 'physics_bottle_yellow', 'physics_candle_1', 'physics_candle_2', 'physics_candle_3', 'physics_mining_lamp',
@@ -159,7 +176,11 @@ const first = (ent, name) => (ent.comps.get(name) || [])[0] || null
 /** Sprite xml → {image, offX, offY, def, anims:{name:{x,y,fw,fh,frames,wait,perRow,loop}}} */
 function spriteDef(rel) {
   if (!rel) return null
-  if (rel.endsWith('.png')) return { image: copyGfx(rel), offX: 0, offY: 0, def: 'default', anims: {} }
+  if (rel.endsWith('.png')) {
+    const image = copyGfx(rel), anims = {}
+    if (image) { const sz = pngSize(`${OUT}/ent/${image}`); if (sz) anims.default = { x: 0, y: 0, fw: sz[0], fh: sz[1], frames: 1, wait: 1, perRow: 1, loop: true } }
+    return { image, offX: 0, offY: 0, def: 'default', anims }
+  }
   const s = readFile(rel)
   if (!s) return null
   const sp = attrsOf((/<Sprite\b([^>]*)>/.exec(s) || [])[1])
@@ -195,7 +216,7 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     const e = parseEntity(xml)
     // animals 下的子目录(rainforest/ lukki/)是另一套强化版,键带目录前缀(和 scenes.js entKey 一致);props/physics/x 仍取文件名
     // animals/statue(雕像陷阱活化出来的怪)和 props/statue(金字塔石像)同名,怪的键改 statue_animal
-    const key = kind === 'animals' && n === 'statue' ? 'statue_animal' : kind === 'animals' && n.includes('/') ? n.replace(/\//g, '_') : path.basename(n)
+    const key = kind === 'animals' && n === 'statue' ? 'statue_animal' : kind === 'animals' && BOSS_KEYS[n] ? BOSS_KEYS[n] : kind === 'animals' && n.includes('/') ? n.replace(/\//g, '_') : path.basename(n)
     const d = { kind: kind === 'animals' ? 'creature' : kind === 'props' || kind === 'buildings' ? 'prop' : 'item', tags: [...new Set(e.tags.split(',').map((t) => t.trim()).filter(Boolean))], label: e.name }
     // 物品:金块面值(VariableStorage gold_value)、寿命(LifetimeComponent 帧)、自动拾取
     const vs = (e.comps.get('VariableStorageComponent') || []).find((v) => v.name === 'gold_value'); if (vs) d.gold = +vs.value_int
@@ -208,7 +229,8 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     const sc = sprites.find((s) => (s._tags || '').includes('character')) || sprites.find((s) => /enemies_gfx|props_gfx/.test(s.image_file)) || sprites[0]
     if (sc) { d.sprite = spriteDef(sc.image_file); if (d.sprite) { d.sprite.compOffX = num(sc.offset_x, 0); d.sprite.compOffY = num(sc.offset_y, 0); d.sprite.z = num(sc.z_index, 0); d.sprite.emissive = sc.emissive === '1' } }
     // 虫:头 + 若干身节 + 尾,每节一个 SpriteComponent,按顺序全留下
-    if (e.comps.has('WormComponent')) d.parts = sprites.filter((s) => /enemies_gfx/.test(s.image_file)).map((s) => { const sp = spriteDef(s.image_file); if (sp) { sp.compOffX = num(s.offset_x, 0); sp.compOffY = num(s.offset_y, 0) } return sp }).filter(Boolean)
+    // BossDragonComponent(Suomuhauki / Tapion vasalli maggot_tiny)= WormComponent 的引擎变体:同一组字段(speed / hunt / part_distance / hitbox_radius / target_kill_radius / hunt_box_radius …),当虫处理
+    if (e.comps.has('WormComponent') || e.comps.has('BossDragonComponent')) d.parts = sprites.filter((s) => /enemies_gfx/.test(s.image_file)).map((s) => { const sp = spriteDef(s.image_file); if (sp) { sp.compOffX = num(s.offset_x, 0); sp.compOffY = num(s.offset_y, 0) } return sp }).filter(Boolean)
     const hb = first(e, 'HitboxComponent'); if (hb) d.hitbox = pick(hb, ['aabb_min_x', 'aabb_max_x', 'aabb_min_y', 'aabb_max_y', 'damage_multiplier'])
     const cd = first(e, 'CharacterDataComponent'); if (cd) d.character = pick(cd, ['collision_aabb_min_x', 'collision_aabb_max_x', 'collision_aabb_min_y', 'collision_aabb_max_y', 'climb_over_y', 'buoyancy_check_offset_y', 'check_collision_max_size_x', 'check_collision_max_size_y', 'fly_time_max', 'gravity'])
     const cp = first(e, 'CharacterPlatformingComponent'); if (cp) d.platforming = pick(cp, ['pixel_gravity', 'run_velocity', 'velocity_min_x', 'velocity_max_x', 'velocity_min_y', 'velocity_max_y', 'jump_velocity_x', 'jump_velocity_y', 'accel_x', 'accel_x_ground', 'turning_buffer', 'fly_velocity_x', 'fly_speed_max_up', 'fly_speed_max_down', 'fly_speed_change_spd', 'fly_speed_mult', 'jump_keydown_buffer'])
@@ -225,6 +247,13 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     const pa = first(e, 'PhysicsAIComponent'); if (pa) d.physicsAI = pick(pa, ['target_vec_max_len', 'force_coeff', 'force_balancing_coeff', 'force_max', 'torque_coeff', 'torque_balancing_coeff', 'torque_max', 'damping', 'torque_damping', 'rotation_speed', 'keep_upright', 'free_jump_min_x', 'free_jump_max_x', 'free_jump_min_y', 'free_jump_max_y', 'levitate'])
     const wc = first(e, 'WormComponent'); if (wc) d.worm = pick(wc, ['acceleration', 'gravity', 'tail_gravity', 'part_distance', 'ground_check_offset', 'hitbox_radius', 'target_kill_radius', 'target_kill_ragdoll_force', 'jump_cam_shake', 'speed', 'bite_damage', 'eat_anim_wait_mult'])
     const wa = first(e, 'WormAIComponent'); if (wa) d.wormAI = pick(wa, ['speed', 'speed_hunt', 'direction_adjust_speed', 'direction_adjust_speed_hunt', 'hunt_box_radius', 'random_target_box_radius', 'new_hunt_target_check_every', 'new_random_target_check_every', 'give_up_area_radius', 'give_up_time_frames'])
+    // BossDragonComponent 把 Worm + WormAI 的字段合在一个组件里(speed/speed_hunt/acceleration/direction_adjust_speed(_hunt)/tail_gravity/part_distance/hitbox_radius/target_kill_radius/hunt_box_radius/random_target_box_radius/new_*_check_every/jump_cam_shake)
+    const bd = first(e, 'BossDragonComponent')
+    if (bd) {
+      d.worm = { ...pick(bd, ['acceleration', 'tail_gravity', 'part_distance', 'ground_check_offset', 'hitbox_radius', 'target_kill_radius', 'target_kill_ragdoll_force', 'jump_cam_shake', 'speed', 'eat_anim_wait_mult']), gravity: 30, bite_damage: n.includes('maggot') ? 2.6 : 1.6 }
+      d.wormAI = pick(bd, ['speed', 'speed_hunt', 'direction_adjust_speed', 'direction_adjust_speed_hunt', 'hunt_box_radius', 'random_target_box_radius', 'new_hunt_target_check_every', 'new_random_target_check_every'])
+      d.dragon = true
+    }
     const ce = first(e, 'CellEaterComponent'); if (ce) d.cellEater = pick(ce, ['radius', 'eat_probability', 'only_stain', 'limited_materials', 'ignored_material_tag', 'eat_dynamic_physics_bodies'])
     const ps = first(e, 'PhysicsImageShapeComponent'); if (ps) d.shape = { image: copyGfx(ps.image_file), material: ps.material || '', centered: ps.centered === '1', offX: num(ps.offset_x, 0), offY: num(ps.offset_y, 0), z: num(ps.z_index, 0) }
     const pb = first(e, 'PhysicsBodyComponent') || first(e, 'PhysicsBody2Component'); if (pb) d.body = pick(pb, ['friction', 'restitution', 'linear_damping', 'angular_damping', 'density', 'is_bullet', 'is_static', 'allow_sleep', 'hax_fix_going_through_ground', 'kill_entity_after_initialized', 'buoyancy', 'auto_clean'])
@@ -306,7 +335,14 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     if (n === 'meat_cyst') { d.kind = 'creature'; d.stationary = true; d.ai = d.ai || {}; d.hitbox = d.hitbox || { aabb_min_x: -8, aabb_max_x: 8, aabb_min_y: -8, aabb_max_y: 8 }; d.character = { collision_aabb_min_x: -8, collision_aabb_max_x: 8, collision_aabb_min_y: -8, collision_aabb_max_y: 8, climb_over_y: 0 }; d.platforming = { pixel_gravity: 0, run_velocity: 0, velocity_max_x: 0 } }
     // 激光门 lasergate_down:LaserEmitterComponent(朝下 laser_angle_add_rad 1.571,max_length 160,damage_to_entities 0.2,beam_radius 1.5),lasergate_ver.lua 按 cos 亮灭
     const le = first(e, 'LaserEmitterComponent')
-    if (le) {
+    // Boss 身上的 LaserEmitterComponent 列表(Mestarien mestari 三门 / Unohdettu 四门,子实体里的另在 Bosses.js 里按 lua 写死):<laser> 子块的字段
+    if (le && BOSS_SET.has(key)) {
+      d.lasers = (e.comps.get('LaserEmitterComponent') || []).map((l, i) => {
+        const blocks = [...xml.matchAll(/<laser\b([^>]*)>/g)].map((m) => attrsOf(m[1]))
+        const L = blocks[i] || {}
+        return { angle: num(l.laser_angle_add_rad, 0), dmg: num(L.damage_to_entities, 0.8), cellDmg: num(L.damage_to_cells, 50000), maxDur: num(L.max_cell_durability_to_destroy, 14), maxLen: num(L.max_length, 240), radius: num(L.beam_radius, 10.5), particle: L.beam_particle_type || 'spark_red' }
+      })
+    } else if (le) {
       d.lasergate = { maxLen: num(le.max_length, 160), dmg: num(le.damage_to_entities, 0.2), radius: num(le.beam_radius, 1.5), angle: num(le.laser_angle_add_rad, 1.571) }
       d.kind = 'creature'; d.stationary = true; d.invulnerable = true; d.ai = {}
       d.hitbox = d.hitbox || { aabb_min_x: -1, aabb_max_x: 1, aabb_min_y: -1, aabb_max_y: 1 }
@@ -344,7 +380,7 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     const ad = first(e, 'AreaDamageComponent'); if (ad) d.areaDamage = { l: num(ad['aabb_min.x'], -8), r: num(ad['aabb_max.x'], 8), t: num(ad['aabb_min.y'], -8), b: num(ad['aabb_max.y'], 8), dmg: num(ad.damage_per_frame, 0.1), every: num(ad.update_every_n_frame, 10) / 60 }
     // lukki 蜘蛛:PhysicsShapeComponent 圆身 + PhysicsAI(force_coeff 推向目标)+ LimbBossComponent state=1(FollowPlayer)+ 子实体腿(IKLimbComponent length,
     // IKLimbAttackerComponent radius 的那条是攻击腿,IKLimbWalkerComponent 的踩地);腿的三张图 limb_A(根→膝)/ limb_B(膝→脚)/ knee。子实体在 parseEntity 里被剔掉,这里从原文另抽
-    const limbRefs = [...xml.matchAll(/<Entity\b[^>]*>\s*<Base\s+file="([^"]+)"\s*\/>\s*<\/Entity>/g)].map((m) => m[1]).filter((f) => /limb/.test(f))
+    const limbRefs = [...xml.matchAll(/<Entity\b[^>]*>\s*<Base\s+file="([^"]+)"\s*\/>\s*<\/Entity>/g)].map((m) => m[1]).filter((f) => /limb/.test(f) && !/limb_enemy_generic/.test(f))
     if (kind === 'animals' && limbRefs.length && (e.comps.has('LimbBossComponent') || e.comps.has('IKLimbsAnimatorComponent'))) {
       d.limbs = limbRefs.map((f) => {
         const lx = readFile(f) || ''
@@ -370,7 +406,8 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     // 子实体 verlet 链(giantshooter 的 5 条黏液触手:<Entity><Base file="verlet_chains/…"><InheritTransformComponent><Transform position>):
     // VerletPhysicsComponent num_points / resting_distance / stiffness / velocity_dampening,每个点一张 2×2 / 2×1 的小精灵(piece xml 的 SpriteComponent,offset_y 是贴图锚点)
     // 只收触手类(悬挂物 props/suspended_* 的 verlet_chains/chain 是往上吊到天花板的链,另一回事)
-    const chainRefs = [...xml.matchAll(/<Entity>\s*<Base\s+file="([^"]*verlet_chains\/[^"]*tentacle[^"]+)"\s*>\s*<InheritTransformComponent>\s*<Transform\s+position\.x="([^"]+)"\s+position\.y="([^"]+)"/g)]
+    // boss_pit/tentacle.xml、boss_meat|boss_limbs/hair1~3.xml(verlet 触手 / 头发)、boss_centipede/verlet_chains/verlet_vine*.xml 同一套写法,一并收
+    const chainRefs = [...xml.matchAll(/<Entity>\s*<Base\s+file="([^"]*(?:verlet_chains\/[^"]*(?:tentacle|vine)|\/tentacle|\/hair\d)[^"]*)"\s*>\s*<InheritTransformComponent>\s*<Transform\s+position\.x="([^"]+)"\s+position\.y="([^"]+)"/g)]
     if (kind === 'animals' && chainRefs.length) {
       d.tentacles = chainRefs.map((m) => {
         const cx = readFile(m[1]) || ''
@@ -382,6 +419,37 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     // 地雷:CollisionTriggerComponent(触发半径 / 计时)+ ExplosionComponent trigger=ON_DEATH 的 config_explosion
     const ct = first(e, 'CollisionTriggerComponent'); if (ct) d.mine = { radius: num(ct.radius, 20), timer: num(ct.timer_for_destruction, 30) / 60 }
     const exc = first(e, 'ExplosionComponent'); if (exc && (exc.trigger || 'ON_DEATH') === 'ON_DEATH' && e.subs.config_explosion) d.explosionOnDeath = pick(e.subs.config_explosion, Object.keys(e.subs.config_explosion))
+    // ── Boss(见 docs/noita-bosses.md):标记 + 引擎组件字段 ──
+    if (kind === 'animals' && BOSS_SET.has(key)) {
+      d.boss = key
+      // LimbBossComponent state(0 MoveAroundNest 1 FollowPlayer 2 Escape 3 DontMove 4 MoveTo 5 MoveDirectlyTowardsPlayer)
+      const lb = first(e, 'LimbBossComponent'); if (lb) d.limbBoss = { state: num(lb.state, 1) }
+      // PhysicsBody 圆(boss_pit / boss_meat / boss_robot / boss_limbs / boss_centipede / boss_sky):没有 CharacterData 的按半径给碰撞盒,按飞行体走(PhysicsAI 不受重力)
+      const sh = first(e, 'PhysicsShapeComponent')
+      if (sh && !d.physShape) d.physShape = { r: num(sh.radius_x, 8), friction: num(sh.friction, 0), restitution: num(sh.restitution, 0.3) }
+      if (!d.character && d.physShape) { const hr = Math.max(3, Math.round(d.physShape.r * 0.85)); d.character = { collision_aabb_min_x: -hr, collision_aabb_max_x: hr, collision_aabb_min_y: -hr, collision_aabb_max_y: hr, climb_over_y: 0 } }
+      if (!d.character && d.hitbox) d.character = { collision_aabb_min_x: d.hitbox.aabb_min_x, collision_aabb_max_x: d.hitbox.aabb_max_x, collision_aabb_min_y: d.hitbox.aabb_min_y, collision_aabb_max_y: d.hitbox.aabb_max_y, climb_over_y: 0 }
+      if (!d.platforming) d.platforming = { pixel_gravity: 0, run_velocity: 0, velocity_max_x: 0 }
+      if (!d.ai) d.ai = { can_fly: 1, sense_creatures: 1 }
+      if (!d.hitbox && d.physShape) d.hitbox = { aabb_min_x: -d.physShape.r, aabb_max_x: d.physShape.r, aabb_min_y: -d.physShape.r, aabb_max_y: d.physShape.r }
+      // 多个 HitboxComponent(boss_limbs:三块 damage_multiplier 0 的壳 + 一块 hitbox_weak_spot 1.0 的弱点)
+      const hbs = (e.comps.get('HitboxComponent') || []).map((h) => ({ ...pick(h, ['aabb_min_x', 'aabb_max_x', 'aabb_min_y', 'aabb_max_y', 'damage_multiplier']), tags: h._tags || '' }))
+      if (hbs.length > 1) d.hitboxes = hbs
+      // BlackHoleComponent(Kolmisilmän silmä 的吸尘:_tags vacuum,attractor −3 / r128,默认关)
+      const bh = first(e, 'BlackHoleComponent'); if (bh) d.blackHole = { radius: num(bh.radius, 16), attractor: num(bh.particle_attractor_force, 2), damageProb: num(bh.damage_probability, 0), enabled: bh._enabled !== '0' }
+      // 子实体 / 同体 GameEffectComponent(PROTECTION_PROJECTILE / STUN_PROTECTION_*):Bosses.js 按名处理
+      d.effects = [...xml.matchAll(/<GameEffectComponent\b([^>]*)>/g)].map((m) => attrsOf(m[1]).effect).filter(Boolean)
+      // 精灵表里有哪些动画(open / opened / close / aggro / charge / death1 …)—— Bosses.js 按名字播
+      if (d.sprite?.anims) d.animNames = Object.keys(d.sprite.anims)
+    }
+    // Boss 的子实体(islandspirit 的 wisp / Sauvojen tuntija 的 8 颗环绕球):有血有 Hitbox 有精灵但没 AI —— 当飘着的生物,位置由 Bosses.js 按各自 lua 摆
+    if (kind === 'animals' && /^(wisp|wizard_orb_blood|wizard_orb_death)$/.test(key)) {
+      d.kind = 'creature'; d.bossChild = key
+      d.ai = { can_fly: 1 }; d.platforming = { pixel_gravity: 0, run_velocity: 0, velocity_max_x: 0 }
+      if (!d.character && d.hitbox) d.character = { collision_aabb_min_x: d.hitbox.aabb_min_x, collision_aabb_max_x: d.hitbox.aabb_max_x, collision_aabb_min_y: d.hitbox.aabb_min_y, collision_aabb_max_y: d.hitbox.aabb_max_y, climb_over_y: 0 }
+      const mul = e.subs.damage_multipliers || {}
+      if (Object.values(mul).length && Object.values(mul).every((v) => +v === 0)) d.invulnerable = true
+    }
     // 有 CharacterPlatforming 没 CharacterDataComponent 的(ethereal_being):碰撞盒借 Hitbox
     if (kind === 'animals' && d.platforming && !d.character && d.hitbox) d.character = { collision_aabb_min_x: d.hitbox.aabb_min_x, collision_aabb_max_x: d.hitbox.aabb_max_x, collision_aabb_min_y: d.hitbox.aabb_min_y, collision_aabb_max_y: d.hitbox.aabb_max_y, climb_over_y: 4 }
     // 站桩怪(shooterflower:有 AnimalAI 没 CharacterPlatforming):补一份不动的行走参数,Entities 里 stationary 不走路只开火

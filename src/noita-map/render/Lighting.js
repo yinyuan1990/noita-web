@@ -132,7 +132,8 @@ export class Lighting {
     const w = Math.ceil(VW / this.scale), h = Math.ceil(VH / this.scale)
     if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h }
     if (this.w !== w || this.h !== h) { this.w = w; this.h = h; this.buf = new Float32Array(w * h * 3); this.img = new ImageData(w, h) }
-    else this.buf.fill(0)
+    else if (!this.gpu) this.buf.fill(0)
+    this.gln = 0
   }
   _mask(Rs) {
     let m = this.maskCache.get(Rs)
@@ -159,6 +160,14 @@ export class Lighting {
     if (x0 >= w || y0 >= h || x0 + D <= 0 || y0 + D <= 0) return
     let col = this.rgbCache.get(rgb)
     if (!col) { col = rgb.split(',').map((v) => +v / 255); this.rgbCache.set(rgb, col) }
+    if (this.gpu) {
+      // GPU 模式:只记下这盏灯 [光图坐标圆心 x,y, Rs, r,g,b, 亮度, cap],GLComposite.lightPass 一次 draw 全部加进光图 FBO(同样的蒙版 / min(v·a, cap) 规则)
+      const L = this.glLights || (this.glLights = new Float32Array(8 * 2048))
+      if (this.gln >= 2048) return
+      const o = this.gln++ * 8
+      L[o] = x0 + Rs; L[o + 1] = y0 + Rs; L[o + 2] = Rs; L[o + 3] = col[0]; L[o + 4] = col[1]; L[o + 5] = col[2]; L[o + 6] = a; L[o + 7] = cap
+      return
+    }
     const m = this._mask(Rs), B = this.buf, cr = col[0], cg = col[1], cb = col[2]
     const i0 = Math.max(0, -x0), i1 = Math.min(D, w - x0), j0 = Math.max(0, -y0), j1 = Math.min(D, h - y0)
     for (let j = j0; j < j1; j++) {
@@ -188,6 +197,8 @@ export class Lighting {
     const fogG = this._fogG?.length === gw * gh ? this._fogG : (this._fogG = new Float32Array(gw * gh))
     const skyG = this._skyG?.length === gw * gh ? this._skyG : (this._skyG = new Float32Array(gw * gh))
     for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) { fogG[gy * gw + gx] = this.fog.cell(gx0 + gx, gy0 + gy); skyG[gy * gw + gx] = this.sky ? this.sky.cell(gx0 + gx, gy0 + gy) : 0 }
+    // GPU 模式:灯的累加和逐像素合成都在 GLComposite.lightPass 的两个小 FBO 里做(同一套公式),这里只把雾 / 天光格网交出去
+    if (this.gpu) return (this.gpuOut = { lights: this.glLights, n: this.gln, w, h, S, fogG, skyG, gw, gh, gx0, gy0, cell: CELL, ox: p.ox, oy: p.oy, skyColor: skyC, nv, warm: FOG_WARM })
     const bilin = (G, fx, fy) => {
       const x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0, i0 = y0 * gw + x0
       return (G[i0] * (1 - tx) + G[i0 + 1] * tx) * (1 - ty) + (G[i0 + gw] * (1 - tx) + G[i0 + gw + 1] * tx) * ty

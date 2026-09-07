@@ -1963,11 +1963,13 @@ function render() {
   glowPts.length = 0
   fireCells = 0
   let liqCount = 0 // 视口里的液体格数:0 就不走折射采样
-  if (simBound && glc) {
-    // GL 路径:只把视口的材质 id / 燃烧标记按行拷进两张 VW×VH 的字节表(shader 查调色板算色),JS 里顺便数液体 / 火 / 采发光点(老循环里的三个副产物)
+  let addRect = null // GL 路径:本帧 additive 精灵累加层的脏矩形(null = 没有)
+  if (glc) {
+    // GL 路径:只把视口的材质 id / 燃烧标记按行拷进两张 VW×VH 的字节表(shader 查调色板算色),JS 里顺便数液体 / 火 / 采发光点(老循环里的三个副产物)。
+    // 不看 simBound:区块没齐时已到的那几块照样画叠层(之前留着上一帧的表 → 相机一动叠层就错位;线上区块来得慢时草那条线画到了石头里)
     const img = overlay, d = img.data
     d.fill(0)
-    projectiles.beginBlit(d, VW, VH, ox, oy)
+    projectiles.beginBlit(d, VW, VH, ox, oy, true) // 预乘写:这张直接当纹理,不过 putImageData
     const KD = sim.kind, COL = mats.color, GLOW = sim.glow, fireM = sim.M_FIRE, MB = matBuf, AB = auxBuf
     MB.fill(0); AB.fill(0)
     for (let j = 0; j < VH; j++) {
@@ -2062,14 +2064,17 @@ function render() {
       if (i < 0 || j < 0 || i >= VW || j >= VH) continue
       const rgb = cssRgb(p.c)
       if (!rgb) continue
-      const o = (j * VW + i) * 4, al = p.noFade ? 1 : Math.min(1, p.life * 3), a0 = d[o + 3] / 255
-      // alpha-over 到已有像素上(火花半透明地盖在液体 / 沙上)
-      const outA = al + a0 * (1 - al)
+      const o = (j * VW + i) * 4, al = p.noFade ? 1 : Math.min(1, p.life * 3)
+      // alpha-over 到已有像素上(火花半透明地盖在液体 / 沙上);GL 路径这张是预乘的
+      if (glc) { const w0 = 1 - al; d[o] = rgb[0] * al + d[o] * w0; d[o + 1] = rgb[1] * al + d[o + 1] * w0; d[o + 2] = rgb[2] * al + d[o + 2] * w0; d[o + 3] = al * 255 + d[o + 3] * w0; continue }
+      const a0 = d[o + 3] / 255, outA = al + a0 * (1 - al)
       if (outA <= 0) continue
       d[o] = (rgb[0] * al + d[o] * a0 * (1 - al)) / outA; d[o + 1] = (rgb[1] * al + d[o + 1] * a0 * (1 - al)) / outA; d[o + 2] = (rgb[2] * al + d[o + 2] * a0 * (1 - al)) / outA; d[o + 3] = outA * 255
     }
     projectiles.blitFx(d, ox, oy, VW, VH) // 弹丸的 1px 化妆粒子(最多 2500)也写进来,不再一格一个 fillRect
     projectiles.blitSprites() // 弹丸 / 烟团光斑 / 爆炸帧精灵也软光栅进来(source-over 的进 d,additive 的进加色层):一帧两三百次带变换 + lighter 的 drawImage 没了
+    if (glc) { addRect = projectiles.flushAdd(null) } // GL:粒子层 / 加色层直接当纹理(见 glc.render),这里不再 putImageData + drawImage
+    else {
     overlayCv.getContext('2d').putImageData(img, 0, 0)
     vctx.drawImage(overlayCv, 0, 0)
     const ar = projectiles.flushAdd(addImg)
@@ -2078,6 +2083,7 @@ function render() {
       vctx.globalCompositeOperation = 'lighter'
       vctx.drawImage(addCv, ar[0], ar[1], ar[2], ar[3], ar[0], ar[1], ar[2], ar[3])
       vctx.globalCompositeOperation = 'source-over'
+    }
     }
   }
   tp = rMark(0, tp)
@@ -2146,6 +2152,7 @@ function render() {
   for (const p of temple.portals) if (p.on && Math.abs(p.x - cam.x) < VW && Math.abs(p.y - cam.y) < VH) { light(p.x - ox, p.y - oy - 16, 510, '64,100,255', 1); light(p.x - ox, p.y - oy - 16, 128, '64,100,255', 1.5) }
   const skyRgb = sky.color(0, false)
   const lightCv = lighting.compose({ ox, oy, skyColor: [skyRgb[0] / 255, skyRgb[1] / 255, skyRgb[2] / 255], nightVision: hasEffect('NIGHTVISION') ? 1 : 0 })
+  if (glc) glc.lightPass(lightCv) // GL:灯累加 + post_final 合成两个小 FBO 通道(compose 在 gpu 模式返回的是灯表 + 雾 / 天光格网)
   tp = rMark(3, tp)
   // 天空(6 层视差 × 2~3 张平铺 + 全屏渐变)只在相机深度 < 512 时有,且只在相机动了或过了 100ms 才重画,其余帧复用 skyCv
   let skyDirty = false
@@ -2156,7 +2163,7 @@ function render() {
   if (glc) {
     // WebGL 合成:前景 × 光 → 垫天空 / 黑底 → 液体折射 → 放大出屏,一次 draw(乘光 / 抠 alpha / 垫底 / 放大这几步 2D 画布整屏光栅全省了)
     tp = rMark(4, tp)
-    glc.render({ top: view, mat: matBuf, aux: auxBuf, chunks: glChunks, corgX: (cx0 - WCX) * CHUNK, corgY: (cy0 - WCY) * CHUNK, light: lighting.img, sky: cam.y < 512 ? skyCv : null, skyDirty, liquid: simBound && liqCount > 0, vw: VW, vh: VH, ox, oy, time: performance.now() / 1000, camX: cam.x, camY: cam.y })
+    glc.render({ top: view, part: overlay.data, add: addRect ? projectiles.L.add : null, mat: matBuf, aux: auxBuf, chunks: glChunks, corgX: (cx0 - WCX) * CHUNK, corgY: (cy0 - WCY) * CHUNK, light: null, sky: cam.y < 512 ? skyCv : null, skyDirty, liquid: simBound && liqCount > 0, vw: VW, vh: VH, ox, oy, time: performance.now() / 1000, camX: cam.x, camY: cam.y })
     if (uiDirty) { gctx.clearRect(0, 0, ui.width, ui.height); uiDirty = false }
     rMark(5, tp, glc) // 这项 = 上传前景 / 光图纹理 + 一次 draw(同步计时时 readPixels 1 像素等 GPU 画完)
   } else {
@@ -2277,4 +2284,4 @@ function loop(now) {
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
-window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, physics, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded, glc, matBuf: () => matBuf, view }
+window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, physics, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded, glc, matBuf: () => matBuf, view, simBound: () => simBound }
