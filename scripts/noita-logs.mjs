@@ -34,6 +34,11 @@ if (pos.length) {
     const withRs = worst.filter((p) => Array.isArray(p.rs))
     if (withRs.length) { const ss = withRs[0].rs.map((_, k) => (withRs.reduce((a, p) => a + (p.rs[k] || 0), 0) / withRs.length).toFixed(1)); console.log(`  同步计时分项(真实归属):世界 ${ss[0]} 特效 ${ss[1]} 实体 ${ss[2]} 光照 ${ss[3]} 乘光/天空 ${ss[4]} 折射/贴屏 ${ss[5]} ms`) }
     // slow = 那一秒最慢一帧 ms,long = > 50ms 的帧数:fps 是 0.5s 平均,单帧 200ms 的卡顿在 fps 里看不出来
+    const withL = worst.filter((p) => Array.isArray(p.l))
+    if (withL.length) { const ls = withL[0].l.map((_, k) => (withL.reduce((a, p) => a + (p.l[k] || 0), 0) / withL.length).toFixed(1)); console.log(`  逻辑分项:弹丸 ${ls[0]} 实体 ${ls[1]} 物理 ${ls[2]} 植被/火花/碎屑 ${ls[3]} ms`) }
+    // cap = 系统限帧(iOS 低电量 / 过热把 rAF 压到 30Hz):活干完了还在等下一帧
+    const caps = pos.filter((p) => p.cap).length
+    if (caps) console.log(`  系统限 30Hz 的秒数 ${caps}/${pos.length}(低电量模式 / 机身过热,WebKit 把 requestAnimationFrame 压到 30)`)
     const withSlow = pos.filter((p) => p.slow !== undefined)
     if (withSlow.length) { const ws = [...withSlow].sort((a, b) => b.slow - a.slow).slice(0, 5); console.log(`  最慢单帧(ms/长帧数@时刻): ${ws.map((p) => `${p.slow}/${p.long ?? '-'}@${(p.t / 1000).toFixed(0)}s`).join(' ')} · > 100ms 的秒数 ${withSlow.filter((p) => p.slow > 100).length}/${withSlow.length}`) }
   }

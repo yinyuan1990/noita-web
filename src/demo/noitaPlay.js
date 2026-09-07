@@ -1573,7 +1573,7 @@ $('btnReport').addEventListener('click', async (e) => {
   const cw = curWand()
   oplog.ev('report', {
     x: player.x | 0, y: player.y | 0, box: sampleAround(player.x, player.y, 8, 12), note: 'manual',
-      fps: fps | 0, slow: slowShown | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), rs: rPhaseArr(rSync), sync: gpuSync ? 1 : 0, bmp: streamer.stats, simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
+      fps: fps | 0, cap: frameCap() ? 1 : 0, slow: slowShown | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), l: rPhaseArr(lPhase), render: +renderMs.toFixed(1), r: rPhaseArr(), rs: rPhaseArr(rSync), sync: gpuSync ? 1 : 0, bmp: streamer.stats, simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
     ents: entities.list.length, bodies: entities.bodies.length, proj: projectiles.list.length, debris: debris.length, chunks: streamer.entries.size,
     wand: cw ? { name: cw.name, cards: cw.cards, potion: cw.potion ? cw.potion.mat : undefined } : null, touch: IS_TOUCH ? 1 : 0,
     fx: projectiles.fx.length, sfx: projectiles.sfx.length, pdc: projectiles.drawn,
@@ -1618,7 +1618,7 @@ function step(dt) {
   if (posLogT >= 1) {
     posLogT = 0
     const st = streamer.stats // bmp = 这一秒新接了几张区块位图(每张 1MB 上传);rp = 重画补了几次;kpx = 补了多少千像素
-    oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, slow: slowMax | 0, long: longN, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), rs: IS_TOUCH ? rPhaseArr(rSync) : undefined, sync: gpuSync ? 1 : undefined, bmp: st.accepted - posBmp.a, rp: st.repainted - posBmp.r, kpx: ((st.patchPx - posBmp.p) / 1000) | 0, tn: (projectiles.tintNew || 0) - posBmp.t, sfx: projectiles.sfx.length, fx: projectiles.fx.length, pdc: projectiles.drawn, proj: projectiles.list.length, simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length })
+    oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, cap: frameCap() ? 1 : undefined, slow: slowMax | 0, long: longN, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), l: rPhaseArr(lPhase), render: +renderMs.toFixed(1), r: rPhaseArr(), rs: IS_TOUCH ? rPhaseArr(rSync) : undefined, sync: gpuSync ? 1 : undefined, bmp: st.accepted - posBmp.a, rp: st.repainted - posBmp.r, kpx: ((st.patchPx - posBmp.p) / 1000) | 0, tn: (projectiles.tintNew || 0) - posBmp.t, sfx: projectiles.sfx.length, fx: projectiles.fx.length, pdc: projectiles.drawn, proj: projectiles.list.length, simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length })
     posBmp = { a: st.accepted, r: st.repainted, p: st.patchPx, t: projectiles.tintNew || 0 }
     slowMax = 0; longN = 0
   }
@@ -1790,8 +1790,11 @@ function step(dt) {
   if (wantFire && player.fireCd <= 0 && simBound) fire()
   spraying = wantFire && !!curWand().debug && curWand().proj.startsWith('material_')
   for (const w of player.wands) if (!w.debug) wands.update(w, dt)
+  let tl = performance.now()
   if (simBound) projectiles.update(dt)
+  tl = lMark(0, tl)
   if (simBound) entities.update(dt, simWindow())
+  tl = lMark(1, tl)
   if (simBound && physics) {
     if (PHYS_TEST && !physTestDone) {
       // 出生大厅上方一排:6 个箱子 / 2 个圆 / 一块斜放的板,看它们落到真实地形(石头 / 沙 / 草)上停稳
@@ -1802,6 +1805,7 @@ function step(dt) {
     }
     physics.step(dt)
   }
+  tl = lMark(2, tl)
   if (simBound) { if ((veg.frame & 15) === 0) veg.sync(); veg.update(dt, simWindow()) }
   if (simBound) { updateGuard(dt); updateCollapse(dt); updatePortals(dt) }
   for (let i = sparks.length - 1; i >= 0; i--) {
@@ -1812,6 +1816,7 @@ function step(dt) {
     if (p.life <= 0 || (p.grid && solidAt(Math.floor(p.x), Math.floor(p.y)))) sparks.splice(i, 1) // collide_with_grid 的化妆粒子撞到实心就没
   }
   if (simBound) updateDebris(dt)
+  lMark(3, tl)
   shakeT = Math.max(0, shakeT - dt)
   sprite.update({ onGround: player.onGround, inLiq, thrusting: player.thrusting, vx: player.vx, vy: player.vy, dir, face: player.face, landed: player.landed }, dt)
   // 相机跟随(稍微朝瞄准方向偏)
@@ -1911,6 +1916,12 @@ const rMark = (k, t, c = vctx) => {
   return n
 }
 const rPhaseArr = (arr = rPhase) => Array.from(arr, (v) => +v.toFixed(1))
+// 逻辑分项(平滑 ms):[弹丸, 实体, 物理, 植被 + 火花 + 碎屑 + 其他] —— 手机开火时逻辑 5~13ms,看是哪块
+const lPhase = new Float32Array(4)
+const lMark = (k, t) => { const n = performance.now(); lPhase[k] = lPhase[k] * 0.9 + (n - t) * 0.1; return n }
+// 系统限帧:iOS WebKit 在低电量模式 / 机身过热(thermal mitigation)时把 requestAnimationFrame 压到 30Hz —— 一帧只干 10ms 的活,帧间隔却稳在 33ms。
+// 判据:最近 0.5s 平均帧间隔 ≥ 30ms,而 模拟 + 逻辑 + 渲染 加起来不到间隔的 60%(活干完了还在等下一次 rAF)
+const frameCap = () => fps < 34 && fps > 26 && (simMs + stepMs + renderMs) < 0.6 * (1000 / fps)
 function render() {
   syncFrame = IS_TOUCH && !gpuSync && (++frameN % 60 === 0)
   let tp = performance.now()
@@ -2203,8 +2214,8 @@ function loop(now) {
   $('air').firstElementChild.style.width = (player.air / 7 * 100) + '%'
   $('air').firstElementChild.style.background = player.air <= 0 ? '#e0484f' : '#d8f0ff'
   // 手机端整块面板藏着(挡视野),只在顶上留一行 fps / 模拟 / 物理毫秒,用户反馈掉帧时能直接说出数字
-  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${gpuSync ? '[同步] ' : ''}${fps.toFixed(0)} fps 最慢 ${slowShown | 0} · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
-  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)} 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 醒 ${sim.activeBlocks} 块${sim.lod > 1 ? ` 降档 1/${sim.lod}` : ''} 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
+  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${gpuSync ? '[同步] ' : ''}${fps.toFixed(0)} fps${frameCap() ? '(系统限 30Hz)' : ''} 最慢 ${slowShown | 0} · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)}[${rPhaseArr(lPhase).join('/')}] · 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
+  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)}[${rPhaseArr(lPhase).join('/')}] 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 醒 ${sim.activeBlocks} 块${sim.lod > 1 ? ` 降档 1/${sim.lod}` : ''} 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)
