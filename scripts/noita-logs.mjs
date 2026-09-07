@@ -34,8 +34,15 @@ if (pos.length) {
   console.log(`帧率 min ${Math.min(...fps)} avg ${(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(0)}  模拟 avg ${avg('sim')}ms${lod.length ? `(降档 ${lodLow}/${lod.length} 秒,最深 1/${Math.max(...lod)})` : ''} 逻辑 avg ${avg('logic')} 渲染 avg ${avg('render')}${phys.length ? `  物理 avg ${(phys.reduce((a, b) => a + b, 0) / phys.length).toFixed(1)} max ${Math.max(...phys)}ms` : ''}  轨迹 (${pos[0].x},${pos[0].y}) → (${pos[pos.length - 1].x},${pos[pos.length - 1].y})`)
 }
 const show = process.argv[3] === 'all' ? events : events.filter((e) => ['stuck', 'report', 'error', 'open'].includes(e.e))
+let shotN = 0
 for (const e of show) {
-  const { i, t, e: type, box, ...rest } = e
+  const { i, t, e: type, box, shot, ...rest } = e
+  if (shot) { // report 带的画面截图(view 画布 jpeg)→ 存到 %TEMP%/noita-shot-N.jpg
+    const { writeFileSync } = await import('node:fs')
+    const p = `${process.env.TEMP || '/tmp'}/noita-shot-${++shotN}.jpg`
+    writeFileSync(p, Buffer.from(shot.split(',')[1], 'base64'))
+    rest.shotFile = p
+  }
   console.log(`\n[${(t / 1000).toFixed(1)}s] ${type} ${JSON.stringify(rest)}`)
   if (box) {
     // 中心那格用 @ 标出(玩家位置)

@@ -1027,6 +1027,14 @@ export class ProjectileSystem {
   render(ctx, ox, oy) {
     ctx.imageSmoothingEnabled = false
     const VW = ctx.canvas.width, VH = ctx.canvas.height
+    // 状态去重 + 单次 setTransform(见 sfx 循环处注释);调用方的基变换(通常是单位阵)画完还原
+    const bt = ctx.getTransform ? ctx.getTransform() : null, bId = !bt || bt.isIdentity
+    let curOp = 'source-over', curAlpha = 1
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1
+    const setOp = (o) => { if (o !== curOp) { curOp = o; ctx.globalCompositeOperation = o } }
+    const setAlpha = (a) => { if (a !== curAlpha) { curAlpha = a; ctx.globalAlpha = a } }
+    const setXf = (a, b, c, d, e, f) => { if (bId) ctx.setTransform(a, b, c, d, e, f); else { ctx.setTransform(bt); ctx.transform(a, b, c, d, e, f) } }
+    const resetXf = () => { if (bId) ctx.setTransform(1, 0, 0, 1, 0, 0); else ctx.setTransform(bt) }
     if (!this.fxBlitted) {
       for (const f of this.fx) {
         const a = f.fade ? Math.max(0, f.life / f.max) : 1
@@ -1050,20 +1058,18 @@ export class ProjectileSystem {
       if (s.x - ox < -m || s.x - ox > VW + m || s.y - oy < -m || s.y - oy > VH + m) continue
       this.drawn++
       const frame = spr.frames > 1 ? Math.min(spr.frames - 1, Math.floor(s.age / Math.max(0.01, spr.wait))) : 0
-      ctx.save()
-      ctx.globalCompositeOperation = s.additive ? 'lighter' : 'source-over'
-      ctx.globalAlpha = Math.max(0, Math.min(1, s.col[3]))
-      ctx.translate(Math.round(s.x - ox), Math.round(s.y - oy))
-      ctx.rotate(s.useVelRot ? Math.atan2(s.vy, s.vx) : s.rot)
-      ctx.scale(s.sx, s.sy)
+      // 一张精灵只发 3~4 条指令:合成模式 / alpha 只在变了才设,变换用一次 setTransform 代替 save/translate/rotate/scale/restore
+      //(iOS 的 2D 画布每条指令都要过一遍 GPU 进程的显示列表,一帧两百多张精灵 × 8 条就是十几 ms)
+      setOp(s.additive ? 'lighter' : 'source-over'); setAlpha(Math.max(0, Math.min(1, s.col[3])))
+      const rot = s.useVelRot ? Math.atan2(s.vy, s.vx) : s.rot, cs = Math.cos(rot), sn = Math.sin(rot)
+      setXf(cs * s.sx, sn * s.sx, -sn * s.sy, cs * s.sy, Math.round(s.x - ox), Math.round(s.y - oy))
       if (s.col[0] < 0.98 || s.col[1] < 0.98 || s.col[2] < 0.98) {
         // 染色:先画图,再用 multiply 叠色(保留透明区靠 destination-in)
         const t = this._tint(s.img, spr, frame, fw, fh, s.col)
         ctx.drawImage(t, -spr.offX, -spr.offY)
       } else ctx.drawImage(s.img.image, (spr.posX || 0) + frame * fw, spr.posY || 0, fw, fh, -spr.offX, -spr.offY, fw, fh)
-      ctx.restore()
     }
-    ctx.globalAlpha = 1
+    resetXf(); setOp('source-over'); setAlpha(1)
     const drawSprite = (d, x, y, rot, frame, speed = 0, anim = null) => {
       if (x < -96 || x > VW + 96 || y < -96 || y > VH + 96) return // 屏外的弹不画(激光 / 拉帕一屏几十上百发,大半飞在屏外);96 给最长的拉伸精灵
       this.drawn++
@@ -1071,38 +1077,39 @@ export class ProjectileSystem {
       if (d.type === 'PHYSICS' && d.physics?.image) {
         const img = this.images.get(d.physics.image)
         if (img?.image) {
-          ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.rotate(rot)
+          setOp('source-over'); setAlpha(1)
+          const cs = Math.cos(rot), sn = Math.sin(rot)
+          setXf(cs, sn, -sn, cs, Math.round(x), Math.round(y))
           ctx.drawImage(img.image, -Math.floor(img.width / 2), -Math.floor(img.height / 2))
-          ctx.restore(); return
+          return
         }
       }
       // 材质粒子弹:就是一个飞着的材质像素(水滴蓝、油滴棕),不用 dirt 精灵
       if (d.type === 'MATERIAL_PARTICLE' && d.deathMaterial) {
         const id = this.mats.byName.get(d.deathMaterial)
         const c = id === undefined ? 0xffffff : this.mats.color[id]
+        resetXf(); setOp('source-over'); setAlpha(1)
         ctx.fillStyle = `rgb(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255})`
         ctx.fillRect(Math.round(x), Math.round(y), 1, 1)
         return
       }
       const s = d.sprite
       const img = s?.image ? this.images.get(s.image) : null
-      if (!img?.image) { if (!d.areaEffect) { ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2) } return } // 场类没精灵(雷霆之环 image_file="")就什么都不画,别在圈心留个白点
+      if (!img?.image) { if (!d.areaEffect) { resetXf(); setOp('source-over'); setAlpha(1); ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2) } return } // 场类没精灵(雷霆之环 image_file="")就什么都不画,别在圈心留个白点
       const a = anim || s // 当前动画(next_animation 切过去之后帧行不同)
       const fw = a.fw || img.width, fh = a.fh || img.height
-      ctx.save()
-      ctx.globalCompositeOperation = d.additive || d.emissive ? 'lighter' : 'source-over'
-      ctx.globalAlpha = d.spriteAlpha ?? 1
-      ctx.translate(Math.round(x), Math.round(y))
-      ctx.rotate(rot)
+      setOp(d.additive || d.emissive ? 'lighter' : 'source-over'); setAlpha(d.spriteAlpha ?? 1)
       // velocity_sets_scale(组件文档:"the sprite width is made equal to the distance traveled since last frame",coeff 放大):
       // 精灵横向拉到"一帧(1/60s)飞过的像素 / 帧宽",只拉长不压扁(rocket 85px/s 也开着这个,原版火箭没被压成 1px 的点)——
       // 快弹补出运动模糊:狙击弹 1550 → 26px/4px 拉 6.5 倍成一道长线;分裂弹 400~600 → 7~10px < 12px 帧宽 → 原大小
-      if (d.velocitySetsScale && speed) ctx.scale(Math.max(1, Math.min(8, ((speed / 60) * (d.velocitySetsScaleCoeff || 1)) / fw)), 1)
+      const sx = d.velocitySetsScale && speed ? Math.max(1, Math.min(8, ((speed / 60) * (d.velocitySetsScaleCoeff || 1)) / fw)) : 1
+      const cs = Math.cos(rot), sn = Math.sin(rot)
+      setXf(cs * sx, sn * sx, -sn, cs, Math.round(x), Math.round(y))
       if (s.tint) ctx.drawImage(this._tint(img, { image: s.image, posX: a.posX, posY: a.posY }, frame, fw, fh, s.tint), -s.offX, -s.offY)
       else ctx.drawImage(img.image, (a.posX || 0) + frame * fw, a.posY || 0, fw, fh, -s.offX, -s.offY, fw, fh)
-      ctx.restore()
     }
     for (const s of this.stuck) drawSprite(s.d, s.x - ox, s.y - oy, s.rot, s.frame)
+    resetXf(); setOp('source-over'); setAlpha(1)
     // 带电的格子(电流走过的液体 / 金属):亮蓝白闪;电流头带一团蓝光(electricity.xml LightComponent r60 rgb 0/40/80)
     if (this.elec.size) {
       const now = this.time
@@ -1179,14 +1186,12 @@ export class ProjectileSystem {
       if (a.x - ox < -a.fw || a.x - ox > VW + a.fw || a.y - oy < -a.fh || a.y - oy > VH + a.fh) continue
       this.drawn++
       const frame = a.loop ? Math.floor(a.t / a.wait) % a.frames : Math.min(a.frames - 1, Math.floor(a.t / a.wait))
-      ctx.save()
-      ctx.globalCompositeOperation = a.additive ? 'lighter' : 'source-over'
-      ctx.translate(Math.round(a.x - ox), Math.round(a.y - oy))
-      if (a.angle) ctx.rotate(a.angle)
+      setOp(a.additive ? 'lighter' : 'source-over'); setAlpha(1)
+      const cs = a.angle ? Math.cos(a.angle) : 1, sn = a.angle ? Math.sin(a.angle) : 0
+      setXf(cs, sn, -sn, cs, Math.round(a.x - ox), Math.round(a.y - oy))
       ctx.drawImage(a.img.image, (a.posX || 0) + frame * a.fw, a.posY || 0, a.fw, a.fh, -a.offX, -a.offY, a.fw, a.fh)
-      ctx.restore()
     }
-    ctx.globalCompositeOperation = 'source-over'
+    resetXf(); setOp('source-over'); setAlpha(1)
   }
 
   /**

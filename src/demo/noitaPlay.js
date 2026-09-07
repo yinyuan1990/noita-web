@@ -1574,6 +1574,8 @@ $('btnReport').addEventListener('click', async (e) => {
     fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), sync: gpuSync ? 1 : 0, bmp: streamer.stats, simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
     ents: entities.list.length, bodies: entities.bodies.length, proj: projectiles.list.length, debris: debris.length, chunks: streamer.entries.size,
     wand: cw ? { name: cw.name, cards: cw.cards, potion: cw.potion ? cw.potion.mat : undefined } : null, touch: IS_TOUCH ? 1 : 0,
+    fx: projectiles.fx.length, sfx: projectiles.sfx.length, pdc: projectiles.drawn,
+    shot: (() => { try { return view.toDataURL('image/jpeg', 0.6) } catch { return undefined } })(), // 世界分辩率的画面截图(≈20KB):"沙变白了"这类光看数字看不出来
   })
   const ok = await oplog.flush('manual')
   $('btnReport').textContent = ok ? '已上报 ✓' : '上报失败'

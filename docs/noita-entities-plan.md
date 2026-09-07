@@ -893,6 +893,8 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         ⑥(第五份上报 10:19)常驻 canvas 后位图这条没了(bmp 0、kpx 几十 K),但**站着不动开火**那 6 秒"贴屏"仍 20~27ms(fps 24~31,用户目测最低 7)—— 不是位图,是**提交次数**:
         探针数了一下用户那套法杖:`fx` 1px 化妆粒子顶在上限 2500(每个一次 fillStyle + globalAlpha + fillRect)、`sfx` 贴图粒子顶在 400(每个 save/rotate/scale/lighter drawImage/restore)、弹 100~170、爆炸帧 25 —— 一帧近 3000 次独立提交,iOS 的 2D 画布每次都是一笔 GPU 活,全在贴屏时结账。
         修法:`ProjectileSystem.blitFx()` 把 fx 写进叠层 ImageData(和碎屑 / 火花一起一次 putImageData);sfx / 弹 / 爆炸帧屏外不画;手机 `maxSfx` 200;`_tint` 染色缓存改 LRU + 画布回池(之前满 300 整个 clear,带 color_change 的粒子会让它每帧全重建 —— 这套法杖没触发,但别的会)。pos 加 `fx / sfx / pdc`(实际画的精灵数)/ `tn`(新染色画布数)。PC 上"特效"分项 1.1 → 0.5ms。
+        ⑦(第六份上报 10:33)fx 并进叠层后,掉帧秒和 **pdc(精灵绘制数)150~250 严格同步**:pdc 掉到 0~3 的秒贴屏立刻回到 3~4ms(fx 仍 2300 → 1px 粒子已不是问题);tn 恒 0(染色没触发)。≈ 60µs / 张精灵 —— iOS 的 2D 画布是 CoreGraphics 走 GPU 进程的显示列表,每张精灵 save/composite/alpha/translate/rotate/scale/drawImage/restore 8 条指令都算。
+        修法:`ProjectileSystem.render` 精灵一张只发 3~4 条(合成模式 / alpha 只在变了才设,变换一次 `setTransform` 代替 save/translate/rotate/scale/restore;调用方基变换非单位阵时退回 setTransform(bt)+transform)。report 带 `shot`(view 画布 jpeg ≈ 20KB,`noita-logs` 存到 %TEMP%/noita-shot-N.jpg)—— 用户说"沙变白了"本地复现不出(Edge 里矸石坑的沙色正常),下一份上报直接看图。
         还差:Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、PhysicsBridge+0x48 帧戳门、沙阻力 / splash 那条、飞刀插墙。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
