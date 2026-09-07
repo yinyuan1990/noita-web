@@ -40,17 +40,19 @@ const client = await new WorldClient({ base: RES, seed: SEED, workers: 1, chunkC
 const WORLD_REV = 2
 let store = null
 try { store = await new ChunkStore().open(); const n = await store.ensureRev(SEED, WORLD_REV); if (n) console.info(`[world] 生成版本变了,作废旧区块 ${n} 块`) } catch (e) { void e }
-const streamer = new ChunkStreamer(client, { store, cache: 40, ahead: 2, behind: 1, side: 1, maxInFlight: 2, maxAcceptPerFrame: 2 })
+// 手机上每帧只接 1 张新区块位图:512×512 位图第一次 drawImage 要传 1MB 纹理到 GPU,iPhone 上一帧塞两三张就是 10ms+ 的"合成"尖峰(日志里快速移动 / 爆炸重画时掉到 27fps 的那种)
+const streamer = new ChunkStreamer(client, { store, cache: 40, ahead: 2, behind: 1, side: 1, maxInFlight: 2, maxAcceptPerFrame: IS_TOUCH ? 1 : 2, maxRepaintPerFrame: 1 })
 streamer.seed = SEED
 document.addEventListener('visibilitychange', () => { if (document.hidden) streamer.flush() })
 window.addEventListener('pagehide', () => streamer.flush())
 
 // ── 材质模拟(materials.xml 属性驱动 + 328 条反应表)──
 const reactions = await (await fetch(`${RES}/reactions.json`)).json()
-const repaintDue = new Map() // chunk key → 最早可重画时刻(静态变化节流 150ms)
+const repaintDue = new Map() // chunk key → 最早可重画时刻(静态变化节流:PC 150ms,手机 300ms —— 每次重画都是整张 512×512 位图重传)
+const REPAINT_MS = IS_TOUCH ? 300 : 150
 const sim = new CellSim(mats, reactions, {
   getChunk: (cx, cy) => streamer.get(cx, cy),
-  onStaticChanged: (cx, cy) => { const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + 150) },
+  onStaticChanged: (cx, cy) => { const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + REPAINT_MS) },
 })
 let simBound = false
 // ── Box2D 世界(planck,第 ① 步:地形碰撞;`?phys=0` 关;`?physTest=1` 出生点上方丢几个测试箱子看落地)──
@@ -64,7 +66,7 @@ const LOG_URL = Q.get('log') === '0' ? '' : (location.hostname === 'localhost' |
 const oplog = new OpLog({ url: LOG_URL, meta: { seed: SEED, build: import.meta.env.MODE } })
 const sfx = new Sfx(RES)
 sfx.load(['impact', 'fire', 'wind', 'clash', 'electric', 'water', 'magic', 'explosion'])
-let stuckT = 0, stuckLogged = false, footT = 0, lastInState = '', posLogT = 0, spraying = false, hopT = 0
+let stuckT = 0, stuckLogged = false, footT = 0, lastInState = '', posLogT = 0, posBmp = 0, spraying = false, hopT = 0
 /** 玩家周围材质快照(卡住时上传):'#'实心 '~'液体 ':'沙 '.'空 '?'未加载,一行一串 */
 function sampleAround(wx, wy, rx, ry) {
   const rows = []
@@ -239,6 +241,7 @@ const view = document.createElement('canvas'), vctx = view.getContext('2d') // �
 const cam = { x: player.x, y: player.y }
 let VW = VIEW_W, VH = 240, SCALE = 1
 let overlay = null, overlayCv = document.createElement('canvas'), fgMaskCv = document.createElement('canvas'), skyCv = document.createElement('canvas')
+const skyKey = { ox: NaN, oy: NaN, tb: 0 } // 上次画天空(skyCv)时的相机位置 / 100ms 时间桶,没变就复用
 // 光照(render/Lighting.js:原版 post_final.frag 的合成 + 光罩蒙版 + 雾(FogOfWarRadius 256)+ 天光(RENDER_SKYLIGHT_*));1/4 分辩率光图
 const lighting = new Lighting(4)
 lighting.sky = new Skylight((wx, wy) => {
@@ -288,7 +291,7 @@ function resize() {
   VW = VIEW_W; VH = Math.ceil(innerHeight / SCALE)
   view.width = VW; view.height = VH
   overlayCv.width = VW; overlayCv.height = VH
-  fgMaskCv.width = VW; fgMaskCv.height = VH; skyCv.width = VW; skyCv.height = VH
+  fgMaskCv.width = VW; fgMaskCv.height = VH; skyCv.width = VW; skyCv.height = VH; skyKey.ox = NaN
   overlay = new ImageData(VW, VH)
   wobX = new Int8Array(VW); wobY = new Int8Array(VH); liqMask = new Uint8Array(VW * VH)
   if (refr) refr.resize(game.width, game.height)
@@ -583,7 +586,7 @@ function setCell(x, y, m) {
   const cx = Math.floor(x / CHUNK) + WCX, cy = Math.floor(y / CHUNK) + WCY, e = streamer.get(cx, cy)
   if (!e?.mat) return false
   e.mat[((y - (cy - WCY) * CHUNK) * CHUNK) + (x - (cx - WCX) * CHUNK)] = m
-  const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + 150)
+  const k = cx + ',' + cy; if (!repaintDue.has(k)) repaintDue.set(k, performance.now() + REPAINT_MS)
   return true
 }
 function startCollapse(ex, ey) {
@@ -1605,7 +1608,12 @@ function step(dt) {
   const inState = dir + (wantUp ? 'U' : '') + (wantFire ? 'F' : '')
   if (inState !== lastInState) { lastInState = inState; oplog.ev('input', { dir, up: wantUp ? 1 : 0, fire: wantFire ? 1 : 0, x: player.x | 0, y: player.y | 0, joy: touch.joy ? [+touch.mx.toFixed(2), +touch.my.toFixed(2)] : undefined }) }
   posLogT += dt
-  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length }) }
+  if (posLogT >= 1) {
+    posLogT = 0
+    const bmp = streamer.stats.accepted + streamer.stats.repainted // 这一秒换了几张区块位图(新区块 + 重画),每张第一次画都是 1MB 纹理上传
+    oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), bmp: bmp - posBmp, simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length })
+    posBmp = bmp
+  }
 
   // ── 身体:Noita CharacterPlatforming 模型 ──
   const f60 = dt * 60 // 以帧为单位的参数换算
@@ -1880,8 +1888,8 @@ function drawStatusIcons(ctx, ox, oy) {
   })
 }
 
-// 渲染分项(平滑 ms):[世界位图 + 材质叠层, 弹丸 / 特效, 植被 + 实体 + 玩家, 光照合成, 最后合成(乘光 / 天空 / 折射放大)] —— 手机上报里看渲染到底慢在哪
-const rPhase = new Float32Array(5)
+// 渲染分项(平滑 ms):[世界位图 + 材质叠层, 弹丸 / 特效, 植被 + 实体 + 玩家, 光照合成, 乘光 + 天空, 折射 / 放大贴到屏幕] —— 手机上报里看渲染到底慢在哪
+const rPhase = new Float32Array(6)
 const rMark = (k, t) => { const n = performance.now(); rPhase[k] = rPhase[k] * 0.9 + (n - t) * 0.1; return n }
 const rPhaseArr = () => Array.from(rPhase, (v) => +v.toFixed(1))
 function render() {
@@ -1903,6 +1911,7 @@ function render() {
   // 动态材质叠层:液体(按 materials.xml 的 alpha 半透)/ 沙 / 气 / 火(闪烁)/ 正在燃烧的材质发红
   glowPts.length = 0
   fireCells = 0
+  let liqCount = 0 // 视口里的液体格数:0 就不走 WebGL 折射那步(texImage2D 读 2D 画布要等 GPU 把整帧的活干完,iPhone 上这一步就是"合成"里的大头)
   if (simBound) {
     const img = overlay
     const d = img.data
@@ -1937,7 +1946,7 @@ function render() {
           // 折射是"采样"(gather):这一格是液体 → 颜色取偏移处那格(也得是液体)。不能反过来把自己写到偏移处(scatter):
           // 偏移量随 x 从 0 跳到 1 的那一列会被写两次、旁边一列没人写 → 水面上一条条黑线(用户截图)
           if (k === 3) {
-            liqMask[j * VW + i] = 255
+            liqMask[j * VW + i] = 255; liqCount++
             const ii = i + wobX[i], jj = j + wobY[j]
             if ((ii !== i || jj !== j) && ii >= 0 && ii < VW && jj >= 0 && jj < VH) {
               const e2 = sim._entry(ox + ii, oy + jj)
@@ -2056,14 +2065,20 @@ function render() {
   vctx.globalCompositeOperation = 'destination-in'
   vctx.drawImage(fgMaskCv, 0, 0)
   vctx.globalCompositeOperation = 'destination-over'
-  if (cam.y < 512) { const sc = skyCv.getContext('2d'); sc.clearRect(0, 0, VW, VH); sky.draw(sc, ox + VW / 2, oy + VH / 2, VW, VH); vctx.drawImage(skyCv, 0, 0) }
+  if (cam.y < 512) {
+    // 天空(6 层视差 × 2~3 张平铺 + 全屏渐变)只在相机动了或过了 100ms 才重画,其余帧复用 skyCv
+    const tb = (performance.now() / 100) | 0
+    if (skyKey.ox !== ox || skyKey.oy !== oy || skyKey.tb !== tb) { skyKey.ox = ox; skyKey.oy = oy; skyKey.tb = tb; const sc = skyCv.getContext('2d'); sc.clearRect(0, 0, VW, VH); sky.draw(sc, ox + VW / 2, oy + VH / 2, VW, VH) }
+    vctx.drawImage(skyCv, 0, 0)
+  }
   vctx.fillStyle = '#06070a'; vctx.fillRect(0, 0, VW, VH)
   vctx.globalCompositeOperation = 'source-over'
   gctx.imageSmoothingEnabled = false
-  // 放大到屏幕:有 WebGL 走液体折射 shader(post_final.frag 原式,屏幕分辩率亚像素采样),否则直接贴
-  if (refr && simBound) gctx.drawImage(refr.render(view, liqMask, VW, VH, performance.now() / 1000, cam.x, cam.y), 0, 0)
+  tp = rMark(4, tp)
+  // 放大到屏幕:视口里有液体且有 WebGL 才走折射 shader(post_final.frag 原式,屏幕分辩率亚像素采样),否则直接贴
+  if (refr && simBound && liqCount > 0) gctx.drawImage(refr.render(view, liqMask, VW, VH, performance.now() / 1000, cam.x, cam.y), 0, 0)
   else gctx.drawImage(view, 0, 0, game.width, game.height)
-  rMark(4, tp)
+  rMark(5, tp)
   // 瞄准点
   if (touch.aim) {
     // 瞄准摇杆指示:原点小环 + 方向点(限制在 40px 内)

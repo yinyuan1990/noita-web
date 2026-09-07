@@ -29,13 +29,15 @@ export class ChunkStreamer {
     this.side = o.side ?? 1
     this.maxInFlight = o.maxInFlight ?? 2
     this.maxAcceptPerFrame = o.maxAcceptPerFrame ?? 2
+    this.maxRepaintPerFrame = o.maxRepaintPerFrame ?? Infinity // 每帧最多换几张重画好的位图(Infinity = 到了就换);新位图第一次画要上传 1MB 纹理,手机上一帧换好几张就是尖峰
     this.entries = new Map()   // key → {cx,cy,bitmap,mat,scenes,biome,dirty,t,ready}
     this.inFlight = new Map()  // key → promise
     this.done = []             // 完成待接收
+    this.repainted = []        // 重画完成待换入的 {e, bitmap}
     this.tick = 0
     this.vel = { x: 0, y: 0 }
     this.lastCenter = null
-    this.stats = { requested: 0, accepted: 0, fromStore: 0, persisted: 0, evicted: 0, holeFrames: 0 }
+    this.stats = { requested: 0, accepted: 0, fromStore: 0, persisted: 0, evicted: 0, holeFrames: 0, repainted: 0 }
     this.seed = client.seed
     this.onEvict = null        // (entry) => void:区块被卸载(实体层据此收掉该块的怪)
   }
@@ -134,6 +136,12 @@ export class ChunkStreamer {
       changed = true
       n++
     }
+    // 重画好的位图按帧预算换入(换入的那帧第一次 drawImage 才真正上传纹理)
+    for (let m = 0; this.repainted.length && m < this.maxRepaintPerFrame; m++) {
+      const { e, bitmap } = this.repainted.shift()
+      if (this.entries.get(e.key) !== e) { bitmap.close?.(); continue }
+      e.bitmap?.close?.(); e.bitmap = bitmap; changed = true; this.stats.repainted++
+    }
     this._evict()
     return changed
   }
@@ -210,7 +218,11 @@ export class ChunkStreamer {
     e.repainting = true
     try {
       const r = await this.client.requestChunk(cx, cy, { wantMat: false, mat: e.mat.slice(), veg: ChunkStreamer.vegOf(e) })
-      if (this.entries.get(e.key) === e && r.bitmap) { e.bitmap?.close?.(); e.bitmap = r.bitmap }
+      if (this.entries.get(e.key) !== e || !r.bitmap) { r.bitmap?.close?.(); return }
+      if (!(this.maxRepaintPerFrame < Infinity)) { e.bitmap?.close?.(); e.bitmap = r.bitmap; this.stats.repainted++; return }
+      // 排队到 update() 里按帧预算换入;同一块已排着一张旧的就直接顶掉
+      const q = this.repainted.findIndex((x) => x.e === e)
+      if (q >= 0) { this.repainted[q].bitmap.close?.(); this.repainted[q].bitmap = r.bitmap } else this.repainted.push({ e, bitmap: r.bitmap })
     } catch (err) { if (!/seed changed/.test(String(err))) console.warn('repaint', err) } finally { e.repainting = false }
   }
 
@@ -225,6 +237,7 @@ export class ChunkStreamer {
 
   clear() {
     for (const e of this.entries.values()) e.bitmap?.close?.()
-    this.entries.clear(); this.done.length = 0
+    for (const r of this.repainted) r.bitmap.close?.()
+    this.entries.clear(); this.done.length = 0; this.repainted.length = 0
   }
 }
