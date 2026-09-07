@@ -528,6 +528,14 @@ entities = await new Entities({
       else if (s.entity === 'shop_area') temple.shopArea?.(s.x, s.y)
       else if (s.entity === 'areacheck') temple.areaCheck?.(s.x, s.y)
       else if (s.entity === 'workshop_exit') temple.exit?.(s.x, s.y)
+      // CreateItemActionEntity(id, x, y):地上一张免费法术卡(陶笛 / 康特勒琴音符、boss 掉的 ALPHA / NOLLA …、沙漏室 / 门怪的随机卡 action=null → getRandomAction)
+      else if (s.entity === 'spell') {
+        const id = s.action || wands.getRandomAction?.(s.x, s.y, 3) || null
+        const sp = id && wands.spell(id)
+        if (sp?.icon) entities.spawnSpellItem(sp.icon, s.x, s.y, null, id, {})
+      }
+      // perk_spawn(x, y, id):一枚指定特权(月室 MOON_RADAR / boss_robot 死掉 MAP)
+      else if (s.entity === 'perk_pickup') { const d = perks?.perk?.(s.perk); if (d?.icon) entities.spawnPerkItem(d.icon, s.x, s.y - 8, s.perk, ++perkGroup) }
     },
   },
 }).init()

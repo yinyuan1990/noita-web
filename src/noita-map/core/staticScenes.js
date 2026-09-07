@@ -158,6 +158,15 @@ export const SPLICED_SCENES = [
   { dir: 'liquidcave', name: 'liquidcave_corner2', x: -5120, y: -32, w: 512, h: 512, bgSprite: true, z: 40 },
 ].map((s) => ({ dir: 'spliced', ...s, biome: 'spliced', material: null, colorMaterial: null, func: 'spliced' }))
 
+/**
+ * _pixel_scenes.xml 里 just_load_an_entity 的固定实体(不是布景,是写死坐标的 EntityLoad):深湖的 Syväolento(fish_giga)、地狱右下的 Tapion vasalli 巢(maggotspot)。
+ * 音乐机 / 平台 / 眼斑 / 精华吞噬者等没做的不列。
+ */
+export const STATIC_ENTITIES = [
+  { entity: 'fish_giga', x: -14000, y: 10000 },
+  { entity: 'maggotspot', x: 14941, y: 16454 },
+]
+
 /** 世界像素包围盒碰到 [x0,y0,x1,y1) 的全局布景 */
 export function splicedScenesIn(x0, y0, x1, y1) {
   return SPLICED_SCENES.filter((s) => s.x < x1 && s.x + s.w > x0 && s.y < y1 && s.y + s.h > y0)

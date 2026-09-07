@@ -12,6 +12,7 @@ import { tagPixels } from './assets.js'
 import { Physics } from './Physics.js'
 import { Ragdoll } from './Ragdoll.js'
 import { NollaPrng } from './core/NollaPrng.js'
+import { Bosses, TRIGGERS } from './Bosses.js'
 import { CHUNK, WORLD_CENTER_CHUNK_X as WCX, WORLD_CENTER_CHUNK_Y as WCY } from './core/coords.js'
 
 const K_LIQUID = 3
@@ -54,6 +55,9 @@ export class Entities {
     this.liveChunks = new Set()    // 当前有怪在世界里的 chunk(卸载时清)
     this.pendingImages = new Map()
     this.stats = { spawned: 0, skipped: {}, killed: 0, bodies: 0, broken: 0 }
+    this.bosses = new Bosses(this) // boss 的 lua 时间线 / 回调(Bosses.js)
+    this.triggers = []             // 生成触发器(dragonspot / maggotspot / ghost_spawn_check …):人到半径内 → 放 boss
+    this.helplessKills = 0         // GlobalsGetValue("HELPLESS_KILLS"):杀过多少无害动物(湖心岛 Sielu 用)
     this.time = 0
     this._solid = this._solid.bind(this)
     this._solidB = this._solidB.bind(this)
@@ -103,7 +107,9 @@ export class Entities {
       if (!creature && !first) continue
       if (/^wand_/.test(s.entity)) { this.hooks.spawnWand?.(s.entity, s.x, s.y); continue } // 法杖:交给 WandSystem 造,再当物品放回来
       // 圣山的特殊物:商店货 / 特权 / 传送门(temple_altar.lua),由 noitaPlay 按各自 lua 掷
-      if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit') { this.hooks.spawnSpecial?.(s); continue }
+      if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit' || s.entity === 'spell' || s.entity === 'perk_pickup') { this.hooks.spawnSpecial?.(s); continue }
+      // boss 生成触发器(buildings/dragonspot.xml 等 CollisionTrigger):记下来,人进半径再放
+      if (TRIGGERS[s.entity]) { if (first) this.triggers.push({ ...TRIGGERS[s.entity], name: s.entity, x: s.x, y: s.y, t: 0 }); continue }
       if (!d) { this.stats.skipped[s.entity] = (this.stats.skipped[s.entity] || 0) + 1; continue }
       if (d.kind === 'prop' && d.shape?.image) {
         // 像素刚体:形状图到了再建(见 update 里的 pendingProps)
@@ -1170,7 +1176,29 @@ export class Entities {
       e.attacks = d.attacks.filter((a) => this.projectiles?.defs?.['e_' + a.proj])
       if (e.attacks.length) { e.ranged = true; e.rangedMin = Math.min(...e.attacks.map((a) => a.min)); e.rangedMax = Math.max(...e.attacks.map((a) => a.max)) }
     }
+    if (d.boss) this.bosses.attach(e)
     return e
+  }
+
+  /** 生成触发器:人到半径内 → 放 boss(dragonspot / maggotspot / ghost_spawn_check / boss_limbs_trigger / boss_spirit_spawner) */
+  _updateTriggers(dt) {
+    const pl = this.player
+    for (let i = this.triggers.length - 1; i >= 0; i--) {
+      const T = this.triggers[i]
+      T.t -= dt * 60
+      if (T.t > 0) continue
+      T.t = T.every || 1
+      if (Math.hypot(pl.x - T.x, pl.y - T.y) > T.r) continue
+      if (T.need && !T.need(this)) continue
+      const d = this.defs[T.spawn]
+      // Suomuhauki / Tapion vasalli 是虫(BossDragonComponent = WormComponent 变体):走虫那套
+      if (d?.worm && d.parts?.length) { for (const p of d.parts) this._img(p.image); this.worms.push(this._makeWorm(T.spawn, d, T.x, T.y)); this.stats.spawned++ }
+      else { const b = this.spawnCreature(T.spawn, T.x, T.y); if (b) { b.state = 'chase'; b.stateT = 5 } }
+      if (T.also) this.spawnItem?.(T.also, T.x, T.y)
+      for (let k = 0; k < 16; k++) this.hooks.spark?.(T.x + (Math.random() - 0.5) * 30, T.y + (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 60, -20 - Math.random() * 40, '#c080ff', 0.6)
+      this.hooks.sfx?.('electric', { vol: 0.6, rate: 0.6, minGap: 100 })
+      this.triggers.splice(i, 1)
+    }
   }
 
   /**
@@ -1392,6 +1420,7 @@ export class Entities {
     this.camRect = rect && rect.cx0 !== undefined ? rect : null // 视口(is_in_camera_bounds 用)
     this._updateBodies(dt, x0, y0, x1, y1)
     this._rebuildBodyGrid()
+    if (this.triggers.length) this._updateTriggers(dt)
     const pl = this.player
     for (let i = this.worms.length - 1; i >= 0; i--) {
       const w = this.worms[i]
@@ -1472,6 +1501,8 @@ export class Entities {
         if (e.attackT >= endT) { e.state = 'chase'; e.cool = e.meleeGap; e.animLock = 0 }
       }
       if (e.dir) e.face = e.dir
+      // boss 的 lua 时间线 / 定时脚本(Bosses.js);LimbBoss 的移动状态由 bossMove 给 _flyStep,这里保证它按"追人"那套走
+      if (e.boss) { this.bosses.step(e, dt); if (e.bossMove && e.state !== 'shoot' && e.state !== 'attack') { e.state = 'chase'; e.stateT = 1 } }
 
       // ── 身体:三种模型 ──
       const inLiq = this._liquid(e.x, e.y + e.box.b + e.buoyOff)
@@ -1583,7 +1614,11 @@ export class Entities {
       }
 
       // ── 动画 ──
-      if (e.state !== 'attack' && e.state !== 'shoot') {
+      // boss 脚本点的动画(GamePlayAnimation(cur, next)):放完 cur 接 next,不再按走 / 站自动换
+      if (e.bossAnim) {
+        const a = e.d.sprite.anims[e.anim]
+        if (a && !a.loop && e.frame >= a.frames - 1 && e.bossAnim.next) { this._setAnim(e, e.bossAnim.next, true); e.bossAnim = { name: e.bossAnim.next, next: null } }
+      } else if (e.state !== 'attack' && e.state !== 'shoot') {
         let want
         const A = e.d.sprite.anims
         if (e.flyer) want = Math.hypot(e.vx, e.vy) > 6 ? (A.fly_move ? 'fly_move' : 'walk') : (A.fly_idle ? 'fly_idle' : 'stand')
@@ -1829,7 +1864,15 @@ export class Entities {
     e.onGround = false
     let tx, ty
     const pl = this.player
-    if (e.state === 'chase' || e.state === 'shoot' || e.state === 'attack') {
+    const bm = e.bossMove
+    if (bm) {
+      // LimbBossComponent state(Bosses.move):follow = FollowPlayer(悬在人上方 30,到 keepDist 就停)/ direct = MoveDirectlyTowardsPlayer / to = MoveTo(x,y)/ hold = DontMove
+      if (bm.mode === 'hold') { tx = e.x; ty = e.y }
+      else if (bm.mode === 'to') { tx = bm.x; ty = bm.y }
+      else if (bm.mode === 'direct') { tx = pl.x; ty = pl.y }
+      else { tx = pl.x; ty = pl.y - 30 }
+      if (!e.keepDist) e.keepDist = 40
+    } else if (e.state === 'chase' || e.state === 'shoot' || e.state === 'attack') {
       // 近战的直接扑;远程的悬在人斜上方
       const stand = e.ranged && !e.melee || (e.ranged && Math.hypot(dx, dy) > e.meleeDist * 2)
       tx = pl.x + (stand ? e.flySide * 40 : 0); ty = pl.y + (stand ? e.flyHover : -6)
@@ -2145,8 +2188,9 @@ export class Entities {
     const g = d.type === 'PHYSICS' ? 350 : (d.gravity || 0)
     if (g > 0) ang -= Math.min(0.6, (g * dist) / (2 * spd * spd))
     const n = e.rangedCount[0] + Math.floor(Math.random() * (e.rangedCount[1] - e.rangedCount[0] + 1))
-    for (let i = 0; i < n; i++) this.projectiles.spawn(e.rangedProj, sx, sy, ang, { owner: 'enemy', spreadRad: n > 1 ? 0.25 : 0.04 })
+    for (let i = 0; i < n; i++) { const p = this.projectiles.spawn(e.rangedProj, sx, sy, ang, { owner: 'enemy', spreadRad: n > 1 ? 0.25 : 0.04 }); if (p) p.shooter = e }
     this.hooks.sfx?.(d.type === 'PHYSICS' ? 'clash' : 'electric', { vol: 0.3, rate: 0.9 + Math.random() * 0.3, minGap: 50 })
+    if (e.boss?.C.shot) e.boss.C.shot(e, this.bosses) // LuaComponent script_shot(boss_wizard/state.lua 换弹种)
   }
 
   _setAnim(e, name, lock) {
@@ -2248,6 +2292,10 @@ export class Entities {
     // DamageModel damage_multipliers(lukki:projectile 0.2 / explosion 0.8 / fire 1.2 / melee 2.0)
     const mul = e.d.damage?.multipliers
     if (mul) { const key = src === 'proj' ? 'projectile' : src; if (mul[key] !== undefined) dmg *= mul[key] }
+    // boss:GameEffect PROTECTION_PROJECTILE(弹丸伤害 0)/ HitboxComponent damage_multiplier(闭眼 / 反制盾时 0)/ damage_received 脚本
+    if (e.projImmune && src === 'proj') return
+    if (e.dmgMul !== undefined) { dmg *= e.dmgMul; if (dmg <= 0) return }
+    if (e.boss) { const r = this.bosses.hurt(e, dmg, src, opts?.proj); if (r === false) return; if (typeof r === 'number') dmg = r }
     const hp0 = e.hp
     e.hp -= dmg
     e.vx += ix; e.vy += iy
@@ -2306,6 +2354,8 @@ export class Entities {
   _die(e, ix = 0, iy = 0, src = 'proj', opts = null) {
     e.dead = true
     this.stats.killed++
+    if (e.helpless) this.helplessKills++
+    if (e.boss) this.bosses.died(e)
     // ExplosionComponent trigger=ON_DEATH(地雷 mine_scavenger:r30 伤 4 起火 80%)
     if (e.d.explosionOnDeath) this.explodeConfig(e.x, e.y, e.d.explosionOnDeath)
     // ExplodeOnDamageComponent explode_on_death_percent(giantshooter:r30 伤 3、坑里 70% 填酸;坦克 / 炮塔 / 无人机也是这样炸)
@@ -2696,6 +2746,8 @@ export class Entities {
       ctx.restore()
     }
     const W = ctx.canvas.width, H = ctx.canvas.height
+    // boss 的 LaserEmitterComponent 光束(boss_robot 三门 / boss_ghost 四门)
+    for (const e of this.list) if (!e.dead && e.lasers && e.boss) this.bosses.render(ctx, e, ox, oy)
     for (const e of this.list) {
       if (e.dead) continue
       if (e.x < ox - 80 || e.x > ox + W + 80 || e.y < oy - 80 || e.y > oy + H + 80) continue // 屏幕外的不画(窗口里两三百只怪,每只 save/translate/drawImage 在 Safari 上不便宜);80px 留给腿 / 触手

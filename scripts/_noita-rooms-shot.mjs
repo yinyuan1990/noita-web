@@ -17,6 +17,7 @@ const ROOMS = {
   boss_victoryroom: [6144 + 256, 14848 + 300], temple_altar_right_snowcastle: [0 + 256, 2560 + 300], lake_statue: [-14336 + 256, 0 + 300], boss_arena: [3546, 13009 - 100],
   boss_sky: [7168 + 256, -4608 + 100], barren: [-5632 + 256, -5120 + 100], darkness: [2560 + 256, -4608 + 100], potion_mimics: [-2048 + 256, -5120 + 100], watchtower: [13824 + 256, -512 + 100],
   floating_island: [512 + 266, -1536 + 440], mountain_tree: [-2048 + 672, -1324 + 897], scale: [12800 + 260, -512 + 380], sky_light: [-6144 + 256, -4608 + 256], hills_tower: [9216 + 256, 4096 + 256],
+  fish_giga: [-14000, 10000 - 60], dragon_trigger: [2048 + 296, 7168 + 305 - 40], ghost_trigger: [-11776 + 255, 12800 + 336 - 30], centipede: [3546, 13009 - 60],
 }
 const names = pickArg ? pickArg.split(',') : Object.keys(ROOMS)
 const browser = await chromium.launch({ channel: 'msedge', headless: true, args: process.env.ORIGIN_IP ? [`--host-resolver-rules=MAP update.cocoaihj.com ${process.env.ORIGIN_IP}`] : [] })
@@ -51,6 +52,7 @@ for (const n of names) {
       biome: entry?.biome || null, ready: !!entry?.ready, spawns: (entry?.spawns || []).map((s) => `${s.entity}@${s.x - x | 0},${s.y - y | 0}`), scenes: (entry?.scenes || []).map((s) => s.dir + '/' + s.name),
       near: E.list.filter((e) => Math.abs(e.x - x) < 400 && Math.abs(e.y - y) < 400).map((e) => e.name), bodies: cnt((E.bodies || []).filter((b) => Math.abs(b.x - x) < 400 && Math.abs(b.y - y) < 400), (b) => b.name),
       skipped: E.stats.skipped, px: np.player.x | 0, py: np.player.y | 0,
+      worms: (E.worms || []).map((w) => `${w.name}@${w.x | 0},${w.y | 0}`), triggers: (E.triggers || []).map((t) => t.name), bosses: E.list.filter((e) => e.boss).map((e) => `${e.name} hp=${e.hp.toFixed(1)} mul=${e.dmgMul ?? '-'} move=${e.bossMove?.mode || '-'} anim=${e.anim}`),
     }
   }, [x, y])
   console.log(`== ${n} @${x},${y}`, JSON.stringify(info))

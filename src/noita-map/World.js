@@ -14,7 +14,7 @@ import { collectScenes, collectLights, collectSpawns, collectVines, rollSpawn, A
 import { BandResolver } from './core/bands.js'
 import { valueNoise } from './core/noise.js'
 import { NollaPrng } from './core/NollaPrng.js'
-import { staticScenesFor, STATIC_SCENE_INIT, STATIC_DECOR_MARKS, STATIC_VINES, VINE_POOL, splicedScenesIn } from './core/staticScenes.js'
+import { staticScenesFor, STATIC_SCENE_INIT, STATIC_DECOR_MARKS, STATIC_VINES, VINE_POOL, STATIC_ENTITIES, splicedScenesIn } from './core/staticScenes.js'
 import { scanSceneMarks, ROOM_MARK_BIOMES, ROOM_MARK_COLORS } from './core/roomMarks.js'
 
 // 整图布景最多向右/下伸出 2 个 chunk(hall_bottom_2 x+552、altar_right_extra y+542)
@@ -323,6 +323,7 @@ export class NoitaWorld {
     for (const s of allSpawns()) {
       if (s.x >= wx0 && s.x < wx0 + CHUNK && s.y >= wy0 && s.y < wy0 + CHUNK) out.spawns.push(s)
     }
+    for (const s of STATIC_ENTITIES) if (s.x >= wx0 && s.x < wx0 + CHUNK && s.y >= wy0 && s.y < wy0 + CHUNK) out.spawns.push({ ...s, func: 'just_load_an_entity' })
     // PixelSprite props(煤矿木架 / 丛林树 / 金库机器):不是实体,当背景贴图钉在 (x - anchor) 处;图可能伸进邻 chunk,所以邻近 chunk 的生成点也要看
     for (const s of allSpawns()) {
       const ps = PIXEL_SPRITES[s.entity]
