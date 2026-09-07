@@ -117,32 +117,59 @@ export class Lighting {
   constructor(scale = 4) {
     this.scale = scale
     this.cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(4, 4) : document.createElement('canvas')
-    this.ctx = this.cv.getContext('2d', { willReadFrequently: true })
+    this.ctx = this.cv.getContext('2d')
     this.fog = new FogOfWar()
     this.sky = null
-    this.gradCache = new Map()
+    // tex_lights 不走 canvas:光斑在 JS 里加进一张 Float32 光图(w×h×3),compose 直接读它。
+    // 之前是 'lighter' 叠 drawImage 再 getImageData 读回 —— 读回要等 GPU 把队里几百个 drawImage 画完,连开陨石头几秒 getImageData 占了整帧 73%(PC 5fps,iPhone 上"像暂停")
+    this.buf = new Float32Array(3); this.w = 0; this.h = 0; this.img = null
+    this.maskCache = new Map() // Rs → Float32Array (2Rs)²:光罩剖面 LIGHT_MASK 按 d/Rs 线性插值(和径向渐变一样)
+    this.rgbCache = new Map()  // 'r,g,b' → [r,g,b]/255
     this.lut15 = new Float32Array(1024); this.lutG = new Float32Array(1024)
     for (let i = 0; i < 1024; i++) { const v = i / 1023; this.lut15[i] = Math.pow(v, 1.5); this.lutG[i] = Math.pow(v, 1 / 2.2) }
   }
   begin(VW, VH) {
     const w = Math.ceil(VW / this.scale), h = Math.ceil(VH / this.scale)
     if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h }
-    const c = this.ctx
-    c.globalCompositeOperation = 'source-over'
-    c.fillStyle = '#000'; c.fillRect(0, 0, w, h)
-    c.globalCompositeOperation = 'lighter'
+    if (this.w !== w || this.h !== h) { this.w = w; this.h = h; this.buf = new Float32Array(w * h * 3); this.img = new ImageData(w, h) }
+    else this.buf.fill(0)
+  }
+  _mask(Rs) {
+    let m = this.maskCache.get(Rs)
+    if (m) return m
+    const D = Rs * 2; m = new Float32Array(D * D)
+    for (let j = 0; j < D; j++) for (let i = 0; i < D; i++) {
+      const t = Math.hypot(i + 0.5 - Rs, j + 0.5 - Rs) / Rs * 16
+      if (t >= 16) continue
+      const k = t | 0, f = t - k
+      m[j * D + i] = (LIGHT_MASK[k] * (1 - f) + LIGHT_MASK[k + 1] * f) / 255
+    }
+    this.maskCache.set(Rs, m)
+    return m
   }
   /**
    * 一盏 LightComponent:视口坐标 (x,y)、radius(世界 px)、'r,g,b'、亮度倍率(mAlpha)。
    * 反 LightSystem 0xcb71d0:sprite.scale = radius / 贴图宽(64),即 64px 的光罩被拉到 **宽 = radius** —— radius 是光斑的直径,真正照到的半径只有一半
    *(玩家 350 → 175px,小灯笼 240 → 120px,蜡烛 64 → 32px);颜色 = (r,g,b)/255 × mAlpha
    */
-  light(x, y, r, rgb, a = 1) {
+  light(x, y, r, rgb, a = 1, cap = 1) {
     if (!(r > 0)) return
-    const R = r * 0.5, c = this.ctx, s = 1 / this.scale
-    const g = c.createRadialGradient(x * s, y * s, 0, x * s, y * s, R * s)
-    for (let k = 0; k <= 16; k++) g.addColorStop(k / 16, `rgba(${rgb},${(LIGHT_MASK[k] / 255 * a).toFixed(3)})`)
-    c.fillStyle = g; c.beginPath(); c.arc(x * s, y * s, R * s, 0, 7); c.fill()
+    const s = 1 / this.scale, Rs = Math.max(1, Math.round(r * 0.5 * s)), D = Rs * 2
+    const x0 = Math.round(x * s) - Rs, y0 = Math.round(y * s) - Rs, w = this.w, h = this.h
+    if (x0 >= w || y0 >= h || x0 + D <= 0 || y0 + D <= 0) return
+    let col = this.rgbCache.get(rgb)
+    if (!col) { col = rgb.split(',').map((v) => +v / 255); this.rgbCache.set(rgb, col) }
+    const m = this._mask(Rs), B = this.buf, cr = col[0], cg = col[1], cb = col[2]
+    const i0 = Math.max(0, -x0), i1 = Math.min(D, w - x0), j0 = Math.max(0, -y0), j1 = Math.min(D, h - y0)
+    for (let j = j0; j < j1; j++) {
+      let bo = ((y0 + j) * w + x0 + i0) * 3, mo = j * D + i0
+      for (let i = i0; i < i1; i++, bo += 3, mo++) {
+        const v = m[mo]
+        if (v === 0) continue
+        const al = v * a > cap ? cap : v * a // rgba 的 alpha 上限 1:亮度倍率再大也只能把中心 143/255 推到 1;cap>1 = 这盏灯代表 cap 盏叠在一起(发光格聚类)
+        B[bo] += cr * al; B[bo + 1] += cg * al; B[bo + 2] += cb * al
+      }
+    }
   }
   /**
    * @param {object} p
@@ -151,9 +178,8 @@ export class Lighting {
    * @param {number} p.nightVision  夜视药(0..1):lights 至少这么亮、雾不遮
    */
   compose(p) {
-    const c = this.ctx, w = this.cv.width, h = this.cv.height, S = this.scale
-    const img = c.getImageData(0, 0, w, h), d = img.data
-    if (this.debug) this.raw = new Uint8ClampedArray(d)
+    const c = this.ctx, w = this.w, h = this.h, S = this.scale
+    const img = this.img, d = img.data, B = this.buf
     const L15 = this.lut15, LG = this.lutG
     const skyC = p.skyColor, nv = p.nightVision || 0
     // 雾 / 天光先按 32px 格取到视口大小的小数组,再逐光图像素双线性插值(比每像素查 Map 快一个量级)
@@ -169,7 +195,7 @@ export class Lighting {
     for (let j = 0; j < h; j++) {
       const wy = p.oy + (j + 0.5) * S, fy = wy / CELL - 0.5 - gy0
       for (let i = 0; i < w; i++) {
-        const wx = p.ox + (i + 0.5) * S, o = (j * w + i) * 4, fx = wx / CELL - 0.5 - gx0
+        const wx = p.ox + (i + 0.5) * S, o = (j * w + i) * 4, bo = (j * w + i) * 3, fx = wx / CELL - 0.5 - gx0
         const skyA0 = bilin(skyG, fx, fy)
         const skyA = skyA0 * skyA0 // shader:sky_ambient_amount *= sky_ambient_amount
         const fog = nv > 0 ? 0 : bilin(fogG, fx, fy)
@@ -177,7 +203,8 @@ export class Lighting {
         const fowBase = Math.max(0, 1 - fog - sqrtSky)
         const add = Math.max(0.35 - fogSky, 0)
         for (let k = 0; k < 3; k++) {
-          let l = L15[Math.min(1023, (d[o + k] / 255 * 0.8 * 1023) | 0)]
+          const lt = B[bo + k] > 1 ? 1 : B[bo + k] // tex_lights 是 8 位贴图,叠加到 1 就饱和
+          let l = L15[(lt * 0.8 * 1023) | 0]
           const sl = skyC[k] * skyA
           l = Math.max(l - sl, 0) + sl
           l = LG[Math.min(1023, (Math.min(1, l) * 1023) | 0)]
@@ -189,7 +216,6 @@ export class Lighting {
         d[o + 3] = 255
       }
     }
-    c.globalCompositeOperation = 'source-over'
     c.putImageData(img, 0, 0)
     return this.cv
   }

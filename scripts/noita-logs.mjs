@@ -21,7 +21,9 @@ const pos = events.filter((e) => e.e === 'pos')
 if (pos.length) {
   const fps = pos.map((p) => p.fps).filter(Boolean)
   const phys = pos.map((p) => p.phys).filter((v) => v !== undefined)
-  console.log(`帧率 min ${Math.min(...fps)} avg ${(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(0)}  模拟 avg ${(pos.reduce((a, p) => a + (p.sim || 0), 0) / pos.length).toFixed(1)}ms${phys.length ? `  物理 avg ${(phys.reduce((a, b) => a + b, 0) / phys.length).toFixed(1)} max ${Math.max(...phys)}ms` : ''}  轨迹 (${pos[0].x},${pos[0].y}) → (${pos[pos.length - 1].x},${pos[pos.length - 1].y})`)
+  const lod = pos.map((p) => p.lod).filter((v) => v !== undefined), lodLow = lod.filter((v) => v > 1).length
+  const avg = (k) => (pos.reduce((a, p) => a + (p[k] || 0), 0) / pos.length).toFixed(1)
+  console.log(`帧率 min ${Math.min(...fps)} avg ${(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(0)}  模拟 avg ${avg('sim')}ms${lod.length ? `(降档 ${lodLow}/${lod.length} 秒,最深 1/${Math.max(...lod)})` : ''} 逻辑 avg ${avg('logic')} 渲染 avg ${avg('render')}${phys.length ? `  物理 avg ${(phys.reduce((a, b) => a + b, 0) / phys.length).toFixed(1)} max ${Math.max(...phys)}ms` : ''}  轨迹 (${pos[0].x},${pos[0].y}) → (${pos[pos.length - 1].x},${pos[pos.length - 1].y})`)
 }
 const show = process.argv[3] === 'all' ? events : events.filter((e) => ['stuck', 'report', 'error', 'open'].includes(e.e))
 for (const e of show) {

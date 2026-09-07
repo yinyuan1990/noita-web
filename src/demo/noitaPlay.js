@@ -250,6 +250,7 @@ lighting.sky = new Skylight((wx, wy) => {
   return k === 1 || k === 2 ? 1 : k === 3 ? 0.5 : 0
 })
 const glowPts = [] // 本帧发光格 [x,y,glow,color,...](视口坐标)
+const glowCells = new Map() // 发光格按 8×8 聚类(render 里复用)
 let fireCells = 0
 // 液体折射(post_final.frag ENABLE_REFRACTION):有 WebGL 就在放大那一步按屏幕分辩率做(render/Refraction.js,原式 + 亚像素采样,和原版一样);
 // 没有 WebGL 退回世界分辨率的整像素版:wobX/wobY = 本帧每列的 dx / 每行的 dy,wobOx/wobOy = 本帧视口左上世界坐标
@@ -309,6 +310,10 @@ const projectiles = new ProjectileSystem({
     hitTest: (x, y, p) => p.owner === 'enemy'
       ? (x >= player.x - 3 && x <= player.x + 3 && y >= player.y - 12 && y <= player.y + 3 ? PLAYER_TARGET : entities.hitTestBodies(x, y))
       : entities.hitTest(x, y),
+    // 粗筛(一帧一次):这发弹这一帧的活动范围里有没有可能打到的目标,没有就不做逐子步的 hitTest
+    hitNear: (x0, y0, x1, y1, p) => p.owner === 'enemy'
+      ? ((Math.max(x0, x1) >= player.x - 3 && Math.min(x0, x1) <= player.x + 3 && Math.max(y0, y1) >= player.y - 12 && Math.min(y0, y1) <= player.y + 3) || entities.anyNear(x0, y0, x1, y1, true))
+      : entities.anyNear(x0, y0, x1, y1, false),
     // 击退(文档):final_knockback = knockback_force × 弹速 × 弹 mass / 目标 mass —— 目标 mass 我们没有,取 ×0.15 让 bullet(kb 1.8 / 500px/s)≈ 135 px/s;knockback_force 0 的(火花弹)不推人
     hitEntity: (t, p, dmg) => {
       const kb = ((p.d.knockback || 0) + (p.kbAdd || 0)) * 0.15
@@ -1547,7 +1552,7 @@ $('btnReport').addEventListener('click', async (e) => {
   const cw = curWand()
   oplog.ev('report', {
     x: player.x | 0, y: player.y | 0, box: sampleAround(player.x, player.y, 8, 12), note: 'manual',
-    fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
+    fps: fps | 0, sim: +simMs.toFixed(1), logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, lod: sim.lod, phys: physics ? { ms: +physics.stats.ms.toFixed(1), step: +(physics.stats.msStep || 0).toFixed(1), terr: +(physics.stats.msTerrain || 0).toFixed(1), bodies: physics.stats.bodies, awake: physics.stats.awake, tiles: physics.stats.tiles, toiOff: !!physics.stats.toiOff, contacts: physics.world.getContactCount() } : null,
     ents: entities.list.length, bodies: entities.bodies.length, proj: projectiles.list.length, debris: debris.length, chunks: streamer.entries.size,
     wand: cw ? { name: cw.name, cards: cw.cards, potion: cw.potion ? cw.potion.mat : undefined } : null, touch: IS_TOUCH ? 1 : 0,
   })
@@ -1587,7 +1592,7 @@ function step(dt) {
   const inState = dir + (wantUp ? 'U' : '') + (wantFire ? 'F' : '')
   if (inState !== lastInState) { lastInState = inState; oplog.ev('input', { dir, up: wantUp ? 1 : 0, fire: wantFire ? 1 : 0, x: player.x | 0, y: player.y | 0, joy: touch.joy ? [+touch.mx.toFixed(2), +touch.my.toFixed(2)] : undefined }) }
   posLogT += dt
-  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, ents: entities.list.length }) }
+  if (posLogT >= 1) { posLogT = 0; oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length }) }
 
   // ── 身体:Noita CharacterPlatforming 模型 ──
   const f60 = dt * 60 // 以帧为单位的参数换算
@@ -1898,37 +1903,42 @@ function render() {
     for (let j = 0; j < VH; j++) { const c = Math.cos(tW + (oy + j) * (50 / VH)); wobY[j] = refr ? 0 : c > 0.5 ? 1 : c < -0.5 ? -1 : 0 }
     for (let j = 0; j < VH; j++) {
       const wy = oy + j
-      for (let i = 0; i < VW; i++) {
-        const wx = ox + i
-        const e = sim._entry(wx, wy)
+      // 一行按 chunk 分段,每段查一次 chunk 表(之前每像素调一次 sim._entry,一帧 8 万次)
+      for (let sx = ox; sx < ox + VW; sx = ((sx >> 9) + 1) << 9) {
+        const e = sim._entry(sx, wy)
+        const iEnd = Math.min(VW, (((sx >> 9) + 1) << 9) - ox)
         if (!e) continue
-        let li = (wy & 511) * CHUNK + (wx & 511), src = e
-        let m = e.mat[li]
-        if (m === 0) continue
-        const k = KD[m]
-        const o = (j * VW + i) * 4
-        // 折射是"采样"(gather):这一格是液体 → 颜色取偏移处那格(也得是液体)。不能反过来把自己写到偏移处(scatter):
-        // 偏移量随 x 从 0 跳到 1 的那一列会被写两次、旁边一列没人写 → 水面上一条条黑线(用户截图)
-        if (k === 3) {
-          liqMask[j * VW + i] = 255
-          const ii = i + wobX[i], jj = j + wobY[j]
-          if ((ii !== i || jj !== j) && ii >= 0 && ii < VW && jj >= 0 && jj < VH) {
-            const e2 = sim._entry(ox + ii, oy + jj)
-            if (e2) { const li2 = ((oy + jj) & 511) * CHUNK + ((ox + ii) & 511), m2 = e2.mat[li2]; if (m2 > 0 && KD[m2] === 3) { m = m2; li = li2; src = e2 } }
+        const rowBase = (wy & 511) * CHUNK
+        for (let i = sx - ox; i < iEnd; i++) {
+          const wx = ox + i
+          let li = rowBase + (wx & 511), src = e
+          let m = e.mat[li]
+          if (m === 0) continue
+          const k = KD[m]
+          const o = (j * VW + i) * 4
+          // 折射是"采样"(gather):这一格是液体 → 颜色取偏移处那格(也得是液体)。不能反过来把自己写到偏移处(scatter):
+          // 偏移量随 x 从 0 跳到 1 的那一列会被写两次、旁边一列没人写 → 水面上一条条黑线(用户截图)
+          if (k === 3) {
+            liqMask[j * VW + i] = 255
+            const ii = i + wobX[i], jj = j + wobY[j]
+            if ((ii !== i || jj !== j) && ii >= 0 && ii < VW && jj >= 0 && jj < VH) {
+              const e2 = sim._entry(ox + ii, oy + jj)
+              if (e2) { const li2 = ((oy + jj) & 511) * CHUNK + ((ox + ii) & 511), m2 = e2.mat[li2]; if (m2 > 0 && KD[m2] === 3) { m = m2; li = li2; src = e2 } }
+            }
           }
+          if (k >= 2) {
+            const c = COL[m]
+            let r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255, a = k === 2 ? 255 : ALP[m]
+            // 发光材质(gfx_glow:火 255 / 熔岩 150 / 毒液 60 / 荧光岩…):post_final.frag 把 glow 贴图(材质色 × gfx_glow/255)加进 lights(自己不被黑暗压暗)
+            // 再 screen 叠到画面上 —— 毒液 Graphics color 44B4FF10 只有 27% 的 alpha,靠 glow 才是原版那种亮黄绿。这里:alpha 加上 gfx_glow,再每 5 格采一点进光源表(halo + 不被压暗)
+            if (GLOW[m]) { a = Math.min(255, a + GLOW[m]); if (glowPts.length < 1600 && ((wx + wy * 3) % 5) === 0) glowPts.push(i, j, GLOW[m], c) }
+            if (m === fireM) { fireCells++; const f = 0.7 + Math.random() * 0.3; r = 255; g = (140 + Math.random() * 90) | 0; b = 40; a = (255 * f) | 0 }
+            else if (k === 4) a = Math.min(a, 140) // 气体更透
+            else if (k === 2) { const h = ((wx * 374761393 + wy * 668265263) >>> 0) % 100; const jt = 0.86 + h / 100 * 0.28; r *= jt; g *= jt; b *= jt }
+            if (src.aux[li] && k !== 5 && k !== 4) { r = Math.min(255, r + 120); g = Math.min(255, g + 40) } // 燃烧中
+            d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = a
+          } else if (k === 1 && e.aux[li]) { d[o] = 255; d[o + 1] = 120; d[o + 2] = 30; d[o + 3] = 150 } // 燃烧的木头
         }
-        if (k >= 2) {
-          const c = COL[m]
-          let r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255, a = k === 2 ? 255 : ALP[m]
-          // 发光材质(gfx_glow:火 255 / 熔岩 150 / 毒液 60 / 荧光岩…):post_final.frag 把 glow 贴图(材质色 × gfx_glow/255)加进 lights(自己不被黑暗压暗)
-          // 再 screen 叠到画面上 —— 毒液 Graphics color 44B4FF10 只有 27% 的 alpha,靠 glow 才是原版那种亮黄绿。这里:alpha 加上 gfx_glow,再每 5 格采一点进光源表(halo + 不被压暗)
-          if (GLOW[m]) { a = Math.min(255, a + GLOW[m]); if (glowPts.length < 1600 && ((wx + wy * 3) % 5) === 0) glowPts.push(i, j, GLOW[m], c) }
-          if (m === fireM) { fireCells++; const f = 0.7 + Math.random() * 0.3; r = 255; g = (140 + Math.random() * 90) | 0; b = 40; a = (255 * f) | 0 }
-          else if (k === 4) a = Math.min(a, 140) // 气体更透
-          else if (k === 2) { const h = ((wx * 374761393 + wy * 668265263) >>> 0) % 100; const jt = 0.86 + h / 100 * 0.28; r *= jt; g *= jt; b *= jt }
-          if (src.aux[li] && k !== 5 && k !== 4) { r = Math.min(255, r + 120); g = Math.min(255, g + 40) } // 燃烧中
-          d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = a
-        } else if (k === 1 && e.aux[li]) { d[o] = 255; d[o + 1] = 120; d[o + 2] = 30; d[o + 3] = 150 } // 燃烧的木头
       }
     }
     overlayCv.getContext('2d').putImageData(img, 0, 0)
@@ -1981,9 +1991,17 @@ function render() {
   // 标记点上的灯(LightComponent 默认色 255,178,118):lantern_small 240 / candle 64 / physics_tubelamp 150 (200,230,255) / torch_stand 96
   for (const l of lamps) light(l.x - ox, l.y - oy - (l.kind === 'torchstand' ? 16 : 2), l.kind === 'lantern' ? 240 : l.kind === 'candle' ? 64 : l.kind === 'tubelamp' ? 150 : 96, l.kind === 'tubelamp' ? '200,230,255' : '255,178,118', 1)
   // lights += glow:发光格照亮自己那一小圈(火 gl=1,熔岩 0.59,毒液 0.235),半径 14~36
+  // 先按 8×8 格聚成一盏(火海一屏 1600 个采样点 → 两三百盏):同格的几盏叠在一起就是一盏 ×n 的(cap = n 允许它超过单盏的 alpha 上限)
+  glowCells.clear()
   for (let k = 0; k < glowPts.length; k += 4) {
-    const c = glowPts[k + 3], gl = glowPts[k + 2] / 255
-    light(glowPts[k], glowPts[k + 1], (14 + gl * 22) * 2, `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`, Math.min(1.6, 0.6 + 0.9 * gl))
+    const key = (glowPts[k + 1] >> 3) * 256 + (glowPts[k] >> 3)
+    const g = glowCells.get(key)
+    if (g) { g.n++; g.x += glowPts[k]; g.y += glowPts[k + 1]; if (glowPts[k + 2] > g.gl) { g.gl = glowPts[k + 2]; g.c = glowPts[k + 3] } }
+    else glowCells.set(key, { n: 1, x: glowPts[k], y: glowPts[k + 1], gl: glowPts[k + 2], c: glowPts[k + 3] })
+  }
+  for (const g of glowCells.values()) {
+    const gl = g.gl / 255, c = g.c
+    light(g.x / g.n, g.y / g.n, (14 + gl * 22) * 2, `${(c >> 16) & 255},${(c >> 8) & 255},${c & 255}`, Math.min(1.6, 0.6 + 0.9 * gl) * g.n, g.n)
   }
   // 投射物 LightComponent 彩色光 + 发射/爆炸闪光(爆炸同时在雾上开孔:fog_of_war_hole);道具 / 怪的光(矿灯 / 大蜘蛛绿光)
   projectiles.lights(light, ox, oy)
@@ -2099,8 +2117,8 @@ function loop(now) {
   $('air').firstElementChild.style.width = (player.air / 7 * 100) + '%'
   $('air').firstElementChild.style.background = player.air <= 0 ? '#e0484f' : '#d8f0ff'
   // 手机端整块面板藏着(挡视野),只在顶上留一行 fps / 模拟 / 物理毫秒,用户反馈掉帧时能直接说出数字
-  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)} · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
-  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)} 渲染 ${renderMs.toFixed(1)} · 醒 ${sim.activeBlocks} 块 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
+  if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${fps.toFixed(0)} fps · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)} · 渲染 ${renderMs.toFixed(1)} · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
+  $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)} 渲染 ${renderMs.toFixed(1)} · 醒 ${sim.activeBlocks} 块${sim.lod > 1 ? ` 降档 1/${sim.lod}` : ''} 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
   requestAnimationFrame(loop)
 }
 requestAnimationFrame(loop)

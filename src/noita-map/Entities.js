@@ -2186,6 +2186,19 @@ export class Entities {
     for (const b of this.bodies) if (!b.dead && b.contains(x, y)) return b
     return null
   }
+  /**
+   * 粗筛:线段 (x0,y0)→(x1,y1) 的包围盒(外扩 2px)里有没有可能被打到的东西(怪 hitbox / 虫节 / 刚体外接圆)。
+   * 弹丸一帧走 2px 一个子步、每步还补采中点,一发激光一帧要 hitTest 十几次 × 一两百个目标;先在这儿一帧一次把"周围根本没东西"的弹筛掉
+   */
+  anyNear(x0, y0, x1, y1, bodiesOnly = false) {
+    const mnx = (x0 < x1 ? x0 : x1) - 2, mxx = (x0 < x1 ? x1 : x0) + 2, mny = (y0 < y1 ? y0 : y1) - 2, mxy = (y0 < y1 ? y1 : y0) + 2
+    if (!bodiesOnly) {
+      for (const e of this.list) if (!e.dead && e.x + e.hit.r >= mnx && e.x + e.hit.l <= mxx && e.y + e.hit.b >= mny && e.y + e.hit.t <= mxy) return true
+      for (const w of this.worms) if (!w.dead) for (const s of w.segs) if (s.x + w.r + 1 >= mnx && s.x - w.r - 1 <= mxx && s.y + w.r + 1 >= mny && s.y - w.r - 1 <= mxy) return true
+    }
+    for (const b of this.bodies) if (!b.dead && b.x + b.r + 1 >= mnx && b.x - b.r - 1 <= mxx && b.y + b.r + 1 >= mny && b.y - b.r - 1 <= mxy) return true
+    return false
+  }
 
   /**
    * 掉血:喷 blood_material(真材质碎屑),hp≤0 死亡 → 尸体按 RAGDOLL_FX 处理;刚体走 _bodyDamaged

@@ -161,10 +161,13 @@ export class ProjectileSystem {
       // 穿地弹按 1px 步进(每格都要过一遍能量判定),其余 2px;步长按当前速度算——穿地时速度被削,后面的步子随之变短
       const sub = Math.max(1, Math.ceil(sp * dt / (d.groundPenetration > 0 ? 1 : 2)))
       let hit = false, hitLiquid = false
+      // 实体命中先粗筛一次(Entities.anyNear):这一帧的位移包围盒再外扩一个位移长度(反弹后也不会跑出去)里没怪没刚体就整帧不做 hitTest
+      const testHit = this.hooks.hitTest && p.age > 0.02 && d.type !== 'MATERIAL_PARTICLE' && d.type !== 'STATIC'
+        && (!this.hooks.hitNear || this.hooks.hitNear(p.x - sp * dt, p.y - sp * dt, p.x + p.vx * dt + sp * dt, p.y + p.vy * dt + sp * dt, p))
       for (let s = 0; s < sub && !hit; s++) {
         const nx = p.x + (p.vx * dt) / sub, ny = p.y + (p.vy * dt) / sub
         // 命中实体(HitboxComponent):ProjectileComponent.damage 交给实体层;on_collision_die 的弹在这里死
-        if (this.hooks.hitTest && p.age > 0.02 && d.type !== 'MATERIAL_PARTICLE' && d.type !== 'STATIC') {
+        if (testHit) {
           // 2px 子步只采终点会从刚体上被前几发抠出的 3px 洞里穿过去(灯笼打两发后面全 miss):步子 >1px 时补采一次中点
           const t = this.hooks.hitTest(nx, ny, p) || (sub < sp * dt ? this.hooks.hitTest((p.x + nx) / 2, (p.y + ny) / 2, p) : null)
           if (t && t !== p.lastHit) {

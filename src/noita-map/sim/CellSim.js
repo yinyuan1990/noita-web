@@ -20,6 +20,14 @@ const N = CHUNK * CHUNK
 const BS = 32, BSH = 5, BN = CHUNK >> BSH, NB = BN * BN
 const WAKE = 3
 const SIM_BLOCK_BUDGET = 160 // 活跃块超过这个数就对外围块隔帧步进(见 step)
+// 按耗时自适应的降档:一步的平滑耗时 > SIM_BUDGET_MS 就把"每块几帧走一次"的档位 +1(最多 1/4 帧率),< SIM_RELAX_MS 再回来;
+// 每次换档至少隔 LOD_DWELL 帧,免得抖。iPhone 上火海 1700 个活跃块光靠"> 320 块隔帧"还是 25~45ms(整机 20fps),
+// 按机器实际速度限时才有意义 —— 反正掉到 20fps 整个世界也是 1/3 速,不如让模拟自己降速、操作和画面保持 60
+const SIM_BUDGET_MS = 7, SIM_RELAX_MS = 3, LOD_MAX = 4, LOD_DWELL = 20
+const now = typeof performance !== 'undefined' ? () => performance.now() : () => Date.now()
+// 八邻偏移(前 4 个是四邻):右 左 下 上 右下 左下 右上 左上;N8_OFF 是同 chunk 内的数组下标偏移
+const N8_DX = [1, -1, 0, 0, 1, -1, 1, -1], N8_DY = [0, 0, 1, -1, 1, 1, -1, -1]
+const N8_OFF = N8_DX.map((dx, k) => N8_DY[k] * CHUNK + dx)
 
 export class CellSim {
   /**
@@ -70,6 +78,7 @@ export class CellSim {
     this.frame = 0
     this.stepped = 0
     this.activeBlocks = 0
+    this.lod = 1; this.lodDwell = 0; this.stepMs = 0 // 当前降档档位(1 = 每帧全走)/ 距上次换档的帧数 / 一步耗时的平滑值
   }
 
   // ── 脏块 ──
@@ -147,6 +156,9 @@ export class CellSim {
     // 会和空气反应的材质(蒸发类):这些格子不能睡
     this.airRx = new Uint8Array(1024)
     for (const k of this.rx.keys()) if ((k % 1024) === 0 && k > 0) this.airRx[k / 1024] = 1
+    // 哪些材质作为反应的一方出现过:没出现过的(烟 / 大多数沙土)在 step 里直接跳过 _react 的 4 次邻格 + Map 查表
+    this.rxAny = new Uint8Array(1024)
+    for (const k of this.rx.keys()) this.rxAny[(k / 1024) | 0] = 1
   }
 
   // ── 窗口绑定 ──
@@ -159,6 +171,9 @@ export class CellSim {
     const cx1 = Math.floor(x1 / CHUNK) + WCX, cy1 = Math.floor(y1 / CHUNK) + WCY
     this.cw = Math.min(4, cx1 - this.cx0 + 1); this.ch = Math.min(4, cy1 - this.cy0 + 1)
     this.wx0 = Math.floor(x0); this.wy0 = Math.floor(y0); this.wx1 = Math.floor(x1); this.wy1 = Math.floor(y1)
+    // 视口矩形(inner):step 的 LOD 用 —— 看得见的块优先,窗口外圈(面积是视口的 3~4 倍)降更多
+    this.ix0 = inner ? Math.floor(inner.x0) : this.wx0; this.iy0 = inner ? Math.floor(inner.y0) : this.wy0
+    this.ix1 = inner ? Math.floor(inner.x1) : this.wx1; this.iy1 = inner ? Math.floor(inner.y1) : this.wy1
     const ix0 = inner ? Math.floor(inner.x0 / CHUNK) + WCX : this.cx0, ix1 = inner ? Math.floor(inner.x1 / CHUNK) + WCX : cx1
     const iy0 = inner ? Math.floor(inner.y0 / CHUNK) + WCY : this.cy0, iy1 = inner ? Math.floor(inner.y1 / CHUNK) + WCY : cy1
     let ok = true
@@ -197,17 +212,27 @@ export class CellSim {
     return true
   }
   _swap(x1, y1, e1, i1, x2, y2) {
-    const e2 = this._entry(x2, y2)
+    // 绝大多数交换都在同一个 chunk 里(邻格),省掉一次 _entry;跨 chunk 边才查表
+    const e2 = (x1 >> 9) === (x2 >> 9) && (y1 >> 9) === (y2 >> 9) ? e1 : this._entry(x2, y2)
     if (!e2) return false
     const i2 = (y2 & 511) * CHUNK + (x2 & 511)
     const m1 = e1.mat[i1], a1 = e1.aux[i1]
     e1.mat[i1] = e2.mat[i2]; e1.aux[i1] = e2.aux[i2]
     e2.mat[i2] = m1; e2.aux[i2] = a1
     e1.dirty = true; e2.dirty = true
-    this.mark(x1, y1); this.mark(x2, y2)
+    this._markL(e1, x1, y1); this._markL(e2, x2, y2)
     const s1 = this.kind[m1] > 0 && this.kind[m1] <= K_SAND, s2 = this.kind[e1.mat[i1]] > 0 && this.kind[e1.mat[i1]] <= K_SAND
     if (s1 !== s2) { this._bumpTver(e1, x1, y1); this._bumpTver(e2, x2, y2) }
     return true
+  }
+  /** 同 mark(),但调用方已知 (wx,wy) 所在 chunk 表项 e */
+  _markL(e, wx, wy) {
+    const lx = wx & 511, ly = wy & 511
+    if (!e.act) e.act = new Uint8Array(NB)
+    e.act[(ly >> BSH) * BN + (lx >> BSH)] = WAKE
+    const bx = lx & (BS - 1), by = ly & (BS - 1)
+    if (bx === 0) this._markOne(wx - 1, wy); else if (bx === BS - 1) this._markOne(wx + 1, wy)
+    if (by === 0) this._markOne(wx, wy - 1); else if (by === BS - 1) this._markOne(wx, wy + 1)
   }
   // ── 实心版本号(给 Box2D 地形碰撞块判脏):每个 32×32 块一个计数,只在某格在"实心(static / solid / sand)↔ 非实心"之间变化时 +1;
   // 液体流动 / 气体飘 / 火烧(材质变但仍是实心 → 不算)都不碰它,所以碰撞块不会跟着水面每帧重建
@@ -231,15 +256,18 @@ export class CellSim {
 
   // ── 一步:只步进脏块(块内自下而上、交替左右;块之间也自下而上,和整窗口扫的顺序一致)──
   step() {
+    const t0 = now()
     this.frame++
     const dirR = this.frame & 1 // 交替扫描方向,消除横向偏置
-    const K = this.kind
+    const K = this.kind, LIFE = this.lifetime, RXA = this.rxAny
     let moved = 0, active = 0
-    // 过载 LOD:上一帧活跃块超过 SIM_BLOCK_BUDGET(连开陨石一屏 300 个火坑块、6 万格在动,手机上模拟 60~100ms)时,窗口中央一半之外的块隔帧步进 ——
-    // 远处坑里的火慢一倍看不出来;正常一屏 80~150 块不触发。跳过的块 ttl 不减(别把它们提前睡掉)
-    // 再翻一倍(> 2×预算,陨石坑都在窗口中央时外围 LOD 帮不上)就所有块都隔帧:整体半速换一半开销,总比手机上 5fps 强
-    const lod = this.activeBlocks > SIM_BLOCK_BUDGET, lodAll = this.activeBlocks > SIM_BLOCK_BUDGET * 2
-    const cxm = (this.wx0 + this.wx1) >> 1, cym = (this.wy0 + this.wy1) >> 1, lodX = (this.wx1 - this.wx0) >> 2, lodY = (this.wy1 - this.wy0) >> 2
+    // 过载 LOD:上一帧活跃块超过 SIM_BLOCK_BUDGET(连开陨石一屏 300 个火坑块、6 万格在动,手机上模拟 60~100ms)时,视口外的块隔帧步进 ——
+    // 屏幕外坑里的火慢一倍看不出来;正常一屏 80~150 块不触发。跳过的块 ttl 不减(别把它们提前睡掉)
+    // 再翻一倍(> 2×预算)视口内也隔帧;之上再按实测耗时升档(this.lod,见文件头常数):视口内每 lvlIn 帧走一块,视口外 2 倍(最多 1/8)——
+    // iPhone 上报的火海 1700 个活跃块里看得见的只有 130 个左右(模拟窗口 = 视口 + 512 边距,面积是视口的十几倍),外圈才是大头
+    const lvlIn = Math.max(this.lod, this.activeBlocks > SIM_BLOCK_BUDGET * 2 ? 2 : 1)
+    const lvlOut = this.activeBlocks > SIM_BLOCK_BUDGET ? Math.min(8, Math.max(2, lvlIn * 2)) : lvlIn
+    const ix0 = this.ix0, iy0 = this.iy0, ix1 = this.ix1, iy1 = this.iy1
     for (let j = this.ch - 1; j >= 0; j--) {
       for (let by = BN - 1; by >= 0; by--) {
         for (let i = 0; i < this.cw; i++) {
@@ -254,8 +282,10 @@ export class CellSim {
             const x0 = Math.max(this.wx0, ax0 + bx * BS), x1 = Math.min(this.wx1, ax0 + bx * BS + BS - 1)
             const y0 = Math.max(this.wy0, ay0 + by * BS), y1 = Math.min(this.wy1, ay0 + by * BS + BS - 1)
             if (x0 > x1 || y0 > y1) continue
-            if (lod && ((bx + by + this.frame) & 1) && (lodAll || Math.abs(((x0 + x1) >> 1) - cxm) > lodX || Math.abs(((y0 + y1) >> 1) - cym) > lodY)) continue
+            const lvl = x1 < ix0 || x0 > ix1 || y1 < iy0 || y0 > iy1 ? lvlOut : lvlIn // 块和视口不相交 → 外圈档位
+            if (lvl > 1 && (bx + by + this.frame) % lvl) continue
             e.act[b] = ttl - 1 // 这一帧里有格子动了会被 mark() 重新续成 WAKE
+            let keep = 0 // 块里有火 / 有寿命的气 / 正在烧的格 → 块要一直醒着(块结束时一次续命,不再每格调 _markOne)
             for (let wy = y1; wy >= y0; wy--) {
               const row = (wy & 511) * CHUNK
               for (let k = 0; k <= x1 - x0; k++) {
@@ -264,21 +294,30 @@ export class CellSim {
                 const m = e.mat[li]
                 if (m === 0) continue
                 const k0 = K[m]
-                if (k0 === K_STATIC) { if (e.aux[li]) { this._burnStatic(wx, wy, e, li, m); this._markOne(wx, wy) } continue }
+                if (k0 === K_STATIC) { if (e.aux[li]) { this._burnStatic(wx, wy, e, li, m); keep = 1 } continue }
                 if (k0 === K_SAND) moved += this._sand(wx, wy, e, li, m)
                 else if (k0 === K_LIQUID) moved += this._liquid(wx, wy, e, li, m)
-                else if (k0 === K_GAS) { moved += this._gas(wx, wy, e, li, m); if (this.lifetime[m]) this._markOne(wx, wy) } // 有寿命的气要一直走时钟
-                else if (k0 === K_FIRE) { moved += this._fire(wx, wy, e, li, m); this._markOne(wx, wy) }
-                if (e.aux[li] && K[e.mat[li]] !== K_FIRE && K[e.mat[li]] !== K_GAS) { this._burnStatic(wx, wy, e, li, e.mat[li]); this._markOne(wx, wy) }
-                if ((this.frame + wx) & 1) this._react(wx, wy, e, li)
+                else if (k0 === K_GAS) { moved += this._gas(wx, wy, e, li, m); if (LIFE[m]) keep = 1 } // 有寿命的气要一直走时钟
+                else if (k0 === K_FIRE) { moved += this._fire(wx, wy, e, li, m); keep = 1 }
+                const m2 = e.mat[li] // 动过之后这格可能换了东西(换进来的液体 / 空气)
+                if (m2 === 0) continue
+                if (e.aux[li]) { const k2 = K[m2]; if (k2 !== K_FIRE && k2 !== K_GAS) { this._burnStatic(wx, wy, e, li, m2); keep = 1 } }
+                if (RXA[m2] && ((this.frame + wx) & 1)) this._react(wx, wy, e, li)
               }
             }
+            if (keep) e.act[b] = WAKE
           }
         }
       }
     }
     this.stepped = moved
     this.activeBlocks = active
+    // 按耗时换档(见 SIM_BUDGET_MS 注释):平滑后 > 预算升一档,< 松弛线降一档,两次换档间至少隔 LOD_DWELL 帧
+    this.stepMs = this.stepMs * 0.9 + (now() - t0) * 0.1 // 平滑慢一点:一次爆炸把几百个块一起标醒的单帧尖峰不该直接把档位推上去
+    if (++this.lodDwell >= LOD_DWELL) {
+      if (this.stepMs > SIM_BUDGET_MS && this.lod < LOD_MAX) { this.lod++; this.lodDwell = 0 }
+      else if (this.stepMs < SIM_RELAX_MS && this.lod > 1) { this.lod--; this.lodDwell = 0 }
+    }
     // 静态材质有变化的 chunk 通知外面重画位图
     for (let j = 0; j < this.ch; j++) for (let i = 0; i < this.cw; i++) {
       const e = this.tbl[j * 4 + i]
@@ -347,14 +386,16 @@ export class CellSim {
     if ((this.frame & 3) === 0) a--
     if (a <= 0) { this.set(x, y, 0); return 1 }
     e.aux[li] = a
-    const up = this.get(x, y - 1)
+    // 不贴 chunk 边的格子直接读本 chunk 数组(烟是火海里数量最多的动格,省掉 3 次 get → _entry)
+    const lx = x & 511, inner = lx > 0 && lx < 511 && (y & 511) > 0
+    const up = inner ? e.mat[li - CHUNK] : this.get(x, y - 1)
     const canUp = up === 0 || (up > 0 && (this.kind[up] === K_LIQUID || (this.kind[up] === K_GAS && this.density[up] > this.density[m])))
     const r = Math.random()
     if (canUp && r < 0.7) { this._swap(x, y, e, li, x, y - 1); return 1 }
     const d = r < 0.85 ? -1 : 1
-    const side = this.get(x + d, y)
+    const side = inner ? e.mat[li + d] : this.get(x + d, y)
     if (side === 0) { this._swap(x, y, e, li, x + d, y); return 1 }
-    const diag = this.get(x + d, y - 1)
+    const diag = inner ? e.mat[li + d - CHUNK] : this.get(x + d, y - 1)
     if (diag === 0) { this._swap(x, y, e, li, x + d, y - 1); return 1 }
     return 0
   }
@@ -363,26 +404,29 @@ export class CellSim {
     let a = e.aux[li]
     if (a === 0) a = 6 + ((Math.random() * 10) | 0)
     a--
+    const K = this.kind, lx = x & 511, ly = y & 511, inner = lx > 0 && lx < 511 && ly > 0 && ly < 511 // 八邻都在本 chunk 里 → 直接读数组
     // 需要氧气:四邻一个空格都没有就熄
     let air = 0
-    for (let k = 0; k < 4; k++) { const t = this.get(x + (k === 0 ? 1 : k === 1 ? -1 : 0), y + (k === 2 ? 1 : k === 3 ? -1 : 0)); if (t === 0 || (t > 0 && this.kind[t] === K_GAS)) air++ }
+    for (let k = 0; k < 4; k++) {
+      const t = inner ? e.mat[li + N8_OFF[k]] : this.get(x + N8_DX[k], y + N8_DY[k])
+      if (t === 0 || (t > 0 && K[t] === K_GAS)) air++
+    }
     if (a <= 0 || (this.needsO2[m] && air === 0)) { this.set(x, y, this.M_SMOKE && Math.random() < 0.25 ? this.M_SMOKE : 0); return 1 }
     e.aux[li] = a
     // 点燃邻居
     const T = this.fireTemp[m]
     for (let k = 0; k < 8; k++) {
-      const nx = x + [1, -1, 0, 0, 1, -1, 1, -1][k], ny = y + [0, 0, 1, -1, 1, 1, -1, -1][k]
-      const t = this.get(nx, ny)
+      const t = inner ? e.mat[li + N8_OFF[k]] : this.get(x + N8_DX[k], y + N8_DY[k])
       if (t <= 0 || !this.burnable[t] || this.autoign[t] > T) continue
-      const ne = this._entry(nx, ny), ni = (ny & 511) * CHUNK + (nx & 511)
+      const ne = inner ? e : this._entry(x + N8_DX[k], y + N8_DY[k]), ni = inner ? li + N8_OFF[k] : ((y + N8_DY[k]) & 511) * CHUNK + ((x + N8_DX[k]) & 511)
       if (ne.aux[ni] === 0 && Math.random() < 0.12) { ne.aux[ni] = 1; ne.dirty = true }
     }
     // 火苗上飘
     if (Math.random() < 0.55) {
-      const up = this.get(x, y - 1)
+      const up = inner ? e.mat[li - CHUNK] : this.get(x, y - 1)
       if (up === 0) { this._swap(x, y, e, li, x, y - 1); return 1 }
       const d = Math.random() < 0.5 ? -1 : 1
-      if (this.get(x + d, y - 1) === 0) { this._swap(x, y, e, li, x + d, y - 1); return 1 }
+      if ((inner ? e.mat[li + d - CHUNK] : this.get(x + d, y - 1)) === 0) { this._swap(x, y, e, li, x + d, y - 1); return 1 }
     }
     return 0
   }
