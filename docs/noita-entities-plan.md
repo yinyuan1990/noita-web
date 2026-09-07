@@ -874,6 +874,15 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
         三个放大器:① 物理掉帧补 3 步 → 物理 ×3 → 更掉帧的正反馈 → 现在最多补 2 步,上一帧物理 > 6ms 就 1 步/帧(慢动作);② 每帧十几个 r45 爆炸(360 射线 × 45 步 + 8000 格坑 + 100% 生火)→
         半径 ≥ 20 的爆炸每帧最多 2 个,多的排到下一帧(`_die` 排队,带着 looseGround / ragdollFx 上下文);③ 元胞模拟 300~450 个活跃块、每帧 6~10 万格在动(坑里全是火、煤层烧起来)→
         CellSim 两级 LOD:活跃块 > 160 时窗口中央一半以外的块隔帧步进,> 320 时所有块棋盘隔帧(跳过的块 ttl 不减)。PC:模拟 21~27 → 11~15ms、最低 fps 20 → 30、物理中位 ≤2ms;手机仍会掉帧但不再滚雪球,停火几秒恢复。
+        ✅(已上线 1d2e978)**iPhone 上报的分项耗时**(09-07 两个会话,`noita-logs` 摘要 + pos 事件的 sim / logic / render / simBlocks):掉到 20fps 时 **模拟 25~45ms(活跃块 1000~1800)、渲染 20~28ms**,逻辑 5~12、物理只 1~3 ——
+        物理早不是主因。探针 `_noita-simload-shot`(用户那套卡:三重 + 汇聚之光 + 上方向拉帕 + 复制轨迹 + 陨石,对地连开 6 秒,之后每 2 秒记活跃块里的材质直方图)+ `_noita-prof-shot`(CDP Profiler 采 8 秒按函数聚合 self / inclusive,可 ×4 限速):
+        · 活跃块里撑着的是 **烟**(6 万格,fire 死掉 25% 出烟 × 350 帧寿命)+ 火(煤层 / 油一直烧);1700 块 ≈ 整个模拟窗口(视口 + 512 边距)全醒,**看得见的只有 ~130 块**。
+        · 开火头几秒 **getImageData 占整帧 73%**:光图之前是 'lighter' 叠几百个 drawImage 再读回,读回要等 GPU 队列(PC 28fps,iPhone 上就是"像暂停")。
+        修法:① `Lighting` 光图改 Float32 数组,`light()` 在 JS 里加光罩(按 Rs 缓存的 (2Rs)² 蒙版,LIGHT_MASK 线性插值 = 原径向渐变),compose 直接读,不再 getImageData;发光格先按 8×8 聚成一盏(cap = n 表示 n 盏叠着),1600 → 两三百盏。
+        ② CellSim 按实测耗时自适应降档 `sim.lod`(一步耗时平滑 > 7ms 升一档、< 3ms 降一档,20 帧一换;视口内最深 1/4,视口外 2 倍最深 1/8;> 320 块的老规则仍是地板);面板 "降档 1/n"、手机 fps 行 "模拟 x(1/n)"、pos 事件 lod。
+        烟 / 火 / 交换在同 chunk 内直接读数组不走 get → _entry;块内有火 / 有寿命的气一次续命(代替每格 _markOne);没反应的材质(rxAny)跳过 _react。
+        ③ 弹丸命中先粗筛 `Entities.anyNear`(位移包围盒外扩一个位移长度,一帧一次),之前激光 × 拉帕一帧十几次 hitTest × 两百目标占 18%。
+        PC ×4 限速火海:20fps → 35~40(模拟 56 → 10~12ms,渲染 17 → 8);不限速开火期间 idle 32%。手机端下一步看新上报的 render:剩下可疑的是 overlay putImageData / WebGL 折射 texImage2D / multiply 合成。
         还差:Joint2 的 motor_max_torque 是否真乘质量基准(推断,没直接反到)、PhysicsBridge+0x48 帧戳门、沙阻力 / splash 那条、飞刀插墙。
       ② PhysicsImageShape → body:像素 → marching squares → 简化 → **凸分解**(planck 多边形 ≤8 顶点凸;先用 ear-clipping 三角化 + 相邻合并)→ fixtures(density = 材质 density / 6²,friction = solid_friction,restitution = solid_restitution);is_circle → circle;同 body_id 的多张图合一个 body;保留像素图与材质做盖章。
       ③ 盖章协议照原版:每帧 擦旧像素 → world.step → 按新 xform 重写像素(最近邻)→ CellSim 接管本帧;格子里的刚体像素被挖 / 烧 → 记 body modified → 节流重建 fixtures + 更新 mPixelCount(ExplodeOnDamage 用);
