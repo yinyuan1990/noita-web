@@ -8,6 +8,7 @@
 // 物理道具(prop)在这一步只登记,不实例化——像素刚体是第 2 步。
 
 import { RigidBody } from './RigidBody.js'
+import { tagPixels } from './assets.js'
 import { Physics } from './Physics.js'
 import { Ragdoll } from './Ragdoll.js'
 import { NollaPrng } from './core/NollaPrng.js'
@@ -388,7 +389,11 @@ export class Entities {
       const cv = new OffscreenCanvas(an.fw, an.fh), c = cv.getContext('2d')
       c.drawImage(sheet.image, sx, sy, an.fw, an.fh, 0, 0, an.fw, an.fh)
       frames.push(cv)
-      if (i === 0) png = { width: an.fw, height: an.fh, data: c.getImageData(0, 0, an.fw, an.fh).data }
+      // 帧像素直接从表的裸像素切(不 getImageData 读回),顺手登记给软光栅(SoftCanvas 画这些帧画布时不用再读回)
+      const px = new Uint8ClampedArray(an.fw * an.fh * 4)
+      if (sheet.data) for (let r = 0; r < an.fh; r++) { const so = ((sy + r) * sheet.width + sx) * 4; px.set(sheet.data.subarray(so, so + an.fw * 4), r * an.fw * 4) }
+      tagPixels(cv, { data: px, width: an.fw, height: an.fh })
+      if (i === 0) png = { width: an.fw, height: an.fh, data: px }
     }
     fr = { png, frames, wait: an.wait || 0.12 }
     ;(this._frameCache ||= new Map()).set(key, fr)

@@ -25,9 +25,14 @@ export async function decodePngBrowser(url) {
   if (typeof createImageBitmap !== 'undefined') {
     // 用解码后的精确像素建位图,不再经过浏览器的 PNG 色彩管理
     image = await createImageBitmap(new ImageData(new Uint8ClampedArray(png.data.buffer), png.width, png.height))
+    PIXELS.set(image, { data: png.data, width: png.width, height: png.height }) // 软光栅(render/SoftCanvas)按位图对象找回裸像素
   }
   return { width: png.width, height: png.height, data: png.data, image }
 }
+
+/** 位图 / 画布 → 裸 RGBA(非预乘)像素:decodePngBrowser 出来的 ImageBitmap 自动登记;自己画的 canvas 用 tagPixels(canvas, imageData) 登记 */
+export const PIXELS = new WeakMap()
+export function tagPixels(img, imageData) { PIXELS.set(img, { data: imageData.data, width: imageData.width, height: imageData.height }) }
 
 export class NoitaAssets {
   constructor({ base = '/res/noita', decodePng = decodePngBrowser } = {}) {

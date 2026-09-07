@@ -13,6 +13,7 @@ import { ParallaxSky } from '../noita-map/Sky.js'
 import { Entities } from '../noita-map/Entities.js'
 import { Ragdoll } from '../noita-map/Ragdoll.js'
 import { GLComposite } from '../noita-map/render/GLComposite.js'
+import { SoftCanvas } from '../noita-map/render/SoftCanvas.js'
 import { Lighting, Skylight } from '../noita-map/render/Lighting.js'
 import { Vegetation } from '../noita-map/Vegetation.js'
 import { WandSystem, FREE_CAPACITY } from '../noita-map/Wands.js'
@@ -247,8 +248,10 @@ $('acts').addEventListener('touchstart', (e) => e.stopPropagation(), { passive: 
 
 // ── 相机 / 画布 ──
 const gctx = glc ? ui.getContext('2d') : game.getContext('2d')
+let viewDirty = true // GL 路径:view 画布上一帧有没有被画过(有才 clearRect)
 let uiDirty = false // 这帧 #ui 上画过东西(下一帧要 clearRect)
 const view = document.createElement('canvas'), vctx = view.getContext('2d') // 世界像素分辨率的中间画布
+const soft = glc ? new SoftCanvas(vctx) : null // GL 路径:实体 / 人 / 灯的 Canvas2D 绘制软光栅进粒子层,view 只剩透传的线 / 文字
 const cam = { x: player.x, y: player.y }
 let VW = VIEW_W, VH = 240, SCALE = 1
 let overlay = null, overlayCv = document.createElement('canvas'), fgMaskCv = document.createElement('canvas'), skyCv = document.createElement('canvas')
@@ -380,7 +383,11 @@ const projectiles = new ProjectileSystem({
       sfx.play('magic', { vol: 0.5, rate: 1.2, minGap: 100 }); oplog.ev('teleport_proj', { x: x | 0, y: ty | 0 })
     },
     // AreaDamageComponent(area_damage 修饰):每帧给 r 内的怪 dmg
-    areaDamage: (x, y, r, dmg, p) => { for (const e of entities.list) { if (e.dead || e.isBody) continue; if (Math.hypot(e.x - x, (e.y + (e.hit.t + e.hit.b) / 2) - y) <= r) entities.hurt(e, dmg, 0, 0, 'proj') } },
+    areaDamage: (x, y, r, dmg, p) => {
+      // 敌方弹(fish_giga 的漂浮球 / boss 的光环)打玩家;玩家的卡(AreaDamage 修饰)打怪
+      if (p?.owner === 'enemy') { if (Math.hypot(player.x - x, player.y - 4 - y) <= r + 3) damagePlayer(dmg, 0, 0, p.name); return }
+      for (const e of entities.list) { if (e.dead || e.isBody) continue; if (Math.hypot(e.x - x, (e.y + (e.hit.t + e.hit.b) / 2) - y) <= r) entities.hurt(e, dmg, 0, 0, 'proj') }
+    },
     // 反 exe DamageMortals:中心在 r 内 + hitbox 能被射线够到 → 满额伤害(无衰减);击退 lerp(power) × knockback_force
     explosion: (x, y, r, dmg, reach2, power = [0, 0.2], kb = 1, ragdollFx = 0) => {
       entities.explosion(x, y, r, dmg, reach2, power, kb, ragdollFx)
@@ -1842,7 +1849,7 @@ function step(dt) {
 }
 
 /** Noita 原版精灵:身体按状态机播帧,手臂指向瞄准点,法杖在手上;返回杖尖(世界坐标)作发射点 */
-const wetCv = document.createElement('canvas'); wetCv.width = 48; wetCv.height = 48
+const wetCv = document.createElement('canvas'); wetCv.width = 48; wetCv.height = 48; wetCv.__dynamic = true // 每帧重画,软光栅别缓存它的像素(透传到 view)
 function drawPlayer(ctx, ox, oy) {
   const a = Math.atan2(player.aimY - (player.y - 2), player.aimX - player.x)
   let tip
@@ -1946,7 +1953,7 @@ function render() {
   const ox = Math.round(cam.x - VW / 2 + (Math.random() - 0.5) * shk), oy = Math.round(cam.y - VH / 2 + (Math.random() - 0.5) * shk)
   // 天空:Noita 原版视差背景(weather_gfx/parallax_* 蒙版 + 昼夜色板),原作只在相机深度 < 512 时画;
   // 前景(tex_fg)先画在透明底上,光照只乘前景;天空(tex_bg)最后 destination-over 垫到透明处 —— post_final.frag 里 color_fg.a==0 的像素直接出背景,不吃光照 / 雾
-  vctx.clearRect(0, 0, VW, VH)
+  if (!soft || viewDirty) { vctx.clearRect(0, 0, VW, VH); viewDirty = false } // GL 路径:上一帧没往 view 上画就不用清
   vctx.imageSmoothingEnabled = false
   const cx0 = Math.floor(ox / CHUNK) + WCX, cx1 = Math.floor((ox + VW) / CHUNK) + WCX
   const cy0 = Math.floor(oy / CHUNK) + WCY, cy1 = Math.floor((oy + VH) / CHUNK) + WCY
@@ -1963,7 +1970,7 @@ function render() {
   glowPts.length = 0
   fireCells = 0
   let liqCount = 0 // 视口里的液体格数:0 就不走折射采样
-  let addRect = null // GL 路径:本帧 additive 精灵累加层的脏矩形(null = 没有)
+  let addRect = null, viewUsed = true // GL 路径:本帧 additive 累加层的脏矩形(null = 没有)/ view 画布这帧有没有被画过(没有就不上传)
   if (glc) {
     // GL 路径:只把视口的材质 id / 燃烧标记按行拷进两张 VW×VH 的字节表(shader 查调色板算色),JS 里顺便数液体 / 火 / 采发光点(老循环里的三个副产物)。
     // 不看 simBound:区块没齐时已到的那几块照样画叠层(之前留着上一帧的表 → 相机一动叠层就错位;线上区块来得慢时草那条线画到了石头里)
@@ -2073,8 +2080,7 @@ function render() {
     }
     projectiles.blitFx(d, ox, oy, VW, VH) // 弹丸的 1px 化妆粒子(最多 2500)也写进来,不再一格一个 fillRect
     projectiles.blitSprites() // 弹丸 / 烟团光斑 / 爆炸帧精灵也软光栅进来(source-over 的进 d,additive 的进加色层):一帧两三百次带变换 + lighter 的 drawImage 没了
-    if (glc) { addRect = projectiles.flushAdd(null) } // GL:粒子层 / 加色层直接当纹理(见 glc.render),这里不再 putImageData + drawImage
-    else {
+    if (!glc) { // GL:粒子层 / 加色层直接当纹理(见 glc.render),不再 putImageData + drawImage;2D 老路径照旧
     overlayCv.getContext('2d').putImageData(img, 0, 0)
     vctx.drawImage(overlayCv, 0, 0)
     const ar = projectiles.flushAdd(addImg)
@@ -2087,8 +2093,11 @@ function render() {
     }
   }
   tp = rMark(0, tp)
-  projectiles.render(vctx, ox, oy)
-  vctx.globalAlpha = 1
+  // GL 路径:下面灯 / 植被 / 实体 / 人 / 弹丸矢量全走软 2D 上下文(render/SoftCanvas):精灵 / 方块软光栅进粒子层,线 / 文字 / 未知源透传到 view 画布并标 used;
+  // 这帧 view 上真有东西才把它上传成纹理(iPhone 上那张画布 = 一两百张带旋转小图的 CoreGraphics 光栅 + 一次纹理上传,是"贴屏"里最大的一块)
+  const dctx = soft ? (soft.begin(projectiles.L), soft) : vctx
+  projectiles.render(dctx, ox, oy)
+  dctx.globalAlpha = 1
   tp = rMark(1, tp)
   // 灯:wang 标记 spawn_lamp/candles/torch 掷出来的光源,画个小灯笼/蜡烛
   const lamps = []
@@ -2101,28 +2110,29 @@ function render() {
   for (const l of lamps) {
     const lx = Math.round(l.x - ox), ly = Math.round(l.y - oy)
     if (l.kind === 'lantern') {
-      vctx.fillStyle = '#3a3a40'; vctx.fillRect(lx, ly - 8, 1, 6)
-      vctx.fillStyle = '#5a4a30'; vctx.fillRect(lx - 2, ly - 2, 5, 6)
-      vctx.fillStyle = '#ffd070'; vctx.fillRect(lx - 1, ly - 1, 3, 4)
-    } else if (l.kind === 'candle') { vctx.fillStyle = '#e8e0c0'; vctx.fillRect(lx, ly - 3, 2, 3); vctx.fillStyle = '#ffb040'; vctx.fillRect(lx, ly - 5, 2, 2) }
+      dctx.fillStyle = '#3a3a40'; dctx.fillRect(lx, ly - 8, 1, 6)
+      dctx.fillStyle = '#5a4a30'; dctx.fillRect(lx - 2, ly - 2, 5, 6)
+      dctx.fillStyle = '#ffd070'; dctx.fillRect(lx - 1, ly - 1, 3, 4)
+    } else if (l.kind === 'candle') { dctx.fillStyle = '#e8e0c0'; dctx.fillRect(lx, ly - 3, 2, 3); dctx.fillStyle = '#ffb040'; dctx.fillRect(lx, ly - 5, 2, 2) }
     else if (l.kind === 'tubelamp') {
       // 雪城堡管灯(physics_tubelamp:两根吊线 + 横管,光 200,230,255 r150)
-      vctx.fillStyle = '#404850'; vctx.fillRect(lx - 5, ly - 10, 1, 8); vctx.fillRect(lx + 5, ly - 10, 1, 8)
-      vctx.fillStyle = '#c8e8ff'; vctx.fillRect(lx - 7, ly - 2, 15, 2)
+      dctx.fillStyle = '#404850'; dctx.fillRect(lx - 5, ly - 10, 1, 8); dctx.fillRect(lx + 5, ly - 10, 1, 8)
+      dctx.fillStyle = '#c8e8ff'; dctx.fillRect(lx - 7, ly - 2, 15, 2)
     } else if (l.kind === 'torchstand') {
       // 丛林火炬座(physics_torch_stand:座 + 杆 + 火,光 r96)
-      vctx.fillStyle = '#4a4038'; vctx.fillRect(lx - 3, ly - 1, 7, 2); vctx.fillStyle = '#6a5030'; vctx.fillRect(lx, ly - 14, 2, 13)
-      vctx.fillStyle = '#ff9030'; vctx.fillRect(lx - 1, ly - 18, 4, 5); vctx.fillStyle = '#ffe080'; vctx.fillRect(lx, ly - 17, 2, 2)
-    } else { vctx.fillStyle = '#6a4a20'; vctx.fillRect(lx, ly - 6, 2, 6); vctx.fillStyle = '#ff9030'; vctx.fillRect(lx - 1, ly - 9, 4, 4) }
+      dctx.fillStyle = '#4a4038'; dctx.fillRect(lx - 3, ly - 1, 7, 2); dctx.fillStyle = '#6a5030'; dctx.fillRect(lx, ly - 14, 2, 13)
+      dctx.fillStyle = '#ff9030'; dctx.fillRect(lx - 1, ly - 18, 4, 5); dctx.fillStyle = '#ffe080'; dctx.fillRect(lx, ly - 17, 2, 2)
+    } else { dctx.fillStyle = '#6a4a20'; dctx.fillRect(lx, ly - 6, 2, 6); dctx.fillStyle = '#ff9030'; dctx.fillRect(lx - 1, ly - 9, 4, 4) }
   }
-  veg.render(vctx, ox, oy)
-  entities.render(vctx, ox, oy)
-  if (physics && (PHYS_TEST || PHYS_DRAW)) physics.debugDraw(vctx, ox, oy)
-  renderPortals(vctx, ox, oy)
+  veg.render(dctx, ox, oy)
+  entities.render(dctx, ox, oy)
+  if (physics && (PHYS_TEST || PHYS_DRAW)) physics.debugDraw(dctx, ox, oy)
+  renderPortals(dctx, ox, oy)
   // 人在液体里:整个人跟着液体折射偏(post_final.frag 是对整张前景按液体格采样,人 / 弹在水里都跟着晃)
   const pw = liquidWobble(player.x, player.y - 4)
-  drawPlayer(vctx, ox - (pw ? pw[0] : 0), oy - (pw ? pw[1] : 0))
-  if (player.hurtFlash > 0) { vctx.fillStyle = `rgba(255,0,0,${(player.hurtFlash * 1.2).toFixed(2)})`; vctx.fillRect(0, 0, VW, VH) }
+  drawPlayer(dctx, ox - (pw ? pw[0] : 0), oy - (pw ? pw[1] : 0))
+  if (player.hurtFlash > 0) { dctx.fillStyle = `rgba(255,0,0,${(player.hurtFlash * 1.2).toFixed(2)})`; dctx.fillRect(0, 0, VW, VH) }
+  if (soft) { addRect = projectiles.flushAdd(null); viewUsed = soft.used } // 加色层脏矩形要等实体(发光眼 lighter)也画完再取
   tp = rMark(2, tp)
   // 光照(反 post_final.frag,见 render/Lighting.js):tex_lights = 所有 LightComponent 按 64×64 光罩蒙版加起来 → ×0.8 → ^1.5 → 加天光(天光从地表一格格渗下来)
   // → ^(1/2.2) → 乘雾(没探索过的全黑,探索过没光的留 ≈0.29 暖灰)→ multiply 到前景。没有"环境光"这回事:地下亮不亮只看有没有灯 / 探索过没有
@@ -2163,7 +2173,8 @@ function render() {
   if (glc) {
     // WebGL 合成:前景 × 光 → 垫天空 / 黑底 → 液体折射 → 放大出屏,一次 draw(乘光 / 抠 alpha / 垫底 / 放大这几步 2D 画布整屏光栅全省了)
     tp = rMark(4, tp)
-    glc.render({ top: view, part: overlay.data, add: addRect ? projectiles.L.add : null, mat: matBuf, aux: auxBuf, chunks: glChunks, corgX: (cx0 - WCX) * CHUNK, corgY: (cy0 - WCY) * CHUNK, light: null, sky: cam.y < 512 ? skyCv : null, skyDirty, liquid: simBound && liqCount > 0, vw: VW, vh: VH, ox, oy, time: performance.now() / 1000, camX: cam.x, camY: cam.y })
+    viewDirty = viewUsed
+    glc.render({ top: viewUsed ? view : null, part: overlay.data, add: addRect ? projectiles.L.add : null, mat: matBuf, aux: auxBuf, chunks: glChunks, corgX: (cx0 - WCX) * CHUNK, corgY: (cy0 - WCY) * CHUNK, light: null, sky: cam.y < 512 ? skyCv : null, skyDirty, liquid: simBound && liqCount > 0, vw: VW, vh: VH, ox, oy, time: performance.now() / 1000, camX: cam.x, camY: cam.y })
     if (uiDirty) { gctx.clearRect(0, 0, ui.width, ui.height); uiDirty = false }
     rMark(5, tp, glc) // 这项 = 上传前景 / 光图纹理 + 一次 draw(同步计时时 readPixels 1 像素等 GPU 画完)
   } else {

@@ -320,7 +320,8 @@ export class GLComposite {
    */
   render(p) {
     const gl = this.gl, U = this.UNIT
-    this._up(U.top, this.texTop, p.top)
+    if (p.top) this._up(U.top, this.texTop, p.top)
+    else { gl.activeTexture(gl.TEXTURE0 + U.top); gl.bindTexture(gl.TEXTURE_2D, this.texEmpty.t) } // 这帧 view 上没画东西:不上传,采空纹理
     if (p.light) this._up(U.light, this.texLight, p.light) // 光图走 GPU(lightPass)时 p.light 为空,单元 1 已经是 FBO B
     if (p.sky && (p.skyDirty || this.texSky.w !== p.sky.width || this.texSky.h !== p.sky.height)) this._up(U.sky, this.texSky, p.sky)
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)

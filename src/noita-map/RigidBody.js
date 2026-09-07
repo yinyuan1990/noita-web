@@ -6,6 +6,7 @@
 //         被挖掉的像素 = 刚体缺损(物理体损毁比例 → ExplodeOnDamage 的 physics_body_destruction_required);
 //   被炸 / 被推 / 支撑没了 → 醒:从 mat 里把自己的像素收回来(缺的就真缺了),再落。
 // 单位:1 像素 = 1 格,质量 = 像素数,惯量 = Σr²;重力同角色 pixel_gravity 量级。
+import { tagPixels } from './assets.js'
 
 const K_STATIC = 1, K_SAND = 2, K_LIQUID = 3
 /** PhysicsBodyComponent / PhysicsBody2Component 的 buoyancy 默认 0.7(component_documentation 1892 / 1935;xml 里没有实体改过) */
@@ -416,6 +417,7 @@ export class RigidBody {
       }
     }
     this.canvas.getContext('2d').putImageData(id, 0, 0)
+    tagPixels(this.canvas, id) // 软光栅路径直接拿这份像素,不用 getImageData 读回
     this.canvasDirty = false
     return this.canvas
   }
