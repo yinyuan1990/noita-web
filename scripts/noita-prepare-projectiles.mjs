@@ -84,10 +84,31 @@ const ENEMY = [
   'orb_pink_big_super', 'orb_pink_super',
   // 神殿陷阱(crypt_trap_check.lua)
   'arrow', 'fire_trap', 'thunder_trap', 'spit_trap',
+  // 门怪 / 龙 / 友人 / 炼金术士的四色激光 / 沙漏室 / boss_pit 的 remove_ground
+  'orb_green_boss_dragon', 'bossdragon', 'bossdragon_ray', 'ultimate_killer_megabomb', 'enlightened_laser_elec_wand', 'enlightened_laser_light_wand', 'enlightened_laser_fire_wand', 'enlightened_laser_darkbeam', 'remove_ground',
+  'orb_purple',
+]
+// Boss 自带的弹丸(entities/animals/boss_*/*.xml,不在 projectiles/ 目录下):[键(去 e_ 前缀), 路径](docs/noita-bosses.md)
+const BOSS_PROJ = [
+  ['bossmeat_orb_big', 'data/entities/animals/boss_meat/orb_big.xml'], ['bossmeat_acidshot_slow', 'data/entities/animals/boss_meat/acidshot_slow.xml'],
+  ['bossrobot_rocket_roll', 'data/entities/animals/boss_robot/rocket_roll.xml'], ['bossrobot_rocket', 'data/entities/animals/boss_robot/rocket.xml'],
+  ['bosspit_wand', 'data/entities/animals/boss_pit/wand.xml'],
+  ['bossghost_polyp', 'data/entities/animals/boss_ghost/boss_ghost_polyp.xml'],
+  ['bosswizard_meteor', 'data/entities/animals/boss_wizard/meteor.xml'], ['bosswizard_laser', 'data/entities/animals/boss_wizard/laser.xml'], ['bosswizard_summon', 'data/entities/animals/boss_wizard/summon.xml'],
+  ['bosswizard_statusburst', 'data/entities/animals/boss_wizard/statusburst.xml'], ['bosswizard_debuff_init', 'data/entities/animals/boss_wizard/debuff_init.xml'],
+  ['bossalchemist_wand_orb', 'data/entities/animals/boss_alchemist/wand_orb.xml'],
+  ['bossspirit_orb', 'data/entities/animals/boss_spirit/orb.xml'],
+  ['bossfish_orb_big', 'data/entities/animals/boss_fish/orb_big.xml'],
+  ['bosslimbs_orb', 'data/entities/animals/boss_limbs/orb_boss_limbs.xml'], ['bosslimbs_orb_pink_big', 'data/entities/animals/boss_limbs/orb_pink_big.xml'], ['bosslimbs_slime', 'data/entities/animals/boss_limbs/slime_boss_limbs.xml'],
+  ['bosscentipede_orb_circleshot', 'data/entities/animals/boss_centipede/orb_circleshot.xml'], ['bosscentipede_orb_homing', 'data/entities/animals/boss_centipede/orb_homing.xml'], ['bosscentipede_orb_homing_part', 'data/entities/animals/boss_centipede/orb_homing_part.xml'],
+  ['bosscentipede_orb_polymorph', 'data/entities/animals/boss_centipede/orb_polymorph.xml'], ['bosscentipede_firepillar', 'data/entities/animals/boss_centipede/firepillar.xml'], ['bosscentipede_firepillar_part', 'data/entities/animals/boss_centipede/firepillar_part.xml'],
+  ['bosscentipede_explosion', 'data/entities/animals/boss_centipede/boss_centipede_explosion.xml'], ['bosscentipede_explosion_large', 'data/entities/animals/boss_centipede/boss_centipede_explosion_large.xml'], ['bosscentipede_melee', 'data/entities/animals/boss_centipede/melee.xml'],
+  ['bosscentipede_orb_mat_blood', 'data/entities/animals/boss_centipede/orb_mat_blood.xml'], ['bosscentipede_orb_mat_lava', 'data/entities/animals/boss_centipede/orb_mat_lava.xml'], ['bosscentipede_orb_mat_oil', 'data/entities/animals/boss_centipede/orb_mat_oil.xml'], ['bosscentipede_orb_mat_radioactive', 'data/entities/animals/boss_centipede/orb_mat_radioactive.xml'],
+  ['maggot_orb', 'data/entities/animals/maggot_tiny/orb.xml'],
 ]
 
 const out = {}
-for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/projectiles/deck/${n}.xml`, `data/entities/projectiles/${n}.xml`] })), ...ENEMY.map((n) => ({ key: 'e_' + n.split('/').pop(), paths: [`data/entities/projectiles/${n}.xml`] }))]) {
+for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/projectiles/deck/${n}.xml`, `data/entities/projectiles/${n}.xml`] })), ...ENEMY.map((n) => ({ key: 'e_' + n.split('/').pop(), paths: [`data/entities/projectiles/${n}.xml`] })), ...BOSS_PROJ.map(([k, p]) => ({ key: 'e_' + k, paths: [p] }))]) {
   const name = entry.key
   let s = null
   for (const p of entry.paths) { s = readFile(p); if (s) break }
@@ -228,6 +249,12 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
   const loop = loopM ? loopM[1].replace(/^player_projectiles\//, '').replace(/\/loop$/, '') : null
   const gae = merged(/<GameAreaEffectComponent\b([^>]*)>/)
   const areaEffect = gae.radius ? { radius: num(gae.radius, 28), every: num(gae.frame_length, 100), effects: String(pc.damage_game_effect_entities || '').split(',').map((f) => f.trim()).filter(Boolean).map((f) => f.split('/').pop().replace(/^effect_/, '').replace('.xml', '')) } : null
+  // 弹丸自带的 HomingComponent(boss 的追踪球 / 火箭:target_tag prey|mortal|player_unit,反 exe HomingSystem 同 EXTRA_BEHAVIOR.homing 的字段)
+  const hm = merged(/<HomingComponent\b([^>]*)>/)
+  const homing = /<HomingComponent\b/.test(s) || /<HomingComponent\b/.test(bs) ? { detect: num(hm.detect_distance, 150), coeff: num(hm.homing_targeting_coeff, 100), mult: num(hm.homing_velocity_multiplier, 1), rotate: hm.just_rotate_towards_target === '1', turn: num(hm.max_turn_rate, 0.2), target: hm.target_tag || 'homing_target' } : null
+  // AreaDamageComponent(fish_giga 的 orb_big r24 每帧 0.24 / 巫师环绕球):圈内带 tag 的每 update_every_n_frame 帧掉 damage_per_frame
+  const adm = merged(/<AreaDamageComponent\b([^>]*)>/)
+  const areaDamage = /<AreaDamageComponent\b/.test(s) ? { r: num(adm.circle_radius, 0) || Math.max(num(adm['aabb_max.x'], 8), num(adm['aabb_max.y'], 8)), dmg: num(adm.damage_per_frame, 0.1), every: num(adm.update_every_n_frame, 1), tag: adm.entities_with_tag || 'mortal' } : null
   // 枪口火焰:是个小实体,SpriteComponent 的 image_file 可能是 $[1-5] 变体模板
   let muzzle = null
   if (pc.muzzle_flash_file) {
@@ -274,6 +301,7 @@ for (const entry of [...NAMES.map((n) => ({ key: n, paths: [`data/entities/proje
     // 反 exe DamageModelSystem::KillMe:弹丸打死怪时尸体走哪种 RAGDOLL_FX(激光 / 狙击弹 BLOOD_SPRAY 连着喷血,霰弹 / 锯片 BLOOD_EXPLOSION 散块;默认 NORMAL 一整具)
     ragdollFx: pc.ragdoll_fx_on_collision && pc.ragdoll_fx_on_collision !== 'NORMAL' ? pc.ragdoll_fx_on_collision : null,
     friction: num(pc.friction, 1), lob: [num(pc.lob_min, 0), num(pc.lob_max, 0)], velocitySetsScale: pc.velocity_sets_scale === '1',
+    homing, areaDamage,
     deathExplode: pc.on_death_explode === '1', lifetimeExplode: pc.on_lifetime_out_explode === '1',
     muzzle, shootFlash: pc.shoot_light_flash_radius ? { r: num(pc.shoot_light_flash_r, 255), g: num(pc.shoot_light_flash_g, 255), b: num(pc.shoot_light_flash_b, 255), radius: num(pc.shoot_light_flash_radius, 0) } : null,
     explosion: Object.keys(ex).length ? {

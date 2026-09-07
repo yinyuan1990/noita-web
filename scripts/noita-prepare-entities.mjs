@@ -138,12 +138,21 @@ function parseEntity(xml, depth = 0) {
     bases.push({ file: m[1], inner: close >= 0 ? xml.slice(m.index + m[0].length, close) : '' })
   }
   const rest = xml.replace(/<Base\s+file="[^"]+"[^>]*?\/>/g, '').replace(/<Base\b[^>]*>[\s\S]*?<\/Base>/g, '')
+  // `_remove_from_base="1"`(boss_sky.xml 的 Base 块里):把 Base 带进来的该类组件全部删掉,这个标记组件自己也不算(真组件写在 Base 之前 / 之后)
+  const stripRemoved = (src) => {
+    for (const [k, list] of src.comps) {
+      if (!list.some((a) => a._remove_from_base === '1')) continue
+      ent.comps.delete(k)
+      src.comps.set(k, list.filter((a) => a._remove_from_base !== '1'))
+    }
+    return src
+  }
   for (const b of bases) {
     const base = parseEntity(readFile(b.file) || '', depth + 1)
     mergeInto(ent, base)
-    mergeInto(ent, parseComponents(b.inner))
+    mergeInto(ent, stripRemoved(parseComponents(b.inner)))
   }
-  mergeInto(ent, parseComponents(rest), true) // Base 块外的组件是"追加",不是覆盖(僵尸的发光副精灵就是这么加的)
+  mergeInto(ent, stripRemoved(parseComponents(rest)), true) // Base 块外的组件是"追加",不是覆盖(僵尸的发光副精灵就是这么加的)
   if (!ent.tags && head.tags) ent.tags = head.tags
   return ent
 }

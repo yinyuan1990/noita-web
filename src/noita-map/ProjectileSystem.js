@@ -112,6 +112,8 @@ export class ProjectileSystem {
       c, gAdd: 0, afAdd: 0, kbAdd: 0, exR: 0, exD: 0, beh: null, effects: null, friendly: false,
     }
     if (c) this._applyC(p, c)
+    // 弹丸 xml 自带的 HomingComponent(boss 的追踪球 / 火箭 / 蛆的绿球):和修饰卡的 homing 同一套 HomingSystem 数值
+    if (d.homing && !p.homing) p.homing = { ...d.homing }
     this.list.push(p)
     // 材质转换从出生这一帧就开始扫(触摸系法术只活 4 帧,不能等下一帧)
     ;(d.converters || []).forEach((c, k) => this._convert(p, c, k, 1 / 60))
@@ -136,6 +138,7 @@ export class ProjectileSystem {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i]
       const d = p.d
+      if (p.dead) { this.list.splice(i, 1); continue } // 被外部 kill()(boss 的吞弹 / 反弹 / 反制场)
       p.age += dt
       if (d.loop) this.loops.set(d.loop, (this.loops.get(d.loop) || 0) + 1)
       if (p.noHit > 0) p.noHit -= dt
@@ -150,6 +153,8 @@ export class ProjectileSystem {
         continue
       }
       if (p.beh || p.homing) this._behave(p, dt)
+      // 弹丸 xml 自带的 AreaDamageComponent(fish_giga orb_big r24 每帧 0.24 打 mortal):每 update_every_n_frame 帧给圈内的人 / 怪一次 damage_per_frame
+      if (d.areaDamage) { p.adT = (p.adT ?? 0) - dt; if (p.adT <= 0) { p.adT += d.areaDamage.every / 60; this.hooks.areaDamage?.(p.x, p.y, d.areaDamage.r, d.areaDamage.dmg, p) } }
       // 反 exe VelocitySystem::Update:v += g·dt;v −= v·air_friction·dt;液体里再 −= v·liquid_drag·dt(按碰到的液体格数,这里取 1);|v| ≤ terminal_velocity
       p.vy += (isMat ? 150 : d.gravity + p.gAdd) * dt
       const af = isMat ? d.friction * 0.25 : d.airFriction + p.afAdd
@@ -830,6 +835,15 @@ export class ProjectileSystem {
       }
     }
     p.lastX = p.x; p.lastY = p.y
+  }
+
+  /**
+   * 外部杀掉一发弹(EntityKill):boss 的吞弹 / 反制。explode=false 对应 lua 先把 on_death_explode / on_lifetime_out_explode 关掉再 EntityKill(不炸、不放载荷)
+   */
+  kill(p, explode = false) {
+    if (p.dead) return
+    if (explode) this._die(p, false)
+    else p.dead = true
   }
 
   _die(p, byHit) {
