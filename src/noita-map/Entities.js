@@ -2192,12 +2192,35 @@ export class Entities {
    */
   anyNear(x0, y0, x1, y1, bodiesOnly = false) {
     const mnx = (x0 < x1 ? x0 : x1) - 2, mxx = (x0 < x1 ? x1 : x0) + 2, mny = (y0 < y1 ? y0 : y1) - 2, mxy = (y0 < y1 ? y1 : y0) + 2
-    if (!bodiesOnly) {
-      for (const e of this.list) if (!e.dead && e.x + e.hit.r >= mnx && e.x + e.hit.l <= mxx && e.y + e.hit.b >= mny && e.y + e.hit.t <= mxy) return true
-      for (const w of this.worms) if (!w.dead) for (const s of w.segs) if (s.x + w.r + 1 >= mnx && s.x - w.r - 1 <= mxx && s.y + w.r + 1 >= mny && s.y - w.r - 1 <= mxy) return true
+    // 一帧一张 64px 格网(怪 hitbox / 虫节 / 刚体外接圆的包围盒挂进覆盖的格),查询只看包围盒盖到的几格 ——
+    // 之前每发弹每帧扫全部 150 怪 + 200 刚体,拉帕 / 激光一屏 100 发就是 3.5 万次比较
+    if (this._gridT !== this.time) this._buildGrid()
+    const G = this._grid, C = 64
+    const gx0 = Math.floor(mnx / C), gx1 = Math.floor(mxx / C), gy0 = Math.floor(mny / C), gy1 = Math.floor(mxy / C)
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+      const cell = G.get(gx * 100003 + gy)
+      if (!cell) continue
+      for (let k = 0; k < cell.length; k += 5) {
+        if (bodiesOnly && !cell[k + 4]) continue
+        if (cell[k + 2] >= mnx && cell[k] <= mxx && cell[k + 3] >= mny && cell[k + 1] <= mxy) return true
+      }
     }
-    for (const b of this.bodies) if (!b.dead && b.x + b.r + 1 >= mnx && b.x - b.r - 1 <= mxx && b.y + b.r + 1 >= mny && b.y - b.r - 1 <= mxy) return true
     return false
+  }
+  _buildGrid() {
+    this._gridT = this.time
+    const G = this._grid || (this._grid = new Map()), C = 64
+    G.clear()
+    const put = (x0, y0, x1, y1, body) => {
+      for (let gy = Math.floor(y0 / C); gy <= Math.floor(y1 / C); gy++) for (let gx = Math.floor(x0 / C); gx <= Math.floor(x1 / C); gx++) {
+        const key = gx * 100003 + gy
+        let cell = G.get(key); if (!cell) G.set(key, (cell = []))
+        cell.push(x0, y0, x1, y1, body)
+      }
+    }
+    for (const e of this.list) if (!e.dead) put(e.x + e.hit.l, e.y + e.hit.t, e.x + e.hit.r, e.y + e.hit.b, 0)
+    for (const w of this.worms) if (!w.dead) for (const s of w.segs) put(s.x - w.r - 1, s.y - w.r - 1, s.x + w.r + 1, s.y + w.r + 1, 0)
+    for (const b of this.bodies) if (!b.dead) put(b.x - b.r - 1, b.y - b.r - 1, b.x + b.r + 1, b.y + b.r + 1, 1)
   }
 
   /**

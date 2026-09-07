@@ -295,37 +295,53 @@ export class ProjectileSystem {
     }
     this._stepZaps(dt)
     if (this.bhParts.length) this._stepBhParts(dt)
-    for (let i = this.stuck.length - 1; i >= 0; i--) { const s = this.stuck[i]; s.life -= dt; if (s.life <= 0 || this.sim.get(Math.floor(s.ax), Math.floor(s.ay)) === 0) this.stuck.splice(i, 1) }
+    // 下面几个粒子表都是"过一遍、活着的往前挪"原地压缩(保序,z 序不跳),不再 splice:2500 个 fx 每帧死几十个,splice 一次挪一遍数组
+    let w = 0
+    for (let i = 0; i < this.stuck.length; i++) { const s = this.stuck[i]; s.life -= dt; if (s.life > 0 && this.sim.get(Math.floor(s.ax), Math.floor(s.ay)) !== 0) this.stuck[w++] = s }
+    this.stuck.length = w
     // 化妆粒子
-    for (let i = this.fx.length - 1; i >= 0; i--) {
-      const f = this.fx[i]
+    w = 0
+    const fx = this.fx
+    for (let i = 0; i < fx.length; i++) {
+      const f = fx[i]
       f.life -= dt
-      if (f.life <= 0) { this.fx.splice(i, 1); continue }
+      if (f.life <= 0) continue
       f.vy += f.g * dt
       if (f.air) { f.vx += (Math.random() - 0.5) * f.air * dt * 60; f.vy += (Math.random() - 0.5) * f.air * dt * 60 }
       // attractor_force(黑洞的粉色流光):每帧朝发射源加 force(px/s),越近越快 → 长条流光全朝洞心飞
-      if (f.att) { const dx = f.ax - f.x, dy = f.ay - f.y, dd = Math.hypot(dx, dy) || 1; if (dd < 2) { this.fx.splice(i, 1); continue } f.vx += (dx / dd) * f.att * dt * 60; f.vy += (dy / dd) * f.att * dt * 60 }
+      if (f.att) { const dx = f.ax - f.x, dy = f.ay - f.y, dd = Math.hypot(dx, dy) || 1; if (dd < 2) continue; f.vx += (dx / dd) * f.att * dt * 60; f.vy += (dy / dd) * f.att * dt * 60 }
       f.x += f.vx * dt; f.y += f.vy * dt
+      fx[w++] = f
     }
-    for (let i = this.anims.length - 1; i >= 0; i--) {
+    fx.length = w
+    w = 0
+    for (let i = 0; i < this.anims.length; i++) {
       const a = this.anims[i]; a.t += dt
       // SpriteParticleEmitter 出来的会飞的火花(金块闪光):带速度 + velocity_slowdown
       if (a.vx || a.vy) { a.x += a.vx * dt; a.y += a.vy * dt; const f = Math.exp(-(a.slow || 0) * dt); a.vx *= f; a.vy *= f }
-      if (a.t >= (a.life ?? a.wait * a.frames)) this.anims.splice(i, 1)
+      if (a.t < (a.life ?? a.wait * a.frames)) this.anims[w++] = a
     }
+    this.anims.length = w
     // 贴图粒子:颜色随时间变化(color_change 每秒),重力,减速,自转,缩放
-    for (let i = this.sfx.length - 1; i >= 0; i--) {
-      const s = this.sfx[i]
+    w = 0
+    const sfx = this.sfx
+    for (let i = 0; i < sfx.length; i++) {
+      const s = sfx[i]
       s.age += dt
-      for (let k = 0; k < 4; k++) s.col[k] = Math.max(0, Math.min(1, s.col[k] + s.cc[k] * dt))
-      if (s.age >= s.life || s.col[3] <= 0) { this.sfx.splice(i, 1); continue }
+      const c = s.col, cc = s.cc
+      for (let k = 0; k < 4; k++) { let v = c[k] + cc[k] * dt; c[k] = v < 0 ? 0 : v > 1 ? 1 : v }
+      if (s.age >= s.life || c[3] <= 0) continue
       s.vx += s.g[0] * dt; s.vy += s.g[1] * dt
       if (s.slow) { const f = Math.exp(-s.slow * dt); s.vx *= f; s.vy *= f }
       s.x += s.vx * dt; s.y += s.vy * dt
       s.rot += s.av * dt
       s.sx += s.sv[0] * dt; s.sy += s.sv[1] * dt
+      sfx[w++] = s
     }
-    for (let i = this.flashes.length - 1; i >= 0; i--) { this.flashes[i].life -= dt; if (this.flashes[i].life <= 0) this.flashes.splice(i, 1) }
+    sfx.length = w
+    w = 0
+    for (let i = 0; i < this.flashes.length; i++) { const f = this.flashes[i]; f.life -= dt; if (f.life > 0) this.flashes[w++] = f }
+    this.flashes.length = w
   }
 
   /** 刚体弹一步:圆形碰撞体(半径 = 图一半),子步进,撞面按法线反弹并衰减,贴地时摩擦滚动 */
