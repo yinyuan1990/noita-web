@@ -23,13 +23,14 @@ export class ProjectileSystem {
    * @param {string} o.res         资源基址(…/res/noita)
    * @param {object} [o.hooks]     { debris(x,y,vx,vy,mat,col), shake(t), sfx(name,opt), spark(x,y,vx,vy,life,col) }
    */
-  constructor({ defs, mats, sim, decodePng, res, hooks = {} }) {
+  constructor({ defs, mats, sim, decodePng, res, hooks = {}, maxSfx = 400 }) {
     this.defs = defs
     this.mats = mats
     this.sim = sim
     this.decodePng = decodePng
     this.res = res
     this.hooks = hooks
+    this.maxSfx = maxSfx // 贴图粒子上限(每个都是一次 save/rotate/scale/lighter drawImage;手机上调低)
     this.images = new Map()
     this.list = []       // 飞行中的弹
     this.fx = []         // 化妆粒子 {x,y,vx,vy,life,max,col,g,fade,grid}
@@ -739,7 +740,7 @@ export class ProjectileSystem {
       const img = this.images.get(e.sprite.image)
       if (!img?.image) continue
       const n = e.count[0] + Math.floor(Math.random() * (e.count[1] - e.count[0] + 1))
-      for (let j = 0; j < n && this.sfx.length < 400; j++) {
+      for (let j = 0; j < n && this.sfx.length < this.maxSfx; j++) {
         const life = (e.sprite.frames > 1 && e.sprite.loop === 0 ? e.sprite.frames * e.sprite.wait : 0.6) + e.rlife[0] + Math.random() * (e.rlife[1] - e.rlife[0])
         this.sfx.push({
           spr: e.sprite, img, x: p.x + e.rpos[0] + Math.random() * (e.rpos[1] - e.rpos[0]), y: p.y + e.rpos[2] + Math.random() * (e.rpos[3] - e.rpos[2]),
@@ -998,24 +999,56 @@ export class ProjectileSystem {
     this.hooks.sfx?.(r >= 10 ? 'explosion' : 'impact', { vol: Math.min(1, 0.3 + r / 20), rate: r >= 40 ? 0.6 : r >= 10 ? 0.9 : 1.6, minGap: 50 })
   }
 
+  /**
+   * 化妆粒子(1px)直接写进叠层 ImageData(alpha-over),代替一格一个 fillRect —— 上限 2500 个,手机上每个带 fillStyle / globalAlpha 的 fillRect 都是一次独立提交。
+   * 调用方在 putImageData 之前调;调了这个 render() 里就不再画 fx
+   */
+  blitFx(d, ox, oy, VW, VH) {
+    this.fxBlitted = true
+    for (const f of this.fx) {
+      if (f.att) continue // 被吸的流光压在黑洞的雾和环上面画(render 里)
+      const al = f.fade ? Math.max(0, Math.min(1, f.life / f.max)) : 1
+      if (al <= 0) continue
+      const r = (f.col >> 16) & 255, g = (f.col >> 8) & 255, b = f.col & 255
+      let n = 0, nx = 0, ny = 0
+      if (f.long) { const sp = Math.hypot(f.vx, f.vy) || 1; n = Math.min(6, sp / 60); nx = f.vx / sp; ny = f.vy / sp }
+      for (let k = 0; k <= n; k++) {
+        const i = Math.round(f.x - ox - nx * k), j = Math.round(f.y - oy - ny * k)
+        if (i < 0 || j < 0 || i >= VW || j >= VH) continue
+        const o = (j * VW + i) * 4, a0 = d[o + 3] / 255, outA = al + a0 * (1 - al)
+        if (outA <= 0) continue
+        const w0 = a0 * (1 - al)
+        d[o] = (r * al + d[o] * w0) / outA; d[o + 1] = (g * al + d[o + 1] * w0) / outA; d[o + 2] = (b * al + d[o + 2] * w0) / outA; d[o + 3] = outA * 255
+      }
+    }
+  }
+
   /** 画:精灵(朝速度方向,additive)、化妆粒子、爆炸帧 */
   render(ctx, ox, oy) {
     ctx.imageSmoothingEnabled = false
-    for (const f of this.fx) {
-      const a = f.fade ? Math.max(0, f.life / f.max) : 1
-      ctx.globalAlpha = a
-      ctx.fillStyle = `rgb(${(f.col >> 16) & 255},${(f.col >> 8) & 255},${f.col & 255})`
-      if (f.att) continue // 被吸的流光压在黑洞的雾和环上面画(见下)
-      if (f.long) { // draw_as_long:按速度拉成一小段
-        const l = Math.min(6, Math.hypot(f.vx, f.vy) / 60)
-        const nx = f.vx / (Math.hypot(f.vx, f.vy) || 1), ny = f.vy / (Math.hypot(f.vx, f.vy) || 1)
-        for (let k = 0; k <= l; k++) ctx.fillRect(Math.round(f.x - ox - nx * k), Math.round(f.y - oy - ny * k), 1, 1)
-      } else ctx.fillRect(Math.round(f.x - ox), Math.round(f.y - oy), 1, 1)
+    const VW = ctx.canvas.width, VH = ctx.canvas.height
+    if (!this.fxBlitted) {
+      for (const f of this.fx) {
+        const a = f.fade ? Math.max(0, f.life / f.max) : 1
+        ctx.globalAlpha = a
+        ctx.fillStyle = `rgb(${(f.col >> 16) & 255},${(f.col >> 8) & 255},${f.col & 255})`
+        if (f.att) continue // 被吸的流光压在黑洞的雾和环上面画(见下)
+        if (f.long) { // draw_as_long:按速度拉成一小段
+          const l = Math.min(6, Math.hypot(f.vx, f.vy) / 60)
+          const nx = f.vx / (Math.hypot(f.vx, f.vy) || 1), ny = f.vy / (Math.hypot(f.vx, f.vy) || 1)
+          for (let k = 0; k <= l; k++) ctx.fillRect(Math.round(f.x - ox - nx * k), Math.round(f.y - oy - ny * k), 1, 1)
+        } else ctx.fillRect(Math.round(f.x - ox), Math.round(f.y - oy), 1, 1)
+      }
+      ctx.globalAlpha = 1
     }
-    ctx.globalAlpha = 1
-    // 贴图粒子(烟团/光斑):按 color 染色 + alpha,帧按寿命推进
+    this.fxBlitted = false
+    // 贴图粒子(烟团/光斑):按 color 染色 + alpha,帧按寿命推进;屏幕外的不画(拉帕往上打的弹带的烟大半在屏外,每张都是 save/rotate/scale/drawImage 一次提交)
+    this.drawn = 0
     for (const s of this.sfx) {
       const spr = s.spr, fw = spr.fw || s.img.width, fh = spr.fh || s.img.height
+      const m = Math.max(fw * Math.abs(s.sx), fh * Math.abs(s.sy)) + 2
+      if (s.x - ox < -m || s.x - ox > VW + m || s.y - oy < -m || s.y - oy > VH + m) continue
+      this.drawn++
       const frame = spr.frames > 1 ? Math.min(spr.frames - 1, Math.floor(s.age / Math.max(0.01, spr.wait))) : 0
       ctx.save()
       ctx.globalCompositeOperation = s.additive ? 'lighter' : 'source-over'
@@ -1032,6 +1065,8 @@ export class ProjectileSystem {
     }
     ctx.globalAlpha = 1
     const drawSprite = (d, x, y, rot, frame, speed = 0, anim = null) => {
+      if (x < -96 || x > VW + 96 || y < -96 || y > VH + 96) return // 屏外的弹不画(激光 / 拉帕一屏几十上百发,大半飞在屏外);96 给最长的拉伸精灵
+      this.drawn++
       // 刚体弹:PhysicsImageShape 的图居中、按滚动角旋转
       if (d.type === 'PHYSICS' && d.physics?.image) {
         const img = this.images.get(d.physics.image)
@@ -1141,6 +1176,8 @@ export class ProjectileSystem {
       drawSprite(p.d, p.x - ox + (w ? w[0] : 0), p.y - oy + (w ? w[1] : 0), p.rot, p.frame, Math.hypot(p.vx, p.vy), p.spr || null)
     }
     for (const a of this.anims) {
+      if (a.x - ox < -a.fw || a.x - ox > VW + a.fw || a.y - oy < -a.fh || a.y - oy > VH + a.fh) continue
+      this.drawn++
       const frame = a.loop ? Math.floor(a.t / a.wait) % a.frames : Math.min(a.frames - 1, Math.floor(a.t / a.wait))
       ctx.save()
       ctx.globalCompositeOperation = a.additive ? 'lighter' : 'source-over'
@@ -1152,22 +1189,36 @@ export class ProjectileSystem {
     ctx.globalCompositeOperation = 'source-over'
   }
 
-  /** 贴图染色缓存:同一帧同一色只算一次 */
+  /**
+   * 贴图染色缓存:同一帧同一色只算一次。LRU(Map 插入序,命中就挪到最后)+ 画布回池复用 ——
+   * 之前满 300 就整个 clear:烟 / 光斑粒子带 color_change 每帧变色,几百个粒子 × 几帧就把 300 撑爆,于是每帧全部重新 new OffscreenCanvas + 三次合成,
+   * 手机上每个新画布都是一块 GPU 表面分配,这就是站着开火时"贴屏" 20~27ms 的来源
+   */
   _tint(img, spr, frame, fw, fh, col) {
     const key = `${spr.image || img.src || ''}|${spr.posX || 0},${spr.posY || 0}|${frame}|${(col[0] * 15) | 0},${(col[1] * 15) | 0},${(col[2] * 15) | 0}`
-    this.tintCache ||= new Map()
-    let cv = this.tintCache.get(key)
-    if (cv) return cv
-    cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(fw, fh) : Object.assign(document.createElement('canvas'), { width: fw, height: fh })
+    const cache = (this.tintCache ||= new Map())
+    let cv = cache.get(key)
+    if (cv) { cache.delete(key); cache.set(key, cv); return cv }
+    const pool = (this.tintPool ||= [])
+    if (cache.size >= 512) { // 淘汰最久没用的那张,画布回池
+      const [k0, v0] = cache.entries().next().value
+      cache.delete(k0)
+      if (pool.length < 64) pool.push(v0)
+    }
+    const pi = pool.findIndex((p) => p.width === fw && p.height === fh)
+    if (pi >= 0) { cv = pool[pi]; pool[pi] = pool[pool.length - 1]; pool.pop() }
+    else cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(fw, fh) : Object.assign(document.createElement('canvas'), { width: fw, height: fh })
     const c = cv.getContext('2d')
+    c.globalCompositeOperation = 'source-over'
+    c.clearRect(0, 0, fw, fh)
     c.drawImage(img.image, (spr.posX || 0) + frame * fw, spr.posY || 0, fw, fh, 0, 0, fw, fh)
     c.globalCompositeOperation = 'multiply'
     c.fillStyle = `rgb(${(col[0] * 255) | 0},${(col[1] * 255) | 0},${(col[2] * 255) | 0})`
     c.fillRect(0, 0, fw, fh)
     c.globalCompositeOperation = 'destination-in'
     c.drawImage(img.image, (spr.posX || 0) + frame * fw, spr.posY || 0, fw, fh, 0, 0, fw, fh)
-    if (this.tintCache.size > 300) this.tintCache.clear()
-    this.tintCache.set(key, cv)
+    cache.set(key, cv)
+    this.tintNew = (this.tintNew || 0) + 1 // 累计新染了几张(上报里 tn = 每秒增量;正常应是个位数)
     return cv
   }
 

@@ -67,7 +67,7 @@ const LOG_URL = Q.get('log') === '0' ? '' : (location.hostname === 'localhost' |
 const oplog = new OpLog({ url: LOG_URL, meta: { seed: SEED, build: import.meta.env.MODE } })
 const sfx = new Sfx(RES)
 sfx.load(['impact', 'fire', 'wind', 'clash', 'electric', 'water', 'magic', 'explosion'])
-let stuckT = 0, stuckLogged = false, footT = 0, lastInState = '', posLogT = 0, posBmp = { a: 0, r: 0, p: 0 }, spraying = false, hopT = 0
+let stuckT = 0, stuckLogged = false, footT = 0, lastInState = '', posLogT = 0, posBmp = { a: 0, r: 0, p: 0, t: 0 }, spraying = false, hopT = 0
 /** 玩家周围材质快照(卡住时上传):'#'实心 '~'液体 ':'沙 '.'空 '?'未加载,一行一串 */
 function sampleAround(wx, wy, rx, ry) {
   const rows = []
@@ -314,7 +314,7 @@ const ELEC_DMG = 0.4
 // 弹丸 AudioLoopComponent(event_name)→ 合成音色:黑洞 = 低沉轰鸣,场 = 中频嗡鸣,雷霆之环 = 高频滋滋;zap 是正在液体里窜的电流(game_effect/electrocution/loop)
 const PROJ_LOOPS = { black_hole_big: { vol: 0.5, freq: 70, q: 0.9 }, black_hole: { vol: 0.3, freq: 110, q: 0.9 }, field: { vol: 0.12, freq: 520, q: 3 }, field_electric: { vol: 0.2, freq: 3200, q: 1.5 }, zap: { vol: 0.3, freq: 4200, q: 1.2 } }
 const projectiles = new ProjectileSystem({
-  defs: projDefs, mats, sim, res: RES, decodePng: (u) => decodePngBrowser(u),
+  defs: projDefs, mats, sim, res: RES, decodePng: (u) => decodePngBrowser(u), maxSfx: IS_TOUCH ? 200 : 400,
   hooks: {
     // Noita 规则:静态材质(石头/砂岩/木头)被打碎只出"尘"——飞一下就没,不会在墙上/地上结成新像素;
     // 沙/土/煤/液体这类本来就会动的材质,碎屑落地照旧沉积回去;real = 原版"真粒子"(LooseGround 松脱的砖 / 石),静态材质也要落地沉积回去
@@ -1614,8 +1614,8 @@ function step(dt) {
   if (posLogT >= 1) {
     posLogT = 0
     const st = streamer.stats // bmp = 这一秒新接了几张区块位图(每张 1MB 上传);rp = 重画补了几次;kpx = 补了多少千像素
-    oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), sync: gpuSync ? 1 : undefined, bmp: st.accepted - posBmp.a, rp: st.repainted - posBmp.r, kpx: ((st.patchPx - posBmp.p) / 1000) | 0, simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length })
-    posBmp = { a: st.accepted, r: st.repainted, p: st.patchPx }
+    oplog.ev('pos', { x: player.x | 0, y: player.y | 0, vx: player.vx | 0, vy: player.vy | 0, g: player.onGround ? 1 : 0, fly: +player.fly.toFixed(1), fps: fps | 0, sim: +simMs.toFixed(1), phys: physics ? +physics.stats.ms.toFixed(1) : undefined, awake: physics?.stats.awake, logic: +stepMs.toFixed(1), render: +renderMs.toFixed(1), r: rPhaseArr(), sync: gpuSync ? 1 : undefined, bmp: st.accepted - posBmp.a, rp: st.repainted - posBmp.r, kpx: ((st.patchPx - posBmp.p) / 1000) | 0, tn: (projectiles.tintNew || 0) - posBmp.t, sfx: projectiles.sfx.length, fx: projectiles.fx.length, pdc: projectiles.drawn, proj: projectiles.list.length, simBlocks: sim.activeBlocks, lod: sim.lod, ents: entities.list.length, debris: debris.length, sparks: sparks.length })
+    posBmp = { a: st.accepted, r: st.repainted, p: st.patchPx, t: projectiles.tintNew || 0 }
   }
 
   // ── 身体:Noita CharacterPlatforming 模型 ──
@@ -1992,6 +1992,7 @@ function render() {
       if (outA <= 0) continue
       d[o] = (rgb[0] * al + d[o] * a0 * (1 - al)) / outA; d[o + 1] = (rgb[1] * al + d[o + 1] * a0 * (1 - al)) / outA; d[o + 2] = (rgb[2] * al + d[o + 2] * a0 * (1 - al)) / outA; d[o + 3] = outA * 255
     }
+    projectiles.blitFx(d, ox, oy, VW, VH) // 弹丸的 1px 化妆粒子(最多 2500)也写进来,不再一格一个 fillRect
     overlayCv.getContext('2d').putImageData(img, 0, 0)
     vctx.drawImage(overlayCv, 0, 0)
   }
