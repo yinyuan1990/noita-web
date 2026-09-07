@@ -618,9 +618,18 @@ CONTROLLERS.fish_giga = {
  * AnimalAI 远程 acidshot(xml)。
  */
 CONTROLLERS.boss_sky = {
-  init(e, B) { const p = B.E.player; e.hp = e.maxHp = Math.max(1, (p.maxHp ?? 100) / 25); e.boss.vars.y0 = e.y; e.flySpeed = (e.d.physicsAI?.force_coeff ?? 20) * 4.5 },
+  init(e, B) { const p = B.E.player; e.hp = e.maxHp = Math.max(1, p.maxHp ?? 4); e.boss.vars.y0 = e.y; e.flySpeed = (e.d.physicsAI?.force_coeff ?? 20) * 4.5 }, // 玩家 maxHp 本来就是 Noita 单位(4 = 100 血)
   tick(e, B) { if (e.y > e.boss.vars.y0 + 500) { B.fx(e.x, e.y, 10, '#c0a0ff', 60, 0.4); e.y = e.boss.vars.y0; e.vy = 0 } },
   hurt(e, B, dmg) { B.E.hooks.damagePlayer?.(dmg * 1.5, 0, 0, e) },
+  // death:两处 boss_phase2_marker 各出一只幻影(apparition_spawn_fx.xml → 引擎 SpawnApparition:随机一种怪的幽灵版,hp = 玩家 max_hp,当 miniboss)
+  death(e, B) {
+    const E = B.E, pool = Object.entries(E.defs).filter(([k, d]) => d.kind === 'creature' && d.ai && d.platforming && d.sprite?.image && !d.boss && !d.bossChild && !d.stationary && !/^(wisp|friend|ultimate_killer|mimic)/.test(k)).map(([k]) => k)
+    for (const m of (E.markers || []).filter((m) => Math.hypot(m.x - e.x, m.y - e.y) < 600)) {
+      const name = pool[RI(0, pool.length - 1)], a = E.spawnCreature(name, m.x, m.y)
+      if (a) { a.apparition = true; a.hp = a.maxHp = Math.max(1, (E.player.maxHp ?? 4)); a.state = 'chase'; a.stateT = 5; a.d = { ...a.d, label: (a.d.label || name) + '的幻影', boss: 'apparition' }; a.boss = { C: {}, gen: null, wait: 0, timers: [], t: 0, vars: {} } }
+      B.fx(m.x, m.y, 20, '#c0a0ff', 80, 0.6)
+    }
+  },
 }
 
 /** 门怪(boss_gate/gate_monster_a~d):gate_monster_push.lua 每 4 帧把 90 内别的门怪推开(力 800);AnimalAI 远程 acidshot;death 掷一张随机卡 */

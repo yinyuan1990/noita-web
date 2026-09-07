@@ -113,6 +113,8 @@ export class Entities {
       if (TRIGGERS[s.entity]) { if (first) this.triggers.push({ ...TRIGGERS[s.entity], name: s.entity, x: s.x, y: s.y, t: 0 }); continue }
       // 巫师洞入口的门(wizardcave_gate.lua):斥弹力场 + 吃 3 个蛋开门出四只门怪
       if (s.entity === 'wizardcave_gate') { if (first) this.gates.push({ x: s.x, y: s.y, eggs: 0, t: 0, open: 0 }); continue }
+      // 天空 boss 的二阶段标记(boss_sky_phase2_marker):Kolmisilmän sydän 死了在这些点出幻影(SpawnApparition)
+      if (s.entity === 'boss_sky_phase2_marker') { if (first) (this.markers ||= []).push({ x: s.x, y: s.y }); continue }
       if (!d) { this.stats.skipped[s.entity] = (this.stats.skipped[s.entity] || 0) + 1; continue }
       if (d.kind === 'prop' && d.shape?.image) {
         // 像素刚体:形状图到了再建(见 update 里的 pendingProps)
@@ -2865,6 +2867,7 @@ export class Entities {
       const wb = this.hooks.wobble?.(e.x, e.y + (e.hit.t + e.hit.b) / 2)
       const px = Math.round(e.x - ox) + (wb ? wb[0] : 0), py = Math.round(e.y - oy) + (wb ? wb[1] : 0)
       if (e.hurtT > 0) ctx.globalAlpha = 0.75
+      else if (e.apparition) ctx.globalAlpha = 0.5 + 0.1 * Math.sin(this.time * 6) // 幻影:半透明呼吸
       if (e.legs) for (const g of e.legs) this._drawLeg(ctx, e, g, ox, oy) // 腿 z_index 1.1:在身体后面
       if (e.tents) this._drawTentacles(ctx, e, ox, oy)
       ctx.save()

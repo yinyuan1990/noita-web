@@ -991,6 +991,9 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     sampo_pickup.lua:捡起三宝 → FINAL_BOSS_ACTIVE → 换 update.lua 时间线(dmgMul 1、FollowPlayer)。check_death 死亡段:参考点 (ref.x, ref.y+50) 出 teleport_ending_victory(→ 胜利室 6220,15175)+ 本局 flag bossCentipedeDead。
     结局(sampo_start_ending_sequence.lua):带着三宝到 ending_sampo_spot_underground(胜利室祭坛)/ ending_sampo_spot_mountain(山顶浮岛)32px 内 → midas:以结局点为心每帧外扩 5px 到 r420 把所有非空气材质换成 gold + 金色火花,ending_game_completed flag;三宝消耗。
     探针 `_noita-ending-shot.mjs`(传到实验室 → 拿三宝 → boss 变可打 → 打死出传送门 → 传到胜利室结局点看变金)。没做:midas 的 sand / chunks / walls 三种细分、34 颗宝珠的放射金结局、山顶那条的 "above" 文案。
+    - 天空 boss 的幻影:boss_sky.lua death 在两处 boss_phase2_marker(`Entities.markers`)各放 apparition_spawn_fx → 引擎 SpawnApparition(随机一种怪的幽灵版,hp = 玩家 max_hp,加 BossHealthBar 当 miniboss)—— 这里从 defs 里随机挑一种会走 / 会飞的普通怪,hp = 玩家 maxHp,半透明呼吸画,名字 "X 的幻影",挂空 controller 好上血条。
+      顺手修 boss_sky 的 hp:玩家 maxHp 本来就是 Noita 单位(4 = 100 血),之前又 ÷25 变成 1。
+    - 仍没做:长笛 / 康特勒琴演奏(OCARINA_* / KANTELE_* 音符卡本身在法术库里,乐器是容量 0 的法杖)。
 
 ## 2.5 接手指南(新会话从这里开始)
 
