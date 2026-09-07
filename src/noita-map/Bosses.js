@@ -345,8 +345,9 @@ CONTROLLERS.boss_limbs = {
  */
 CONTROLLERS.boss_centipede = {
   init(e, B) {
-    const orb = 0
+    const orb = B.E.player.orbs || 0 // GameGetOrbCountThisRun(+ NG+ 次数,这里 0)
     e.hp = e.maxHp = 46 + Math.pow(2, orb + 1.3) + orb * 15.5
+    e.boss.vars.orb = orb
     e.flySpeed = 14 * 4.5; e.boss.vars.speed0 = e.flySpeed; e.boss.vars.aggro = false; e.boss.vars.subphase = 0; e.boss.vars.repeats = 0; e.boss.vars.shield = false
     B.move(e, 'follow')
     e.boss.vars.ref = { x: e.x, y: e.y }
@@ -357,7 +358,8 @@ CONTROLLERS.boss_centipede = {
     const setShield = (on) => { if (v.shield !== on) { v.shield = on; B.fx(e.x, e.y, 20, on ? '#ff80c0' : '#ff40a0', 120, 0.4) } }
     const openEye = function* () { if (v.eye) return; B.anim(e, 'open', 'opened'); v.eye = true; yield 55 }
     const closeEye = function* () { if (!v.eye || v.repeats > 0) return; B.anim(e, 'close', 'stand'); v.eye = false; yield 50 }
-    const circleshot = (ang, speed = 80, branches = 6 - v.repeats) => { const sp = Math.floor(360 / branches); for (let i = 0; i < branches; i++) { const a = (ang * Math.PI) / 180; B.shoot('e_bosscentipede_orb_circleshot', e.x, e.y, Math.cos(a) * speed, Math.sin(a) * speed, { shooter: e }); ang += sp } }
+    const orb = v.orb || 0
+    const circleshot = (ang, speed = 80, branches = 6 + orb - v.repeats) => { const sp = Math.floor(360 / branches); for (let i = 0; i < branches; i++) { const a = (ang * Math.PI) / 180; B.shoot('e_bosscentipede_orb_circleshot', e.x, e.y, Math.cos(a) * speed, Math.sin(a) * speed, { shooter: e }); ang += sp } }
     const moveRef = () => B.move(e, 'to', v.ref.x, v.ref.y)
     const melee = () => B.shoot('e_bosscentipede_melee', e.x, e.y, 0, 0, { shooter: e })
     let phase = null
@@ -370,6 +372,8 @@ CONTROLLERS.boss_centipede = {
         if (v.repeats > 0) { v.repeats--; return }
         if (v.subphase < 6) {
           const phases = v.aggro ? [['aggro', 0]] : [['chase_slow', 0], ['circleshot', 1], ['minion', 0], ['firepillar', 2]]
+          if (!v.aggro && orb >= 2) phases.push(['homing', 0])
+          if (orb >= 11) phases.push(['polymorph', 0])
           const pick = phases[RI(0, phases.length - 1)]; phase = pick[0]; v.repeats = pick[1]; v.subphase++
         } else { v.subphase = 0; v.repeats = 0; phase = 'clean' }
       } else phase = 'chase_direct'
@@ -386,17 +390,27 @@ CONTROLLERS.boss_centipede = {
         case 'circleshot': {
           moveRef(); yield 50; setShield(true); yield 10; yield* openEye()
           const r = R01(), spiral = 25 * (r * 2 - 1)
-          for (let i = 1; i <= 10; i++) { circleshot(r * 180 + i * spiral); yield 12 }
+          for (let i = 1; i <= 10 + Math.floor(orb / 3); i++) { circleshot(r * 180 + i * spiral); yield 12 }
           yield* closeEye(); setShield(false); yield 60; B.move(e, 'follow'); break
         }
         case 'minion': {
           B.move(e, 'follow')
-          if (B.E.list.filter((o) => !o.dead && o.name === 'boss_centipede_minion').length < 3) { yield* openEye(); B.E.spawnCreature?.('boss_centipede_minion', e.x, e.y); B.fx(e.x, e.y, 12, '#60a0ff', 80, 0.3); yield 30 }
+          for (let i = 0; i < 1 + Math.floor(orb / 2); i++) if (B.E.list.filter((o) => !o.dead && o.name === 'boss_centipede_minion').length < 3 + orb) { yield* openEye(); B.E.spawnCreature?.('boss_centipede_minion', e.x, e.y); B.fx(e.x, e.y, 12, '#60a0ff', 80, 0.3); yield 30 }
           yield* closeEye(); break
+        }
+        case 'homing': {
+          yield* openEye()
+          for (let i = 0; i < 4 + Math.floor(orb * 0.5); i++) { B.shoot('e_bosscentipede_orb_homing', e.x, e.y, 0, RF(-200, 50), { shooter: e }); yield 20 }
+          yield* closeEye(); break
+        }
+        case 'polymorph': {
+          yield* openEye(); yield 30
+          B.shoot('e_bosscentipede_orb_polymorph', e.x, e.y - 10, 0, -50, { shooter: e }); B.shoot('e_bosscentipede_orb_polymorph', e.x - 5, e.y, -30, 20, { shooter: e }); B.shoot('e_bosscentipede_orb_polymorph', e.x - 5, e.y, -30, 20, { shooter: e })
+          yield 20; yield* closeEye(); break
         }
         case 'firepillar': {
           moveRef(); yield 50; setShield(true); yield 10; yield* openEye()
-          const n = 10 - v.repeats * 2, sp = Math.floor(180 / n); let ang = sp * 0.5
+          const n = 10 + orb - v.repeats * 2, sp = Math.floor(180 / n); let ang = sp * 0.5
           for (let i = 0; i < n; i++) { const a = (ang * Math.PI) / 180; B.shoot('e_bosscentipede_firepillar', e.x, e.y, Math.cos(a) * 150, Math.sin(a) * 150 - 200, { shooter: e }); ang += sp }
           yield* closeEye(); yield 40; B.move(e, 'follow'); break
         }
@@ -409,7 +423,7 @@ CONTROLLERS.boss_centipede = {
         case 'clean': B.move(e, 'follow'); yield 25; for (const p of B.projNear(e, 400)) B.killProj(p, false); break
         case 'aggro': {
           e.flySpeed = v.speed0 * 5; B.anim(e, 'aggro', 'aggro'); yield 60
-          for (let i = 0; i < 12; i++) { for (let k = 0; k < 4; k++) { const a = R01() * TAU; B.shoot('e_bosscentipede_orb_circleshot', e.x, e.y, Math.cos(a) * 120, Math.sin(a) * 120, { shooter: e }) } B.particle('slime_green', e.x, e.y, 8, 0, -20); yield 12 }
+          for (let i = 0; i < 12 + Math.floor(orb / 3); i++) { for (let k = 0; k < 4 + orb; k++) { const a = R01() * TAU; B.shoot('e_bosscentipede_orb_circleshot', e.x, e.y, Math.cos(a) * 120, Math.sin(a) * 120, { shooter: e }) } B.particle('slime_green', e.x, e.y, 8, 0, -20); yield 12 }
           yield 20; melee(); yield 60; B.move(e, 'follow'); break
         }
       }

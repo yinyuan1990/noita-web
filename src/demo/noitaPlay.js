@@ -143,6 +143,7 @@ const player = {
 // 自由模式(FREE,默认开,?free=0 关):法术全开(背包里有整个法术库、随处改法杖)、法力 / 次数无限 —— 玩家要的是玩材质效果,不是攒资源
 const FREE = Q.get('free') !== '0'
 const GOD = Q.get('god') === '1' // 测地图:不掉血、不淹死
+const QUEST_ITEMS = new Set(['key', 'musicstone', 'wandstone', 'sunseed', 'evil_eye', 'flute', 'kantele']) // 捡进任务栏的东西(原版是拿在手里的道具 / 乐器)
 // ?loadout=fast:探图预设四根杖(开路 / 传送 / 黑洞 / 陨石),开局直接替换掉背包里的法杖(存档里的也替),数值见 FAST_LOADOUT
 const LOADOUT = Q.get('loadout') || ''
 const flags = { editAnywhere: FREE, wandSlots: FREE ? 8 : 4 } // 特权开的开关 / 倍率(Perks.js EFFECTS 写,各处读);自由模式 8 根杖 / 每杖 20 格
@@ -480,7 +481,34 @@ entities = await new Entities({
       if (b.spell) { player.spells.push(b.spell); sfx.play('magic', { vol: 0.5, rate: 1.2 }); oplog.ev('pick_spell', { id: b.spell }); tut.show('spell'); return } // 散卡(工具箱掉的 / 偷来的商店卡)
       if (b.name === 'utility_box') { entities.openUtilityBox(b); oplog.ev('utility_box', { x: b.x | 0, y: b.y | 0 }); return }
       if (b.perk) { pickPerk(b); return }
-      if (b.name === 'heart_fullhp_temple') { player.hp = player.maxHp; player.hpGrowT = 1.2; sfx.play('magic', { vol: 0.6, rate: 0.9 }); heartBurst(b.x, b.y - 12); printImportant('生命回满!', `${Math.round(player.maxHp * 25)} / ${Math.round(player.maxHp * 25)}`); oplog.ev('fullhp', {}); return } // 圣山回满血(heart_fullhp:heal_entity 到满 + 同一套心形特效)
+      if (b.name === 'heart_fullhp_temple' || b.name === 'heart_fullhp') { player.hp = player.maxHp; player.hpGrowT = 1.2; sfx.play('magic', { vol: 0.6, rate: 0.9 }); heartBurst(b.x, b.y - 12); printImportant('生命回满!', `${Math.round(player.maxHp * 25)} / ${Math.round(player.maxHp * 25)}`); oplog.ev('fullhp', {}); return } // 圣山回满血(heart_fullhp:heal_entity 到满 + 同一套心形特效)
+      // ── 房间里的可捡物(第 32 条)──
+      // 宝珠(orb_pickup.lua):第一次捡 → 放 card_name 那张卡 + "$itempickup_orb";orbcount 给 Kolmisilmä 的血量 / 招式
+      if (b.d.orb) {
+        player.orbs = (player.orbs || 0) + 1
+        const sp = wands.spell(b.d.orb.card); if (sp?.icon) entities.spawnSpellItem(sp.icon, b.x, b.y - 6, null, b.d.orb.card, { vy: -40, pickCool: 0.8 })
+        sfx.play('magic', { vol: 0.7, rate: 0.7 }); for (let k = 0; k < 24; k++) shine('06', b.x, b.y - 8, { life: 0.3 + Math.random() * 0.5, vx: (Math.random() - 0.5) * 160, vy: (Math.random() - 0.5) * 160 })
+        printImportant('魔球!', `第 ${player.orbs} 颗真知之球 · 得到法术「${sp?.name || b.d.orb.card}」`); oplog.ev('orb', { id: b.d.orb.id, n: player.orbs }); return
+      }
+      // 书(BookComponent):原版拿在手里读;这里走过去就"读"一遍标题,石板留在原地
+      if (b.d.book) { b.dead = false; b.pickCool = 3; printImportant(b.d.label || b.name, '(石板上刻着古老的文字)'); sfx.play('magic', { vol: 0.3, rate: 1.1, minGap: 500 }); oplog.ev('book', { id: b.name }); return }
+      // 精华(essence_pickup.lua):永久效果 —— fire 火免疫 + 身边不停冒火;water 永远湿 + 滴水;alcohol 永远醉;air 悬浮不耗蓝;laser(朝看的方向射激光)没做
+      if (b.d.essence) {
+        player.essences = player.essences || {}; player.essences[b.d.essence] = true
+        if (b.d.essence === 'fire') flags.protFire = true
+        const NAMES = { fire: '火之精髓', water: '水之精髓', alcohol: '酒之精髓', air: '风之精髓', laser: '光之精髓' }
+        printImportant(NAMES[b.d.essence] || b.d.label, b.d.essence === 'laser' ? '(效果还没做)' : '它与你融为一体'); sfx.play('magic', { vol: 0.8, rate: 0.6 }); oplog.ev('essence', { id: b.d.essence }); return
+      }
+      // 蛋 / 胡瓜:可扔的物品进物品格(开火 = 扔,蛋碎了孵怪)
+      if (b.d.egg || b.name === 'gourd') { if (player.items.length >= (flags.itemSlots || 4)) { b.dead = false; b.pickCool = 1; return } player.items.push({ throw: b.name, name: b.d.label || b.name }); sfx.play('magic', { vol: 0.4, rate: 1.3 }); oplog.ev('pick_item', { id: b.name }); return }
+      // 永恒财富(greed_curse):诅咒 —— 这里只记标记(金块变蛇那套没做)
+      if (b.d.curse) { flags.greedCurse = true; printImportant(b.d.label, '一股贪婪的气息缠上了你(效果还没做)'); sfx.play('magic', { vol: 0.6, rate: 0.5 }); return }
+      // 任务物(钥匙 / 音乐石 / 法杖石 / 太阳种子 / 邪眼 / 长笛 / 康特勒琴):收进任务栏,邪眼让 Unohdettu 可打
+      if (QUEST_ITEMS.has(b.name)) {
+        player.quest = player.quest || []; player.quest.push(b.name)
+        if (b.name === 'evil_eye') entities.hasEvilEye = true
+        printImportant(`捡到 ${b.d.label || b.name}`, b.name === 'evil_eye' ? '带着它,被遗忘者(Unohdettu)才打得到' : ''); sfx.play('magic', { vol: 0.5, rate: 1 }); oplog.ev('pick_quest', { id: b.name }); return
+      }
       if (b.name === 'perk_reroll') {
         // 特权重掷机(perk_reroll.xml ItemCostComponent 400,每用一次翻倍):钱够 → 把摆着的特权全换一批(牌堆从尾往前发),机器留在原地
         const cost = perks.rerollCost()
@@ -959,7 +987,8 @@ function saveGame(why = 'tick') {
     v: 1, t: Date.now(),
     player: { x: player.x, y: player.y, hp: player.hp, maxHp: player.maxHp, gold: player.gold, kills: player.kills },
     perks: player.perks, perkState: { nextIndex: perks.nextIndex, picked: perks.picked, rerollCount: perks.rerollCount || 0, rerollIndex: perks.rerollIndex ?? null },
-    wands: player.wands.map(serWand), items: player.items.map((i) => ({ potion: i.potion, name: i.name })), spells: player.spells, payload,
+    wands: player.wands.map(serWand), items: player.items.map((i) => ({ potion: i.potion, throw: i.throw, name: i.name })), spells: player.spells, payload,
+    orbs: player.orbs || 0, essences: player.essences || {}, quest: player.quest || [],
     guard: { angered: guard.angered, deaths: guard.deaths }, collapsed: [...collapsed],
     fog: lighting.fog.serialize(),
   }
@@ -991,7 +1020,10 @@ function loadGame() {
     ws.push(w)
   }
   if (ws.length) player.wands = ws
-  player.items = (s.items || []).filter((i) => i?.potion).map((i) => ({ potion: i.potion, name: i.name }))
+  player.items = (s.items || []).filter((i) => i?.potion || i?.throw).map((i) => ({ potion: i.potion, throw: i.throw, name: i.name }))
+  player.orbs = s.orbs || 0; player.essences = s.essences || {}; player.quest = s.quest || []
+  if (player.essences.fire) flags.protFire = true
+  if (player.quest.includes('evil_eye')) entities.hasEvilEye = true
   player.spells = [...(s.spells || [])]
   const died = !(s.player.hp > 0) // 死在那儿没点"回出生点"就关了页:回出生点满血继续(和按钮一样保留东西)
   Object.assign(player, { x: died ? 227 : s.player.x, y: died ? -120 : s.player.y, hp: died ? s.player.maxHp : s.player.hp, maxHp: s.player.maxHp, gold: s.player.gold || 0, kills: s.player.kills || 0, vx: 0, vy: 0 })
@@ -1080,14 +1112,14 @@ function fire() {
   // 所有弹都汇聚在光标那一点(杖尖随走路 / 手臂晃 → 光明穿凿连发挖出靠人这头宽、光标那头尖的楔形)。药水扔出去还是从身体算
   const ab = Math.atan2(player.aimY - (player.y - 2), player.aimX - player.x)
   const a = Math.hypot(player.aimX - wandTip.x, player.aimY - wandTip.y) > 4 ? Math.atan2(player.aimY - wandTip.y, player.aimX - wandTip.x) : ab
-  if (w.potion) {
+  if (w.potion || w.throw) {
     // PhysicsThrowable(Message_ThrowItem:from = 手、target = 光标):速度 = (光标 − 手) × 1.5 截 180 —— 光标离手 120px 以上才是满速,近处是轻扔;转速 / 出手点见 Entities.throwItem
-    entities.throwItem('potion', { x: player.x, y: player.y - 4 }, { x: player.aimX, y: player.aimY }, { potion: w.potion })
+    entities.throwItem(w.throw || 'potion', { x: player.x, y: player.y - 4 }, { x: player.aimX, y: player.aimY }, w.potion ? { potion: w.potion } : {})
     player.items.splice(player.items.indexOf(w), 1)
     payload = Math.min(payload, slots().length - 1)
     player.fireCd = 0.4
     sfx.play('wind', { vol: 0.3, rate: 1.4 })
-    oplog.ev('throw_potion', { mat: w.potion.mat })
+    oplog.ev(w.throw ? 'throw_item' : 'throw_potion', { mat: w.potion?.mat, id: w.throw })
     return
   }
   if (w.debug) {
@@ -1145,6 +1177,15 @@ function drink() {
 }
 /** 效果每帧:回血 / 中毒 / 传送 / 回法力;倒计时 */
 function tickEffects(dt) {
+  // 精华(essence_*.xml 的永久 GameEffect):water 永远 WET + 脚边滴水;alcohol 永远醉;air 悬浮不耗蓝;fire 身边不停冒火(自己火免疫)
+  const ES = player.essences
+  if (ES) {
+    const fx = Math.floor(player.x + (Math.random() - 0.5) * 10), fy = Math.floor(player.y + (Math.random() - 0.5) * 8)
+    if (ES.water) { effects.WET = Math.max(effects.WET || 0, 2); if (Math.random() < 0.25 && sim.get(fx, fy) === 0) sim.set(fx, fy, mats.byName.get('water') || 0, 0) }
+    if (ES.alcohol) effects.ALCOHOLIC = Math.max(effects.ALCOHOLIC || 0, 2)
+    if (ES.air) player.fuel = 100
+    if (ES.fire && Math.random() < 0.2 && sim.get(fx, fy) === 0) sim.set(fx, fy, mats.byName.get('fire') || 0, 0)
+  }
   for (const id in effects) {
     if (effects[id] <= 0) continue
     effects[id] -= dt
@@ -2303,6 +2344,7 @@ function loop(now) {
   const nSlots = player.wands.length + player.items.length
   const wandLine = cw.debug ? `法杖 [${payload + 1}] ${cw.name}(${cw.proj})`
     : cw.potion ? `物品 [${payload + 1}/${nSlots}] ${cw.name} ${cw.potion.left}  (开火 = 扔)`
+    : cw.throw ? `物品 [${payload + 1}/${nSlots}] ${cw.name}  (开火 = 扔)`
     : `法杖 [${payload + 1}/${nSlots}] ${cw.name}  法力 ${cw.mana | 0}/${cw.manaMax}${cw.reloadT > 0 ? ' 充能中' : ''}  ${[...new Set(cw.cards)].map((c) => (wands.spell(c)?.name || c) + (c in cw.uses ? `×${cw.uses[c]}` : cw.cards.filter((k) => k === c).length > 1 ? `×${cw.cards.filter((k) => k === c).length}` : '')).join('·')}${cw.cards.some((c) => !(c in cw.uses) || cw.uses[c] > 0) ? '' : '  (用完了:圣山法术刷新可补满)'}` // 容量 / 延迟 / 充能等细节在背包里看
   const atTemple = inTemple()
   $('btnEdit').classList.toggle('on', atTemple)

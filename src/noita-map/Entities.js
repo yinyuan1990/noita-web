@@ -105,7 +105,7 @@ export class Entities {
       const d = this.defs[s.entity]
       const creature = d && (d.worm && d.parts?.length || d.kind === 'creature')
       if (!creature && !first) continue
-      if (/^wand_/.test(s.entity)) { this.hooks.spawnWand?.(s.entity, s.x, s.y); continue } // 法杖:交给 WandSystem 造,再当物品放回来
+      if (/^(wand_|experimental_wand_)/.test(s.entity)) { this.hooks.spawnWand?.(s.entity, s.x, s.y); continue } // 法杖:交给 WandSystem 造,再当物品放回来
       // 圣山的特殊物:商店货 / 特权 / 传送门(temple_altar.lua),由 noitaPlay 按各自 lua 掷
       if (s.entity === 'shop_item' || s.entity === 'shop_wand' || s.entity === 'perks' || s.entity === 'portal' || s.entity === 'shop_area' || s.entity === 'areacheck' || s.entity === 'workshop_exit' || s.entity === 'spell' || s.entity === 'perk_pickup') { this.hooks.spawnSpecial?.(s); continue }
       // boss 生成触发器(buildings/dragonspot.xml 等 CollisionTrigger):记下来,人进半径再放
@@ -208,9 +208,35 @@ export class Entities {
     if (d.sprite?.image && d.sprite.image !== image) this._img(d.sprite.image)
     const p = { name, d, x, y, item: true, vx: extra.vx || 0, vy: extra.vy || 0, w: extra.w || 0, pickCool: extra.pickCool || 0, nailed: name === 'perk_reroll' } // 重掷机是固定在地上的机器
     const gv = /^goldnugget_(\d+)$/.exec(name); if (gv) p.gold = +gv[1] // VariableStorage gold_value
-    if (name === 'potion') p.potion = extra.potion || this._rollPotion(x, y)
+    if (name === 'potion' || d.potionMat) p.potion = extra.potion || (d.potionMat ? { mat: d.potionMat, left: 1000 } : this._rollPotion(x, y)) // potion_beer / potion_milk:固定内容
     this.pendingProps.push(p)
     return p
+  }
+
+  /**
+   * egg_hatch.lua:蛋碎了(ExplodeOnDamage 死 → load_this_entity projectiles/egg_*.xml,19 帧后跑脚本)按 entity_list 表出怪:
+   *   SetRandomSeed(x−437, y+235);rnd 从 1 起对每一项掷 Random(1,8):8 才前进一格 → 表越后面的越稀;
+   *   worms 之外的都 CHARM(永久友好)、max_hp ×4、不掉金
+   */
+  static EGG_LISTS = {
+    monsters: [['zombie', 1], ['zombie', 2]], slimes: [['slimeshooter_nontoxic', 1], ['slimeshooter_nontoxic', 2]], fire: [['firebug', 3], ['bigfirebug', 1]],
+    red: [['bat', 3], ['tentacler_small', 1], ['tentacler', 1]], chilly: [['tentacler_small', 1], ['tentacler', 1]], purple: [['longleg', 3], ['longleg', 4], ['longleg', 5]], worms: [['worm_tiny', 1], ['worm', 1], ['worm_big', 1]],
+  }
+  _hatch(x, y, list) {
+    const opts = Entities.EGG_LISTS[list] || Entities.EGG_LISTS.monsters
+    const prng = new NollaPrng(0); prng.SetRandomSeed(this.seed, Math.floor(x) - 437, Math.floor(y) + 235)
+    let rnd = 1
+    for (let i = 0; i < opts.length; i++) rnd = Math.min(rnd + Math.min(Math.max(prng.Random(1, 8) - 7, 0), 1), opts.length)
+    const [name, count] = opts[rnd - 1]
+    const d = this.defs[name] || this.defs[name.replace('_nontoxic', '')]
+    if (!d) return
+    for (let j = 0; j < count; j++) {
+      if (d.worm && d.parts?.length) { for (const p of d.parts) this._img(p.image); this.worms.push(this._makeWorm(name, d, x, y)); continue }
+      const e = this.spawnCreature(this.defs[name] ? name : name.replace('_nontoxic', ''), x + (Math.random() - 0.5) * 6, y)
+      if (!e) continue
+      if (list !== 'worms') { e.charmed = true; e.helpless = true; e.noGold = true; e.hp = e.maxHp = e.maxHp * 4 }
+    }
+    this.hooks.sfx?.('clash', { vol: 0.5, rate: 1.5, minGap: 100 })
   }
 
   /** potion.lua init():SetRandomSeed(x,y);Random(0,100)≤75 → 魔法液体(极小概率回血/净化粉/虚弱),否则 standard 表 */
@@ -1124,6 +1150,7 @@ export class Entities {
     }
     // 爆炸(炸药箱 / 桶):config_explosion 交给 ProjectileSystem.explode(同一套坑/火/摇镜/伤害)
     if (d.explode?.config && (d.explode.explode_on_death_percent ?? 1) > 0 && Math.random() < (d.explode.explode_on_death_percent ?? 1)) this.explodeConfig(b.x, b.y, d.explode.config)
+    if (d.egg) this._hatch(b.x, b.y, d.egg.list) // 蛋碎了孵出来
     else this.hooks.sfx?.('clash', { vol: 0.5, rate: 0.6 + Math.random() * 0.3, minGap: 60 })
     this.hooks.onBreak?.(b)
   }
@@ -2403,7 +2430,7 @@ export class Entities {
       }
     }
     // 掉金(drop_money.lua):money = 10 × max(1, floor(max_hp));先掷 10 面值(最多 5 个),再 1000/200/50/10
-    if (e.d.scripts?.some((s) => s.endsWith('drop_money')) || e.d.chest) {
+    if ((e.d.scripts?.some((s) => s.endsWith('drop_money')) || e.d.chest) && !e.noGold) {
       let money = 10 * Math.max(1, Math.floor(e.maxHp))
       const drop = (name, v) => { this._img(this.defs[name].shape.image); this.pendingProps.push({ name, d: this.defs[name], x: e.x + (Math.random() - 0.5) * 4, y: e.y - 8, vx: (Math.random() - 0.5) * 60, vy: -40 - Math.random() * 50, item: true, gold: v }) }
       for (let k = 0; k < 5 && money >= 10; k++) { drop('goldnugget_10', 10); money -= 10 }

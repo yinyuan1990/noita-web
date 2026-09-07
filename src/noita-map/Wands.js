@@ -115,6 +115,16 @@ export class WandSystem {
       w.manaCharge = prng.Random(...def.rangeManaCharge); w.manaMax = prng.Random(...def.rangeManaMax); w.mana = w.manaMax
     }
     if (def.level1Cards) this._doLevel1(w, x, y)
+    // lua 定义的固定法杖(wand_good_* / experimental_wand_*):SetRandomSeed(x, y + frame) → 这里用 (x, y);区间字段 Random(min, max);gun.actions 抽 action_count 张;AddGunActionPermanent 当普通卡放最前
+    if (def.luaGun) {
+      prng.SetRandomSeed(this.seed, x, y)
+      const R = (v) => (Array.isArray(v) ? prng.Random(v[0], v[1]) : v)
+      w.deckCapacity = R(def.deckCapacity); w.actionsPerRound = R(def.actionsPerRound); w.reloadTime = R(def.reloadTime); w.fireRateWait = R(def.fireRateWait)
+      w.spread = R(def.spread); w.speedMul = R(def.speedMul); w.manaCharge = R(def.manaCharge); w.manaMax = R(def.manaMax); w.mana = w.manaMax
+      w.cards = [...def.permanent]
+      if (def.actions.length) { const a = def.actions[prng.Random(1, def.actions.length) - 1]; for (let i = 0; i < def.actionCount; i++) w.cards.push(a) }
+      w.deckCapacity = Math.max(w.deckCapacity, w.cards.length)
+    }
     for (const c of w.cards) { const s = this.spells[c]; if (s && s.maxUses > 0) w.uses[c] = (w.uses[c] ?? 0) + s.maxUses }
     if (this.infinite) w.deckCapacity = Math.max(w.deckCapacity, FREE_CAPACITY) // 自由模式:每根杖至少 20 格
     w.deck = w.cards.slice()

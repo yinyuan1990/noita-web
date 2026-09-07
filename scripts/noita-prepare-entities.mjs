@@ -70,7 +70,21 @@ const BOSS_KEYS = {
   'boss_gate/gate_monster_a': 'gate_monster_a', 'boss_gate/gate_monster_b': 'gate_monster_b', 'boss_gate/gate_monster_c': 'gate_monster_c', 'boss_gate/gate_monster_d': 'gate_monster_d',
 }
 const BOSS_SET = new Set(['boss_dragon', 'maggot_tiny', 'boss_meat', 'boss_robot', 'boss_pit', 'boss_ghost', 'boss_wizard', 'boss_alchemist', 'islandspirit', 'fish_giga', 'boss_sky', 'boss_limbs', 'boss_centipede', 'friend', 'gate_monster_a', 'gate_monster_b', 'gate_monster_c', 'gate_monster_d'])
-const ITEMS = ['goldnugget_10', 'goldnugget_50', 'goldnugget_200', 'goldnugget_1000', 'heart', 'potion', 'chest_random', 'spell_refresh', 'heart_fullhp_temple', 'perk_reroll', 'utility_box']
+const ITEMS = ['goldnugget_10', 'goldnugget_50', 'goldnugget_200', 'goldnugget_1000', 'heart', 'potion', 'chest_random', 'spell_refresh', 'heart_fullhp_temple', 'perk_reroll', 'utility_box',
+  // ── 房间里的可捡物(09-07 第 32 条):路径相对 items/,键 = 文件名 ──
+  'heart_fullhp', 'heart_better', 'heart_evil', 'random_card',
+  ...['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '13'].map((n) => `../orbs/orb_${n}`), // 宝珠(ItemComponent auto_pickup=0 → 走过去捡;第一次捡给 card_name 那张卡)
+  ...['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', 'barren', 'bunker', 'corpse', 'diamond', 'essences', 'hint', 'mestari', 'moon', 'music_a', 'music_b', 'music_c', 'robot', 'tree', 'all_spells'].map((n) => `../books/book_${n}`), // 书(石板刚体 rock_box2d_hard)
+  'essence_air', 'essence_alcohol', 'essence_fire', 'essence_laser', 'essence_water', // 精华(碰到就吃,永久效果)
+  'egg_worm', 'egg_purple', 'egg_fire', 'egg_hollow', 'egg_monster', 'egg_red', 'egg_slime', 'egg_spiders', // 蛋(bone_box2d 刚体,摔碎出东西)
+  'gourd', 'greed_curse', 'musicstone', 'potion_beer', 'potion_milk', 'sun/sunseed', 'evil_eye', 'wandstone', '../flute', '../kantele', '../../animals/boss_alchemist/key']
+// 翻译 $key → 中文(缺就英文):books 的 $booktitleNN、$item_orb 等
+const zh = new Map()
+{
+  const csvPath = 'E:/soft/xiaoshuodongtai/silu/XD220/Noita.v20250125-P2P/data/translations/common.csv'
+  if (fs.existsSync(csvPath)) for (const line of fs.readFileSync(csvPath, 'utf8').split(/\r?\n/).slice(1)) { const cols = line.split(','); if (cols[0]) zh.set(cols[0], { en: cols[1] || '', zh: cols[9] || '' }) }
+}
+const tr = (key) => { const k = String(key || '').replace(/^\$/, ''); const t = zh.get(k); return t ? (t.zh && /[\u4e00-\u9fff]/.test(t.zh) ? t.zh : t.en) : k }
 const PROPS = [
   'physics_box_explosive', 'physics_barrel_oil', 'physics_barrel_radioactive', 'physics_crate', 'physics/minecart', 'physics_cart', 'physics_stone_01', 'physics_stone_02', 'physics_stone_03', 'physics_stone_04', 'physics/lantern_small', 'physics_skateboard', 'physics_brewing_stand', 'physics_bottle_green', 'physics_bottle_red', 'physics_bottle_blue', 'physics_bottle_yellow', 'physics_candle_1', 'physics_candle_2', 'physics_candle_3', 'physics_mining_lamp',
   // 挖掘场(吊桶 physics_bucket 挂钉子上摆、吊罐 suspended_* 拴链子到顶:RigidBody.ropes;多体机械 excavationsite_machine_3b/3c 走 Box2D 多体:机身 + 带电机的轮)
@@ -231,9 +245,20 @@ for (const kind of ['animals', 'props', 'items/pickup', 'buildings', 'projectile
     const vs = (e.comps.get('VariableStorageComponent') || []).find((v) => v.name === 'gold_value'); if (vs) d.gold = +vs.value_int
     const lt = first(e, 'LifetimeComponent'); if (lt?.lifetime) d.lifetime = +lt.lifetime
     const it = first(e, 'ItemComponent'); if (it) d.item = pick(it, ['auto_pickup', 'is_pickable', 'item_name'])
+    d.label = tr(e.name || it?.item_name || key)
+    // ── 房间可捡物的专属字段(第 32 条)──
+    const vsv = (nm) => (e.comps.get('VariableStorageComponent') || []).find((v) => v.name === nm)
+    const oc = first(e, 'OrbComponent'); if (oc) d.orb = { id: num(oc.orb_id, 0), card: vsv('card_name')?.value_string || 'LIGHT_BULLET' } // orb_pickup.lua:第一次捡 → 放 card_name 那张卡
+    if (vsv('essence_id')) d.essence = vsv('essence_id').value_string // essence_pickup.lua:永久效果
+    // 蛋:碎了 config_explosion.load_this_entity 放 projectiles/egg_*.xml,那个弹 19 帧后跑 egg_hatch.lua,按它的 entity_list 表出怪(除 worms 都 CHARM 友好、hp ×4、不掉金)
+    if (/^egg_/.test(key)) { const pf = e.subs.config_explosion?.load_this_entity; const px = pf ? readFile(pf) || '' : ''; const lm = /name="entity_list"[\s\S]*?value_string="(\w+)"/.exec(px); d.egg = { list: lm ? lm[1] : 'monsters' } }
+    if (vsv('potion_material')) d.potionMat = vsv('potion_material').value_string // potion_beer / potion_milk:固定内容的药水
+    if (first(e, 'BookComponent')) d.book = true
+    if (key === 'greed_curse') d.curse = 'greed'
     // 精灵:挑 enemies_gfx / props_gfx 下的主图(跳过 ui / 特效贴图)
     // 精灵:先挑非 emissive 的(僵尸的发光副精灵要跳过);全是 emissive 的(幽灵 / 骷髅虫本体就是发光的)再退回用 emissive
-    const allSprites = (e.comps.get('SpriteComponent') || []).filter((s) => s.image_file && !/ui_gfx|particles/.test(s.image_file) && !(s._tags || '').includes('ui') && s._enabled !== '0')
+    // 宝珠三张精灵都 _enabled=0(orb_undiscovered / discovered / picked 按存档开一张):取 undiscovered 那张
+    const allSprites = (e.comps.get('SpriteComponent') || []).filter((s) => s.image_file && !/ui_gfx|particles/.test(s.image_file) && !(s._tags || '').includes('ui') && (s._enabled !== '0' || (s._tags || '').includes('orb_undiscovered')))
     const sprites = allSprites.some((s) => s.emissive !== '1') ? allSprites.filter((s) => s.emissive !== '1') : allSprites
     const sc = sprites.find((s) => (s._tags || '').includes('character')) || sprites.find((s) => /enemies_gfx|props_gfx/.test(s.image_file)) || sprites[0]
     if (sc) { d.sprite = spriteDef(sc.image_file); if (d.sprite) { d.sprite.compOffX = num(sc.offset_x, 0); d.sprite.compOffY = num(sc.offset_y, 0); d.sprite.z = num(sc.z_index, 0); d.sprite.emissive = sc.emissive === '1' } }

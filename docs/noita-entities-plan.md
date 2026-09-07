@@ -963,7 +963,14 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
     - 触发器 `TRIGGERS`(Entities.triggers,spawnChunk 第一次见到就记,`_updateTriggers` 人进半径出 boss):dragonspot / maggotspot / ghost_spawn_check / boss_limbs_trigger(+book_music_b)/ boss_spirit_spawner。
     - noitaPlay `spawnSpecial` 加 `spell`(CreateItemActionEntity:地上一张免费法术卡,action=null 走 getRandomAction)/ `perk_pickup`(perk_spawn 指定特权:月室 MOON_RADAR、机器人死 MAP)。
     - 验证:`_noita-rooms-shot` 传到 meatroom / roboroom / secret_lab / mestari_secret / ghost_trigger / dragon_trigger / centipede / fish_giga(见截图 room-*.png);`_noita-gl-shot` 出生点 GL vs 2D 差 0.2%(全在人 / 动物身上)、`_noita-simload-shot` 火海 51~60fps 模拟 2ms 渲染 3ms 没退。线上冒烟通过。
-    - 没做 / 注意:boss 大精灵(boss_meat body 8KB / boss_limbs)走 SoftCanvas 正常;boss_centipede 的 sampo / 结局、boss_sky 幻影、ghost 邪眼、pit 出生、gate 集蛋、friend 成长、各 boss 死亡掉的 orbs / books(物品未做);boss 血条 UI(BossHealthBarComponent)没画。
+    - 没做 / 注意:boss 大精灵(boss_meat body 8KB / boss_limbs)走 SoftCanvas 正常;boss_centipede 的 sampo / 结局、boss_sky 幻影、pit 出生、gate 集蛋、friend 成长;boss 血条 UI(BossHealthBarComponent)没画。
+32. **房间可捡物(09-07 晚)✅ 已上线**:`noita-prepare-entities` ITEMS 收 items/orbs/orb_00~13、items/books/book_*(30 本)、essence ×5、egg ×8、gourd / greed_curse / musicstone / potion_beer / potion_milk / sunseed / evil_eye / wandstone / flute / kantele / boss_alchemist/key、heart_fullhp / heart_better / heart_evil;
+    名字走 translations/common.csv 中文列(`d.label`);专属字段 `d.orb {id, card}`(OrbComponent + VariableStorage card_name)、`d.essence`、`d.egg {list}`(碎了 load_this_entity → projectiles/egg_*.xml 的 entity_list)、`d.potionMat`、`d.book`、`d.curse`。宝珠三张精灵都 `_enabled=0`(按存档开一张)→ 取 orb_undiscovered 那张。
+    - 拾取(noitaPlay `pickup`):**宝珠** orb_pickup.lua 第一次捡 → 放 card_name 那张卡(orb_02 TENTACLE …)+ "$itempickup_orb",`player.orbs` 计数给 Kolmisilmä(hp = 46 + 2^(orb+1.3) + 15.5×orb,circleshot 支数 / 轮数 / 小怪数 / 火柱数 / homing(orb≥2)/ polymorph(orb≥11)全按 orbcount);
+      **书**(rock_box2d_hard 石板刚体)走过去"读"一遍标题留在原地;**精华** 永久效果:water 永远 WET + 脚边滴水、alcohol 永远醉、air 悬浮不耗蓝、fire 火免疫 + 身边冒火(laser 没做);**蛋 / 胡瓜** 进物品格(开火 = 扔),蛋碎 → `Entities._hatch` 照 egg_hatch.lua(SetRandomSeed(x−437, y+235),每项 Random(1,8)=8 才前进;worms 表出真虫,其余 CHARM 友好 + hp×4 + 不掉金);
+      **potion_beer / milk** 固定内容的药水;**greed_curse** 只记标记;**任务物**(key / musicstone / wandstone / sunseed / evil_eye / flute / kantele)进 `player.quest`,evil_eye 让 Unohdettu 可打(`entities.hasEvilEye`)。存档带 orbs / essences / quest / 可扔物品。
+    - 固定法杖 wand_good_1~3(精华室塔顶)/ experimental_wand_1~4(枪室 / 肉室 boss 掉):xml 只是壳,数值在 lua 的 gun.* 表(区间 Random、gun.actions 抽 action_count 张、AddGunActionPermanent 常驻卡)→ prepare-wands 抽成 `luaGun`,`Wands.make` 用 SetRandomSeed(x,y) 掷。Entities 的法杖路由正则放宽到 `experimental_wand_`。
+    - 没做:precious 的 orb 光 / 音;书的正文;essence_laser;greed 诅咒效果;乐器演奏;评 heart_better / heart_evil 的效果(捡了按普通心)。
 
 ## 2.5 接手指南(新会话从这里开始)
 

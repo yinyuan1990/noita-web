@@ -52,7 +52,7 @@ for (const n of names) {
       biome: entry?.biome || null, ready: !!entry?.ready, spawns: (entry?.spawns || []).map((s) => `${s.entity}@${s.x - x | 0},${s.y - y | 0}`), scenes: (entry?.scenes || []).map((s) => s.dir + '/' + s.name),
       near: E.list.filter((e) => Math.abs(e.x - x) < 400 && Math.abs(e.y - y) < 400).map((e) => e.name), bodies: cnt((E.bodies || []).filter((b) => Math.abs(b.x - x) < 400 && Math.abs(b.y - y) < 400), (b) => b.name),
       skipped: E.stats.skipped, px: np.player.x | 0, py: np.player.y | 0,
-      worms: (E.worms || []).map((w) => `${w.name}@${w.x | 0},${w.y | 0}`), triggers: (E.triggers || []).map((t) => t.name), bosses: E.list.filter((e) => e.boss).map((e) => `${e.name} hp=${e.hp.toFixed(1)} mul=${e.dmgMul ?? '-'} move=${e.bossMove?.mode || '-'} anim=${e.anim}`),
+      worms: (E.worms || []).map((w) => `${w.name}@${w.x | 0},${w.y | 0}`), pending: (E.pendingProps || []).map((p) => p.name), triggers: (E.triggers || []).map((t) => t.name), bosses: E.list.filter((e) => e.boss).map((e) => `${e.name} hp=${e.hp.toFixed(1)} mul=${e.dmgMul ?? '-'} move=${e.bossMove?.mode || '-'} anim=${e.anim}`),
     }
   }, [x, y])
   console.log(`== ${n} @${x},${y}`, JSON.stringify(info))

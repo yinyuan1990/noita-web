@@ -102,6 +102,27 @@ for (let i = 1; i <= 17; i++) {
 }
 wands.starting_wand = wandOf(readFile('data/entities/items/starting_wand.xml'), 'starting_wand')
 wands.starting_bomb_wand = { ...wandOf(readFile('data/entities/items/starting_bomb_wand.xml'), 'starting_bomb_wand'), cards: ['BOMB'], deckCapacity: 1, actionsPerRound: 1, shuffle: true, name: 'Bomb wand', rangeReload: [1, 10], rangeFireRate: [3, 8], rangeManaCharge: [5, 20], rangeManaMax: [80, 110] }
+// ── 脚本定义的固定法杖(items/wands/wand_good/*.lua 精华室 ×3、experimental/*.lua 枪室 / 肉室 boss 掉的):xml 只有壳,数值全在 lua 的 gun.* 表里,
+//    SetRandomSeed(x, y + frame) 后 区间字段 Random(min, max)、gun.actions 里随机抽 action_count 张(AddGunAction),AddGunActionPermanent 的是常驻卡(always_cast)。
+//    抽成 {range 字段: [min,max] | 数值, actions: [...], actionCount, permanent: [...]},运行时 Wands.make 掷 ──
+const luaWandOf = (dir, key, itemName) => {
+  const lua = readFile(`data/entities/items/wands/${dir}/${key}.lua`), xml = readFile(`data/entities/items/wands/${dir}/${key}.xml`)
+  if (!lua || !xml) return null
+  const base = wandOf(xml, key)
+  const val = (name) => { const m = new RegExp(`gun\\.${name}\\s*=\\s*([^\\n]+)`).exec(lua); if (!m) return undefined; const s = m[1].trim(); const r = /^\{\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\}/.exec(s); if (r) return [+r[1], +r[2]]; const n = parseFloat(s); return isNaN(n) ? s : n }
+  const list = (name) => { const m = new RegExp(`gun\\.${name}\\s*=\\s*\\{([^}]*)\\}`).exec(lua); return m ? [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]) : [] }
+  const perm = [...lua.matchAll(/AddGunActionPermanent\(\s*entity_id\s*,\s*"(\w+)"/g)].map((m) => m[1])
+  const cnt = /local action_count\s*=\s*(\d+)/.exec(lua)
+  return {
+    ...base, name: itemName, luaGun: true,
+    deckCapacity: val('deck_capacity'), actionsPerRound: val('actions_per_round'), reloadTime: val('reload_time'), shuffle: val('shuffle_deck_when_empty') !== 0,
+    fireRateWait: val('fire_rate_wait'), spread: val('spread_degrees'), speedMul: val('speed_multiplier'), manaCharge: val('mana_charge_speed'), manaMax: val('mana_max'),
+    actions: list('actions'), actionCount: cnt ? +cnt[1] : (list('actions').length ? 1 : 0), permanent: perm, cards: [],
+  }
+}
+for (const [dir, key, name] of [['wand_good', 'wand_good_1', '快速法杖'], ['wand_good', 'wand_good_2', '毁灭法杖'], ['wand_good', 'wand_good_3', '散射法杖'], ['experimental', 'experimental_wand_1', '实验法杖 1'], ['experimental', 'experimental_wand_2', '实验法杖 2'], ['experimental', 'experimental_wand_3', '这是根法杖,行吧?'], ['experimental', 'experimental_wand_4', '链锯']]) {
+  const w = luaWandOf(dir, key, name); if (w) wands[key] = w
+}
 // wand_level_01(随机法杖):运行时用 17 根固定法杖里随机一根的数值 + level_1_wand 掷卡(gun_procedural 的完整复刻另做)
 fs.writeFileSync(`${OUT}/wands.json`, JSON.stringify({ spells, wands }))
 const projSpells = Object.values(spells).filter((s) => s.projectiles.length)
