@@ -1005,7 +1005,8 @@ FROZEN · POISONED · ALCOHOLIC(醉,操控漂)· JARATE · HYDRATED …
 **Box2D 尺度常数已反 exe 定稿(见 ④ 末):重力 12 m/s² = 72 px/s²、fixture 密度 = 材质 density 原值、关节力基准 = (mA+mB)×160**。④ 第二批(灯笼上关节 / 窗口外冻住 / 静止计时 / 物理蘑菇进真菌洞)、⑥ 尸体换 Box2D 关节、⑤ 碰撞伤害走接触(pre-solve → `rb.impact`)、挖掘场多体机械(静态机身 + 电机轮)也已上线;真机(iPhone)跑过没问题。09-06:偶发 `RangeError: Invalid array length` 定位(planck 凸包对共线中间点死循环)+ 修、浮力反 exe 定稿(−0.7×m×(v+g),所有刚体慢沉不浮)已上线。
 solid_on_collision_explode(崩塌块砸地炸)也按 exe 定稿了;go_through_sand / solid_on_collision_material 查过数据没什么实体在用,搁置;PhysicsThrowable(扔速随光标距离、随机转速、出手点)也定稿了。Box2D 六步到此收口,剩的都是小尾巴(第 29 条末"还差")。设计介绍页 `noita-design.html`(纯静态,未进构建入口)。
 **09-07 下午(第 30 / 31 条,已上线)**:地图全境 —— biome_map 上 55 个之前只登记色的群系全部真放图(`STATIC_SCENE_INIT` / `core/roomMarks.js` 通用标记扫描 / static_tile 天空神殿),底按 xml 规则(WANG_TILE 空模板 = 空气、无 type = 按材质表填实);boss —— `src/noita-map/Bosses.js` 生成器复刻 15 只 boss 的 lua 时间线 + 触发器出生。
-探针 `_noita-rooms-shot.mjs`(45 处传送冒烟)。下一步候选:orbs / books 等 pickup 物品(键已放出来在 skipped 里)、boss 血条 UI、boss_pit 出生(材质爆炸)、传送门类 building。
+探针 `_noita-rooms-shot.mjs`(45 处传送冒烟)。**09-07 晚(第 32~35 条,已上线)**:房间可捡物(宝珠 / 书 / 精华 / 蛋 / 任务物,lua 法杖)、boss 血条、门怪开门、全部传送门、书正文、精华效果、贪婪诅咒、三宝与结局、天空 boss 幻影;`?loadout=fast&god=1` 探图预设;游戏循环 safeLoop 兜异常。
+剩的小尾巴:乐器演奏、midas 三种细分、Sauvojen tuntija(原版无出生入口)。下一步候选:第 29 条末 Box2D 小尾巴、"沙变白"复现、更多传送门那头的房间细节(hourglass / racing / null_room 谜题逻辑)。
 **反汇编辅助脚本** `%TEMP%\_reva.py <exe> <cmd>`(capstone + pefile;不在仓库里,丢了照 docstring 重写):`strings <regex>` / `refs <va>`(谁引用这个地址,列函数头 + 常量 + call)/ `callers <va>`(call rel32 到它的点)/
 `asm <va> <n>` / `fn <va> [max] [full]`(从函数头顺序反汇编,默认只打常量 / call / 浮点行)/ `scan <lo> <hi> <regex>`(区间内线性扫指令,解不出的字节跳过;找"谁读 [reg+0x78]"用这个)/ `vtbl <RTTI 名字串 VA>`(MSVC RTTI → 虚表槽)/ `rd <va> [n]`。
 exe = `E:\soft\xiaoshuodongtai\silu\XD220\Noita.v20250125-P2P\noita_dev.exe`;组件字段偏移看 XML 读字段函数里 `push "字段名"` 后面的 `lea edx,[ebx+0x??]`(PhysicsBodyComponent 的在 0x699799)。
