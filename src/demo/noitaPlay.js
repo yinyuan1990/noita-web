@@ -2323,7 +2323,18 @@ function loop(now) {
   // 手机端整块面板藏着(挡视野),只在顶上留一行 fps / 模拟 / 物理毫秒,用户反馈掉帧时能直接说出数字
   if (IS_TOUCH && fpsN === 0) $('fpsMini').textContent = `${gpuSync ? '[同步] ' : ''}${fps.toFixed(0)} fps${frameCap() ? '(系统限 30Hz)' : ''} 最慢 ${slowShown | 0} · 模拟 ${simMs.toFixed(1)}${sim.lod > 1 ? `(1/${sim.lod})` : ''} · 逻辑 ${stepMs.toFixed(1)}[${rPhaseArr(lPhase).join('/')}] · 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 物理 ${physics ? physics.stats.ms.toFixed(1) : '-'} ms`
   $('panel').textContent = `${fps.toFixed(0)} fps  ${VW}×${VH}@${SCALE.toFixed(2)}x\n模拟 ${simMs.toFixed(1)}ms 逻辑 ${stepMs.toFixed(1)}[${rPhaseArr(lPhase).join('/')}] 渲染 ${renderMs.toFixed(1)}[${rPhaseArr().join('/')}] · 醒 ${sim.activeBlocks} 块${sim.lod > 1 ? ` 降档 1/${sim.lod}` : ''} 动了 ${sim.stepped} 格 · 反应表 ${sim.rxCount}\n区块 常驻 ${streamer.entries.size} 在途 ${streamer.inFlight.size}${missing ? ' 缺 ' + missing : ''}${physics ? `\n物理 ${physics.stats.ms.toFixed(2)}ms 刚体 ${physics.stats.awake}/${physics.stats.bodies} 地形块 ${physics.stats.tiles}${physics.stats.toiOff ? ' TOI关' : ''}` : ''}\nseed ${SEED} · 日志 ${oplog.session.slice(9)} 已传 ${oplog.sent}${oplog.failed ? ' 失败 ' + oplog.failed : ''}`
-  requestAnimationFrame(loop)
+  requestAnimationFrame(safeLoop)
 }
-requestAnimationFrame(loop)
+// 一帧里任何未捕获的异常都不能让 rAF 断掉(断了就是用户说的"卡死",画面停在那一帧):记进日志、跳过这帧继续;连着 60 帧都在抛才真停
+let loopErrN = 0
+function safeLoop(now) {
+  try { loop(now); loopErrN = 0 } catch (err) {
+    loopErrN++
+    console.error(err)
+    if (loopErrN === 1 || loopErrN % 60 === 0) oplog.ev('loop_error', { msg: String(err?.message || err).slice(0, 300), stack: String(err?.stack || '').split('\n').slice(0, 4).join(' | ').slice(0, 600), n: loopErrN })
+    if (loopErrN < 60) { last = now; requestAnimationFrame(safeLoop) }
+    else toast('程序出错,请点"上报日志"后刷新页面', 60)
+  }
+}
+requestAnimationFrame(safeLoop)
 window.__np = { player, cam, streamer, client, sim, mats, oplog, sfx, P, projectiles, WANDS, wands, sky, bubbles, debris, sparks, liquidWobble, refr, lighting, entities, Ragdoll, veg, guard, solidAt, flags, matAt, physics, setWand: (i) => { payload = i }, pickWand, payloadIdx: () => payload, quest: () => quest, touchState: () => touch, kick, setPaused, editor, tut, saveGame, loadGame, clearSave, temple, collapses, collapsed, loaded, glc, matBuf: () => matBuf, view, simBound: () => simBound }

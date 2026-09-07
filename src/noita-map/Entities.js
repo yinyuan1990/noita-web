@@ -1637,8 +1637,9 @@ export class Entities {
       if (m > 0) {
         const n = this.mats.list[m]?.name
         if (n && e.d.damage?.materials_that_damage) {
-          const idx = e.d.damage.materials_that_damage.split(',').indexOf(n)
-          if (idx >= 0) { const per = +(e.d.damage.materials_how_much_damage || '').split(',')[idx] || 0.001; this.hurt(e, per * f60, 0, 0, 'material') }
+          // 只有一种材质时 prepare 把 "0.1" 存成了数字(虫 / lukki / 幽灵 / 几只 boss 的 acid 0.1):String() 兜住,之前 .split 抛 TypeError 把整个 rAF 循环打死 = 用户看到的"卡死"
+          const idx = String(e.d.damage.materials_that_damage).split(',').indexOf(n)
+          if (idx >= 0) { const per = +String(e.d.damage.materials_how_much_damage ?? '').split(',')[idx] || 0.001; this.hurt(e, per * f60, 0, 0, 'material') }
         }
         if (n === 'fire' && Math.random() < (e.d.damage?.fire_probability_of_ignition ?? 0) * dt * 8) this.ignite(e)
       }
